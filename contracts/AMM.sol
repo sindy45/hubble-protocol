@@ -6,7 +6,7 @@ contract AMM {
 
     struct Position {
         int256 size;
-        int256 openNotional;
+        uint256 openNotional;
         int256 lastUpdatedCumulativePremiumFraction;
     }
     mapping(address => Position) public positions;
@@ -34,7 +34,7 @@ contract AMM {
         fundingPeriod = 1 hours;
     }
 
-    function openPosition(address trader, int256 baseAssetQuantity, int quoteAssetLimit)
+    function openPosition(address trader, int256 baseAssetQuantity, uint quoteAssetLimit)
         onlyClearingHouse
         external
         returns (int realizedPnl, bool isPositionIncreased)
@@ -46,66 +46,77 @@ contract AMM {
             _increasePosition(trader, baseAssetQuantity, quoteAssetLimit);
             return (0, true);
         } else {
-            console.log('_openReversePosition', uint(baseAssetQuantity), uint(quoteAssetLimit));
             return _openReversePosition(trader, baseAssetQuantity, quoteAssetLimit);
         }
     }
 
-    function _increasePosition(address trader, int256 baseAssetQuantity, int quoteAssetLimit) internal {
-        int256 quoteAsset;
-        if (baseAssetQuantity > 0) { // Long - purchase baseAssetQuantity
-            quoteAsset = int(vamm.exchangeExactOut(0 /* sell quote asset */, 2 /* purchase base asset */, uint(baseAssetQuantity), uint(quoteAssetLimit)));
+    function _increasePosition(address trader, int256 baseAssetQuantity, uint quoteAssetLimit) internal {
+        log('_increasePosition', baseAssetQuantity, quoteAssetLimit);
+        uint quoteAsset;
+        if (baseAssetQuantity >= 0) { // Long - purchase baseAssetQuantity
+            // Use quoteAssetLimit as exact input amount and baseAssetQuantity as slippage protection until exchangeExactOut is ready
+            baseAssetQuantity = int(vamm.exchange(0 /* sell quote asset */, 2 /* purchase base asset */, uint(quoteAssetLimit), uint(baseAssetQuantity)));
+            quoteAsset = quoteAssetLimit;
+
+            // When exchangeExactOut is ready
+            // quoteAsset = int(vamm.exchangeExactOut(0 /* sell quote asset */, 2 /* purchase base asset */, uint(baseAssetQuantity), uint(quoteAssetLimit)));
             // when longing trader wants unit cost of base asset to be as low as possible
             // require(quoteAsset <= quoteAssetLimit, "VAMM._increasePosition.Long: Slippage"); not required because we pass in quoteAssetLimit as the forth param
         } else { // Short - sell baseAssetQuantity
-            quoteAsset = int(vamm.exchange(2 /* sell base asset */, 0 /* get quote asset */, uint(-baseAssetQuantity), 0));
+            quoteAsset = vamm.exchange(2 /* sell base asset */, 0 /* get quote asset */, uint(-baseAssetQuantity), quoteAssetLimit);
             // when shorting trader wants unit cost of base asset to be as high as possible
-            require(quoteAsset >= quoteAssetLimit, "VAMM._increasePosition.Short: Slippage");
+            // require(quoteAsset >= quoteAssetLimit, "VAMM._increasePosition.Short: Slippage");
         }
         positions[trader].size += baseAssetQuantity; // -ve baseAssetQuantity will increase short position
         positions[trader].openNotional += quoteAsset;
     }
 
-    function _openReversePosition(address trader, int256 baseAssetQuantity, int quoteAssetLimit)
+    function _openReversePosition(address trader, int256 baseAssetQuantity, uint quoteAssetLimit)
         internal
         returns (int realizedPnl, bool isPositionIncreased)
     {
+        log('_openReversePosition', baseAssetQuantity, quoteAssetLimit);
         Position memory position = positions[trader];
         if (abs(position.size) >= abs(baseAssetQuantity)) {
             realizedPnl = _reducePosition(trader, baseAssetQuantity, quoteAssetLimit);
         } else {
-            int closedRatio = (quoteAssetLimit * abs(position.size)) / abs(baseAssetQuantity);
+            uint closedRatio = (quoteAssetLimit * abs(position.size)) / abs(baseAssetQuantity);
             realizedPnl = _reducePosition(trader, -position.size, closedRatio);
             _increasePosition(trader, baseAssetQuantity + position.size, quoteAssetLimit - closedRatio);
             isPositionIncreased = true;
         }
     }
 
-    function _reducePosition(address trader, int256 baseAssetQuantity, int quoteAssetLimit)
+    function _reducePosition(address trader, int256 baseAssetQuantity, uint quoteAssetLimit)
         internal
         returns (int realizedPnl)
     {
+        log('_reducePosition', baseAssetQuantity, quoteAssetLimit);
         Position storage position = positions[trader];
 
         bool isLongPosition = position.size > 0 ? true : false;
-        int256 quoteAsset;
+        uint256 quoteAsset;
         if (isLongPosition) {
             require(baseAssetQuantity < 0, "VAMM._reducePosition.Long: Incorrect direction");
-            quoteAsset = int(vamm.exchange(2 /* sell base asset */, 0 /* get quote asset */, uint(-baseAssetQuantity) /* exact input */, 0));
-            require(quoteAsset >= quoteAssetLimit, "VAMM._reducePosition.Long: Slippage");
-            realizedPnl = quoteAsset - position.openNotional;
+            log('_reducePosition:2', baseAssetQuantity, quoteAssetLimit);
+            quoteAsset = vamm.exchange(2 /* sell base asset */, 0 /* get quote asset */, uint(-baseAssetQuantity) /* exact input */, quoteAssetLimit);
+            // require(quoteAsset >= quoteAssetLimit, "VAMM._reducePosition.Long: Slippage");
+            realizedPnl = int(quoteAsset) - int(position.openNotional);
         } else {
             require(baseAssetQuantity > 0, "VAMM._reducePosition.Short: Incorrect direction");
             // we don't yet have vamm.exchangeExactOut
             // quoteAsset = int(vamm.exchangeExactOut(0 /* sell quote asset */, 2 /* purchase shorted asset */, uint(baseAssetQuantity) /* exact output */, 0));
             // require(quoteAsset <= quoteAssetLimit, "VAMM._reducePosition.Short: Slippage");
 
-            baseAssetQuantity = int(vamm.exchange(0 /* sell quote asset */, 2 /* purchase shorted asset */, uint(quoteAssetLimit), 0));
+            baseAssetQuantity = int(vamm.exchange(0 /* sell quote asset */, 2 /* purchase shorted asset */, quoteAssetLimit, 0));
             quoteAsset = quoteAssetLimit;
 
-            realizedPnl = position.openNotional - quoteAsset;
+            realizedPnl = int(position.openNotional) - int(quoteAsset);
         }
+        // console.logInt(position.size);
+        // console.logInt(baseAssetQuantity);
         position.size += baseAssetQuantity;
+        console.log("position.openNotional", position.openNotional, quoteAsset);
         position.openNotional -= quoteAsset;
     }
 
@@ -188,7 +199,7 @@ contract AMM {
     function getNotionalPositionAndUnrealizedPnl(address trader)
         external
         view
-        returns(int256 notionalPosition, int256 unrealizedPnl)
+        returns(uint256 notionalPosition, int256 unrealizedPnl)
     {
         Position memory position = positions[trader];
         if (position.size == 0) {
@@ -197,16 +208,23 @@ contract AMM {
         bool isLongPosition = position.size > 0 ? true : false;
         // The following considers the Spot price. Should we also look at TWAP price?
         if (isLongPosition) {
-            notionalPosition = int(vamm.get_dy(2 /* sell base asset */, 0 /* get quote asset */, uint(position.size) /* exact input */));
-            unrealizedPnl = notionalPosition - position.openNotional;
+            notionalPosition = vamm.get_dy(2 /* sell base asset */, 0 /* get quote asset */, uint(position.size) /* exact input */);
+            console.log("notionalPosition: %s, position.openNotional %s", notionalPosition, position.openNotional);
+            unrealizedPnl = int(notionalPosition) - int(position.openNotional);
         } else {
-            notionalPosition = int(vamm.get_dx(0 /* sell quote asset */, 2 /* purchase shorted asset */, uint(-position.size) /* exact output */));
-            unrealizedPnl = position.openNotional - notionalPosition;
+            notionalPosition = vamm.get_dx(0 /* sell quote asset */, 2 /* purchase shorted asset */, uint(-position.size) /* exact output */);
+            unrealizedPnl = int(position.openNotional) - int(notionalPosition);
         }
     }
 
-    function abs(int x) private pure returns (int) {
-        return x >= 0 ? x : -x;
+    function abs(int x) private pure returns (uint) {
+        return x >= 0 ? uint(x) : uint(-x);
+    }
+
+    function log(string memory name, int256 baseAssetQuantity, uint quoteAssetLimit) internal {
+        console.log('function: %s, quoteAssetLimit: %d', name, quoteAssetLimit);
+        console.log('baseAssetQuantity');
+        console.logInt(baseAssetQuantity);
     }
 }
 

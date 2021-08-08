@@ -1,4 +1,3 @@
-const { assert } = require('console')
 const { BigNumber } = require('ethers')
 const fs = require('fs')
 const { expect } = require("chai");
@@ -6,7 +5,7 @@ const { expect } = require("chai");
 const _1e6 = BigNumber.from(10).pow(6)
 const _1e18 = ethers.constants.WeiPerEther
 
-describe.only('e2e', function() {
+describe('e2e', function() {
     before('setup contracts', async function() {
         signers = await ethers.getSigners()
         alice = signers[0].address

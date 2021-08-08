@@ -15,7 +15,7 @@ contract ClearingHouse {
         maintenanceMargin = _maintenanceMargin;
     }
 
-    function openPosition(uint idx, int256 baseAssetQuantity, int quoteAssetLimit) external {
+    function openPosition(uint idx, int256 baseAssetQuantity, uint quoteAssetLimit) external {
         address trader = msg.sender;
         updatePositions(trader);
         (int realizedPnl, bool isPositionIncreased) = amms[idx].openPosition(trader, baseAssetQuantity, quoteAssetLimit);
@@ -40,16 +40,23 @@ contract ClearingHouse {
     }
 
     function isAboveMaintenanceMargin(address trader) public view returns(bool) {
+        // console.log("MarginFraction");
+        // console.logInt(getMarginFraction(trader));
         return getMarginFraction(trader) >= maintenanceMargin;
     }
 
     function getMarginFraction(address trader) public view returns(int256) {
         int256 margin = marginAccount.getNormalizedMargin(trader);
         (int256 notionalPosition, int256 unrealizedPnl) = getTotalNotionalPositionAndUnrealizedPnl(trader);
+        console.log("getMarginFraction:debug");
+        console.logInt(margin);
+        console.logInt(unrealizedPnl);
         int256 accountValue = int256(margin) + unrealizedPnl;
+        console.logInt(accountValue);
         if (notionalPosition == 0) {
             return type(int256).max;
         }
+        console.logInt(accountValue * PRECISION / notionalPosition);
         return accountValue * PRECISION / notionalPosition;
     }
 
@@ -72,7 +79,7 @@ contract ClearingHouse {
 }
 
 interface IAMM {
-    function openPosition(address trader, int256 baseAssetQuantity, int quoteAssetLimit) external returns (int realizedPnl, bool isPositionIncreased);
+    function openPosition(address trader, int256 baseAssetQuantity, uint quoteAssetLimit) external returns (int realizedPnl, bool isPositionIncreased);
     function getUnrealizedPnL(address trade) external returns(int256);
     function getNotionalPositionAndUnrealizedPnl(address trader)
         external

@@ -1,4 +1,5 @@
 require("@nomiclabs/hardhat-waffle");
+require('@nomiclabs/hardhat-web3')
 // require("@nomiclabs/hardhat-vyper");
 
 // This is a sample Hardhat task. To learn how to create your own go to

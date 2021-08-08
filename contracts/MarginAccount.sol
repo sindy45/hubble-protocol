@@ -64,7 +64,7 @@ contract MarginAccount {
     }
 
     function realizePnL(address trader, int256 realizedPnl) onlyClearingHouse external {
-        console.logInt(realizedPnl);
+        // console.logInt(realizedPnl);
         int256 bal = vUSDBalance[trader];
         int256 toMint = realizedPnl;
         if (bal < 0) {
