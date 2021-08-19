@@ -37,22 +37,21 @@ contract AMM {
     function openPosition(address trader, int256 baseAssetQuantity, uint quoteAssetLimit)
         onlyClearingHouse
         external
-        returns (int realizedPnl, bool isPositionIncreased)
+        returns (int realizedPnl, uint quoteAsset, bool isPositionIncreased)
     {
         Position memory position = positions[trader];
         bool isNewPosition = position.size == 0 ? true : false;
         Side side = baseAssetQuantity > 0 ? Side.LONG : Side.SHORT;
         if (isNewPosition || (position.size > 0 ? Side.LONG : Side.SHORT) == side) {
-            _increasePosition(trader, baseAssetQuantity, quoteAssetLimit);
-            return (0, true);
+            quoteAsset = _increasePosition(trader, baseAssetQuantity, quoteAssetLimit);
+            return (0, quoteAsset, true);
         } else {
             return _openReversePosition(trader, baseAssetQuantity, quoteAssetLimit);
         }
     }
 
-    function _increasePosition(address trader, int256 baseAssetQuantity, uint quoteAssetLimit) internal {
+    function _increasePosition(address trader, int256 baseAssetQuantity, uint quoteAssetLimit) internal returns(uint quoteAsset) {
         log('_increasePosition', baseAssetQuantity, quoteAssetLimit);
-        uint quoteAsset;
         if (baseAssetQuantity >= 0) { // Long - purchase baseAssetQuantity
             quoteAsset = _long(uint(baseAssetQuantity), quoteAssetLimit);
         } else { // Short - sell baseAssetQuantity
@@ -64,16 +63,16 @@ contract AMM {
 
     function _openReversePosition(address trader, int256 baseAssetQuantity, uint quoteAssetLimit)
         internal
-        returns (int realizedPnl, bool isPositionIncreased)
+        returns (int realizedPnl, uint quoteAsset, bool isPositionIncreased)
     {
         log('_openReversePosition', baseAssetQuantity, quoteAssetLimit);
         Position memory position = positions[trader];
         if (abs(position.size) >= abs(baseAssetQuantity)) {
-            realizedPnl = _reducePosition(trader, baseAssetQuantity, quoteAssetLimit);
+            (realizedPnl, quoteAsset) = _reducePosition(trader, baseAssetQuantity, quoteAssetLimit);
         } else {
             uint closedRatio = (quoteAssetLimit * abs(position.size)) / abs(baseAssetQuantity);
-            realizedPnl = _reducePosition(trader, -position.size, closedRatio);
-            _increasePosition(trader, baseAssetQuantity + position.size, quoteAssetLimit - closedRatio);
+            (realizedPnl, quoteAsset) = _reducePosition(trader, -position.size, closedRatio);
+            quoteAsset += _increasePosition(trader, baseAssetQuantity + position.size, quoteAssetLimit - closedRatio);
             isPositionIncreased = true;
         }
     }
@@ -83,7 +82,7 @@ contract AMM {
     */
     function _reducePosition(address trader, int256 baseAssetQuantity, uint quoteAssetLimit)
         internal
-        returns (int realizedPnl)
+        returns (int realizedPnl, uint256 quoteAsset)
     {
         log('_reducePosition', baseAssetQuantity, quoteAssetLimit);
         Position storage position = positions[trader];
@@ -106,7 +105,7 @@ contract AMM {
         if (isLongPosition) {
             log('_reducePosition:2', baseAssetQuantity, quoteAssetLimit);
             require(baseAssetQuantity < 0, "VAMM._reducePosition.Long: Incorrect direction");
-            uint256 quoteAsset = _short(uint(-baseAssetQuantity), quoteAssetLimit);
+            quoteAsset = _short(uint(-baseAssetQuantity), quoteAssetLimit);
             remainOpenNotional = int256(notionalPosition) - int256(quoteAsset) - unrealizedPnlAfter;
             /**
             * Let baseAssetQuantity = Q, position.size = size, by definition of _reducePosition, abs(size) >= abs(Q)
@@ -120,7 +119,7 @@ contract AMM {
             */
         } else {
             require(baseAssetQuantity > 0, "VAMM._reducePosition.Short: Incorrect direction");
-            uint256 quoteAsset = _long(uint(baseAssetQuantity), quoteAssetLimit);
+            quoteAsset = _long(uint(baseAssetQuantity), quoteAssetLimit);
             remainOpenNotional = int256(notionalPosition) - int256(quoteAsset) + unrealizedPnlAfter;
             /**
             * Let baseAssetQuantity = Q, position.size = size, by definition of _reducePosition, abs(size) >= abs(Q)
@@ -252,7 +251,7 @@ contract AMM {
         // The following considers the Spot price. Should we also look at TWAP price?
         if (isLongPosition) {
             notionalPosition = vamm.get_dy(2 /* sell base asset */, 0 /* get quote asset */, uint(position.size) /* exact input */);
-            console.log("notionalPosition: %s, position.openNotional %s", notionalPosition, position.openNotional);
+            // console.log("notionalPosition: %s, position.openNotional %s", notionalPosition, position.openNotional);
             unrealizedPnl = int(notionalPosition) - int(position.openNotional);
         } else {
             notionalPosition = vamm.get_dx(0 /* sell quote asset */, 2 /* purchase shorted asset */, uint(-position.size) /* exact output */);
@@ -265,9 +264,9 @@ contract AMM {
     }
 
     function log(string memory name, int256 baseAssetQuantity, uint quoteAssetLimit) internal {
-        console.log('function: %s, quoteAssetLimit: %d', name, quoteAssetLimit);
-        console.log('baseAssetQuantity');
-        console.logInt(baseAssetQuantity);
+        // console.log('function: %s, quoteAssetLimit: %d', name, quoteAssetLimit);
+        // console.log('baseAssetQuantity');
+        // console.logInt(baseAssetQuantity);
     }
 }
 

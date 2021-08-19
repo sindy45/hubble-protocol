@@ -7,24 +7,34 @@ contract ClearingHouse {
     int256 constant PRECISION = 1e6;
 
     int256 public maintenanceMargin;
+    uint public tradeFee;
+
     IMarginAccount public marginAccount;
     IAMM[] public amms;
 
-    constructor(IMarginAccount _marginAccount, int256 _maintenanceMargin) {
+    event PositionOpened(uint indexed idx, int256 indexed baseAssetQuantity, uint indexed quoteAsset);
+
+    constructor(IMarginAccount _marginAccount, int256 _maintenanceMargin, uint _tradeFee) {
         marginAccount = _marginAccount;
         maintenanceMargin = _maintenanceMargin;
+        tradeFee = _tradeFee;
     }
 
     function openPosition(uint idx, int256 baseAssetQuantity, uint quoteAssetLimit) external {
         address trader = msg.sender;
         updatePositions(trader);
-        (int realizedPnl, bool isPositionIncreased) = amms[idx].openPosition(trader, baseAssetQuantity, quoteAssetLimit);
-        if (realizedPnl != 0) {
-            marginAccount.realizePnL(trader, realizedPnl);
+        (int realizedPnl, uint quoteAsset, bool isPositionIncreased) = amms[idx].openPosition(trader, baseAssetQuantity, quoteAssetLimit);
+        uint _tradeFee = quoteAsset * tradeFee / uint(PRECISION);
+        // console.log("_tradeFee", _tradeFee);
+        int256 marginCharge = realizedPnl - int(_tradeFee);
+        // @todo credit trading fee to insurance fund
+        if (marginCharge != 0) {
+            marginAccount.realizePnL(trader, marginCharge);
         }
         if (isPositionIncreased) {
             require(isAboveMaintenanceMargin(trader), "CH: Below Maintenance Margin");
         }
+        emit PositionOpened(idx, baseAssetQuantity, quoteAsset);
     }
 
     function updatePositions(address trader) public {
@@ -81,7 +91,9 @@ contract ClearingHouse {
 }
 
 interface IAMM {
-    function openPosition(address trader, int256 baseAssetQuantity, uint quoteAssetLimit) external returns (int realizedPnl, bool isPositionIncreased);
+    function openPosition(address trader, int256 baseAssetQuantity, uint quoteAssetLimit)
+        external
+        returns (int realizedPnl, uint quoteAsset, bool isPositionIncreased);
     function getUnrealizedPnL(address trade) external returns(int256);
     function getNotionalPositionAndUnrealizedPnl(address trader)
         external
