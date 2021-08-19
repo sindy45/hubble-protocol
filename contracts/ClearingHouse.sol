@@ -36,6 +36,8 @@ contract ClearingHouse {
         // console.log("fundingPayment");
         // console.logInt(fundingPayment);
         // console.logInt(-fundingPayment / 1e12);
+        // @todo should only receive this if user doesn't have bad debt
+        // and/or open positions that make the user position insolvent
         marginAccount.realizePnL(trader, -fundingPayment / 1e12);
     }
 
@@ -48,15 +50,15 @@ contract ClearingHouse {
     function getMarginFraction(address trader) public view returns(int256) {
         int256 margin = marginAccount.getNormalizedMargin(trader);
         (int256 notionalPosition, int256 unrealizedPnl) = getTotalNotionalPositionAndUnrealizedPnl(trader);
-        console.log("getMarginFraction:debug");
-        console.logInt(margin);
-        console.logInt(unrealizedPnl);
+        // console.log("getMarginFraction:debug");
+        // console.logInt(margin);
+        // console.logInt(unrealizedPnl);
         int256 accountValue = int256(margin) + unrealizedPnl;
-        console.logInt(accountValue);
+        // console.logInt(accountValue);
         if (notionalPosition == 0) {
             return type(int256).max;
         }
-        console.logInt(accountValue * PRECISION / notionalPosition);
+        // console.logInt(accountValue * PRECISION / notionalPosition);
         return accountValue * PRECISION / notionalPosition;
     }
 

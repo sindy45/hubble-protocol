@@ -7,7 +7,7 @@
 from vyper.interfaces import ERC20
 
 interface Curve:
-    def A_precise() -> uint256: view
+    def A() -> uint256: view
     def gamma() -> uint256: view
     def price_scale(i: uint256) -> uint256: view
     def balances(i: uint256) -> uint256: view
@@ -23,9 +23,9 @@ interface Math:
 N_COINS: constant(int128) = 3  # <- change
 PRECISION: constant(uint256) = 10 ** 18  # The precision to convert to
 PRECISIONS: constant(uint256[N_COINS]) = [
-    10**12, # USDT
-    10**10, # WBTC
-    1, # WETH
+    1000000000000,
+    10000000000,
+    1,
 ]
 
 math: address
@@ -50,13 +50,12 @@ def get_dy(i: uint256, j: uint256, dx: uint256) -> uint256:
     xp: uint256[N_COINS] = empty(uint256[N_COINS])
     for k in range(N_COINS):
         xp[k] = Curve(msg.sender).balances(k)
-    y0: uint256 = xp[j]
     xp[i] += dx
     xp[0] *= precisions[0]
     for k in range(N_COINS-1):
         xp[k+1] = xp[k+1] * price_scale[k] * precisions[k+1] / PRECISION
 
-    A: uint256 = Curve(msg.sender).A_precise()
+    A: uint256 = Curve(msg.sender).A()
     gamma: uint256 = Curve(msg.sender).gamma()
 
     y: uint256 = Math(self.math).newton_y(A, gamma, xp, Curve(msg.sender).D(), j)
@@ -66,6 +65,7 @@ def get_dy(i: uint256, j: uint256, dx: uint256) -> uint256:
         dy = dy * PRECISION / price_scale[j-1]
     dy /= precisions[j]
     # dy -= Curve(msg.sender).fee_calc(xp) * dy / 10**10
+
     return dy
 
 @external
@@ -82,13 +82,12 @@ def get_dx(i: uint256, j: uint256, dy: uint256) -> uint256:
     xp: uint256[N_COINS] = empty(uint256[N_COINS])
     for k in range(N_COINS):
         xp[k] = Curve(msg.sender).balances(k)
-    y0: uint256 = xp[j]
     xp[j] -= dy
     xp[0] *= precisions[0]
     for k in range(N_COINS-1):
         xp[k+1] = xp[k+1] * price_scale[k] * precisions[k+1] / PRECISION
 
-    A: uint256 = Curve(msg.sender).A_precise()
+    A: uint256 = Curve(msg.sender).A()
     gamma: uint256 = Curve(msg.sender).gamma()
 
     x: uint256 = Math(self.math).newton_y(A, gamma, xp, Curve(msg.sender).D(), i)
@@ -98,6 +97,7 @@ def get_dx(i: uint256, j: uint256, dy: uint256) -> uint256:
         dx = dx * PRECISION / price_scale[i-1]
     dx /= precisions[i]
     # dy -= Curve(msg.sender).fee_calc(xp) * dy / 10**10
+
     return dx
 
 @view
@@ -121,7 +121,7 @@ def calc_token_amount(amounts: uint256[N_COINS], deposit: bool) -> uint256:
         p: uint256 = Curve(msg.sender).price_scale(k) * precisions[k+1]
         xp[k+1] = xp[k+1] * p / PRECISION
         amountsp[k+1] = amountsp[k+1] * p / PRECISION
-    A: uint256 = Curve(msg.sender).A_precise()
+    A: uint256 = Curve(msg.sender).A()
     gamma: uint256 = Curve(msg.sender).gamma()
     D: uint256 = Math(self.math).newton_D(A, gamma, xp)
     d_token: uint256 = token_supply * D / Curve(msg.sender).D()

@@ -2,6 +2,8 @@ let { BigNumber } = require('ethers')
 const fs = require('fs')
 const { expect } = require('chai');
 
+const utils = require('./utils')
+
 const _1e6 = BigNumber.from(10).pow(6)
 const _1e18 = ethers.constants.WeiPerEther
 const ZERO = BigNumber.from(0)
@@ -32,6 +34,7 @@ describe('Position Tests', function() {
     beforeEach('contract factories', async function() {
         swap = await Swap.deploy(
             "0xbabe61887f1de2713c6f97e567623453d3c79f67",
+            "0xbabe61887f1de2713c6f97e567623453d3c79f67",
             moonMath.address,
             views.address,
             3645,
@@ -43,7 +46,8 @@ describe('Position Tests', function() {
             "1500000000000000",
             0,
             600,
-            [_1e18.mul(40000) /* btc initial rate */, _1e18.mul(1000) /* eth initial rate */]
+            [_1e18.mul(40000) /* btc initial rate */, _1e18.mul(1000) /* eth initial rate */],
+            { gasLimit: 10000000 }
         )
         await swap.add_liquidity([
             _1e6.mul(_1e6), // 1m USDT
@@ -57,40 +61,39 @@ describe('Position Tests', function() {
         // ], 0)
         // await swap.exchange(0, 2, '100000000', 0)
         const vUSD = await VUSD.deploy()
-        marginAccount = await MarginAccount.deploy(vUSD.address)
-        clearingHouse = await ClearingHouse.deploy(marginAccount.address, 0.03 * 1e6) // 3% maintenance margin
+        const ERC20Mintable = await ethers.getContractFactory('ERC20Mintable')
+        usdc = await ERC20Mintable.deploy('usdc', 'usdc', 6)
+
+        marginAccount = await MarginAccount.deploy(vUSD.address, usdc.address)
+        clearingHouse = await ClearingHouse.deploy(marginAccount.address, 0.1 * 1e6) // 10% maintenance margin
         await marginAccount.setClearingHouse(clearingHouse.address)
 
         // whitelistAmm
         amm = await AMM.deploy(clearingHouse.address, swap.address)
         await clearingHouse.whitelistAmm(amm.address)
 
-        // addCollateral
-        const USDC = await ethers.getContractFactory('USDC')
-        usdc = await USDC.deploy()
-        await marginAccount.addCollateral(usdc.address, usdc.address /* dummy */)
-
         // addMargin
         margin = _1e6.mul(1000)
         await usdc.mint(alice, margin)
         await usdc.approve(marginAccount.address, margin)
-        await marginAccount.addMargin(0, margin);
-        // console.log((await marginAccount.getNormalizedMargin(alice)).toString())
+        await marginAccount.addUSDCMargin(margin);
+        // console.utils.log((await marginAccount.getNormalizedMargin(alice)).toString())
     })
 
     it("long", async () => {
-        amount = _1e6.mul(5000) // 5x leverage
-        const baseAssetQuantity = _1e18.mul(4)
+        const baseAssetQuantity = _1e18.mul(5)
+        amount = _1e6.mul(5250) // ~5x leverage
 
-        await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* long atleast */, amount /* Exact quote asset */)
+        await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* long exactly */, amount /* max_dx */)
 
         const position = await amm.positions(alice)
         const { notionalPosition, unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(alice)
         const marginFraction = await clearingHouse.getMarginFraction(alice)
 
-        log(position, notionalPosition, unrealizedPnl, marginFraction)
-        expect(position.openNotional).to.eq(amount)
-        expect(position.size.gte(baseAssetQuantity)).to.be.true
+        utils.log(position, notionalPosition, unrealizedPnl, marginFraction)
+        expect(position.openNotional.lte(amount)).to.be.true
+        expect(position.size).to.eq(baseAssetQuantity)
+
         // rounding in get_dx/get_dy needs to be taken care of for assertions on unrealizedPnl, notionalPosition and margin fraction
         expect(unrealizedPnl.toString()).to.eq('-1')
         expect(notionalPosition).to.eq(position.openNotional.add(unrealizedPnl))
@@ -98,19 +101,20 @@ describe('Position Tests', function() {
     })
 
     it("two longs", async () => {
-        amount = _1e6.mul(5000) // 5x leverage
-        const baseAssetQuantity = _1e18.div(100).mul(499)
+        const baseAssetQuantity = _1e18.mul(4)
+        amount = _1e6.mul(4050)
 
-        await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* long atleast */, amount /* Exact quote asset */)
-        await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* long atleast */, amount /* Exact quote asset */)
+        await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* long exactly */, amount /* max_dx */)
+        await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* long exactly */, amount /* max_dx */)
 
         const position = await amm.positions(alice)
         const { notionalPosition, unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(alice)
         const marginFraction = await clearingHouse.getMarginFraction(alice)
 
-        log(position, notionalPosition, unrealizedPnl, marginFraction)
-        expect(position.openNotional).to.eq(amount.mul(2))
-        expect(position.size.gte(baseAssetQuantity.mul(2))).to.be.true
+        utils.log(position, notionalPosition, unrealizedPnl, marginFraction)
+        expect(position.openNotional.lte(amount.mul(2))).to.be.true
+        expect(position.size).to.eq(baseAssetQuantity.mul(2))
+
         // rounding in get_dx/get_dy needs to be taken care of for assertions on unrealizedPnl, notionalPosition and margin fraction
         expect(unrealizedPnl.toString()).to.eq('-1')
         expect(notionalPosition).to.eq(position.openNotional.add(unrealizedPnl))
@@ -119,7 +123,7 @@ describe('Position Tests', function() {
 
     it("short", async () => {
         const baseAssetQuantity = _1e18.mul(5)
-        amount = _1e6.mul(4999).div(1000)
+        amount = _1e6.mul(3999).div(1000)
 
         await clearingHouse.openPosition(0 /* amm index */, '-' + baseAssetQuantity /* exact base asset */, amount)
 
@@ -127,7 +131,7 @@ describe('Position Tests', function() {
         const { notionalPosition, unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(alice)
         const marginFraction = await clearingHouse.getMarginFraction(alice)
 
-        log(position, notionalPosition, unrealizedPnl, marginFraction)
+        utils.log(position, notionalPosition, unrealizedPnl, marginFraction)
         expect(position.size).to.eq('-' + baseAssetQuantity)
         expect(position.openNotional.gte(amount)).to.be.true
         // rounding in get_dx/get_dy needs to be taken care of for assertions on unrealizedPnl, notionalPosition and margin fraction
@@ -146,7 +150,7 @@ describe('Position Tests', function() {
         const { notionalPosition, unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(alice)
         const marginFraction = await clearingHouse.getMarginFraction(alice)
 
-        log(position, notionalPosition, unrealizedPnl, marginFraction)
+        utils.log(position, notionalPosition, unrealizedPnl, marginFraction)
         expect(position.size).to.eq('-' + baseAssetQuantity.mul(2))
         expect(position.openNotional.gte(amount.mul(2))).to.be.true
         // // rounding in get_dx/get_dy needs to be taken care of for assertions on unrealizedPnl, notionalPosition and margin fraction
@@ -155,18 +159,34 @@ describe('Position Tests', function() {
         expect(marginFraction).to.eq(margin.add(unrealizedPnl).mul(_1e6).div(notionalPosition))
     })
 
-    it("two equal size but opposite side positions", async () => {
-        amount = _1e6.mul(5000)
+    it('long + short', async () => {
+        const baseAssetQuantity = _1e18.mul(5)
 
-        await clearingHouse.openPosition(0 /* amm index */, 0 /* long atleast */, amount /* Exact quote asset */)
-
-        let position = await amm.positions(alice)
-        await clearingHouse.openPosition(0 /* amm index */, position.size.mul(-1) /* exact base asset */, 0)
+        await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* long exactly */, ethers.constants.MaxUint256 /* max_dx */)
+        await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity.mul(-1) /* exact base asset */, 0 /* min_dy */)
 
         position = await amm.positions(alice)
         const { notionalPosition, unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(alice)
         const marginFraction = await clearingHouse.getMarginFraction(alice)
-        log(position, notionalPosition, unrealizedPnl, marginFraction)
+        utils.log(position, notionalPosition, unrealizedPnl, marginFraction)
+
+        expect(position.size).to.eq(ZERO)
+        expect(notionalPosition).to.eq(ZERO)
+        expect(unrealizedPnl).to.eq(ZERO)
+        expect(marginFraction).to.eq(ethers.constants.MaxInt256)
+        // expect(position.openNotional).to.eq(ZERO) // fails because openNotional = 1. Fix the rounding mess!
+    })
+
+    it('short + long', async () => {
+        const baseAssetQuantity = _1e18.mul(3)
+
+        await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity.mul(-1) /* exact base asset */, 0 /* min_dy */)
+        await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* long exactly */, ethers.constants.MaxUint256 /* max_dx */)
+
+        position = await amm.positions(alice)
+        const { notionalPosition, unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(alice)
+        const marginFraction = await clearingHouse.getMarginFraction(alice)
+        utils.log(position, notionalPosition, unrealizedPnl, marginFraction)
 
         expect(position.size).to.eq(ZERO)
         expect(notionalPosition).to.eq(ZERO)
@@ -176,37 +196,30 @@ describe('Position Tests', function() {
     })
 
     it("long + bigger short", async () => {
-        amount = _1e6.mul(5000)
+        const baseAssetQuantity = _1e18.mul(5)
 
-        await clearingHouse.openPosition(0 /* amm index */, 0 /* long atleast */, amount /* Exact quote asset */)
+        await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* long exactly */, ethers.constants.MaxUint256 /* max_dx */)
+        await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity.mul(-2) /* exact base asset */, 0 /* min_dy */)
 
         let position = await amm.positions(alice)
-        const size = position.size
-        await clearingHouse.openPosition(0 /* amm index */, size.mul(-2) /* exact base asset */, 0)
-
-        position = await amm.positions(alice)
         const { notionalPosition, unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(alice)
         const marginFraction = await clearingHouse.getMarginFraction(alice)
-        log(position, notionalPosition, unrealizedPnl, marginFraction)
+        utils.log(position, notionalPosition, unrealizedPnl, marginFraction)
 
-        expect(position.size).to.eq(size.mul(-1))
-        // expect(notionalPosition).to.eq(ZERO)
-        // expect(unrealizedPnl).to.eq(ZERO)
-        // expect(marginFraction).to.eq(ethers.constants.MaxInt256)
-        // expect(position.openNotional).to.eq(ZERO) // fails because openNotional = 1. Fix the rounding mess!
+        expect(position.size).to.eq(baseAssetQuantity.mul(-1))
     })
 
-    it.skip("short + bigger long", async () => {
-        // need to sort out exchange.exactOut mess
+    it("short + bigger long", async () => {
+        const baseAssetQuantity = _1e18.mul(5)
+
+        await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity.mul(-1) /* exact base asset */, 0 /* min_dy */)
+        await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity.mul(2) /* long exactly */, _1e6.mul(10050) /* max_dx */)
+
+        let position = await amm.positions(alice)
+        const { notionalPosition, unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(alice)
+        const marginFraction = await clearingHouse.getMarginFraction(alice)
+        utils.log(position, notionalPosition, unrealizedPnl, marginFraction)
+
+        expect(position.size).to.eq(baseAssetQuantity)
     })
 })
-
-function log(position, notionalPosition, unrealizedPnl, marginFraction) {
-    console.log({
-        size: position.size.toString(),
-        openNotional: position.openNotional.toString(),
-        notionalPosition: notionalPosition.toString(),
-        unrealizedPnl: unrealizedPnl.toString(),
-        marginFraction: marginFraction.toString()
-    })
-}

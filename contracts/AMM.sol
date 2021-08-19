@@ -54,18 +54,9 @@ contract AMM {
         log('_increasePosition', baseAssetQuantity, quoteAssetLimit);
         uint quoteAsset;
         if (baseAssetQuantity >= 0) { // Long - purchase baseAssetQuantity
-            // Use quoteAssetLimit as exact input amount and baseAssetQuantity as slippage protection until exchangeExactOut is ready
-            baseAssetQuantity = int(vamm.exchange(0 /* sell quote asset */, 2 /* purchase base asset */, uint(quoteAssetLimit), uint(baseAssetQuantity)));
-            quoteAsset = quoteAssetLimit;
-
-            // When exchangeExactOut is ready
-            // quoteAsset = int(vamm.exchangeExactOut(0 /* sell quote asset */, 2 /* purchase base asset */, uint(baseAssetQuantity), uint(quoteAssetLimit)));
-            // when longing trader wants unit cost of base asset to be as low as possible
-            // require(quoteAsset <= quoteAssetLimit, "VAMM._increasePosition.Long: Slippage"); not required because we pass in quoteAssetLimit as the forth param
+            quoteAsset = _long(uint(baseAssetQuantity), quoteAssetLimit);
         } else { // Short - sell baseAssetQuantity
-            quoteAsset = vamm.exchange(2 /* sell base asset */, 0 /* get quote asset */, uint(-baseAssetQuantity), quoteAssetLimit);
-            // when shorting trader wants unit cost of base asset to be as high as possible
-            // require(quoteAsset >= quoteAssetLimit, "VAMM._increasePosition.Short: Slippage");
+            quoteAsset = _short(uint(-baseAssetQuantity), quoteAssetLimit);
         }
         positions[trader].size += baseAssetQuantity; // -ve baseAssetQuantity will increase short position
         positions[trader].openNotional += quoteAsset;
@@ -87,6 +78,9 @@ contract AMM {
         }
     }
 
+    /**
+    * @dev validate that baseAssetQuantity <= position.size should be performed before the call to _reducePosition
+    */
     function _reducePosition(address trader, int256 baseAssetQuantity, uint quoteAssetLimit)
         internal
         returns (int realizedPnl)
@@ -94,30 +88,79 @@ contract AMM {
         log('_reducePosition', baseAssetQuantity, quoteAssetLimit);
         Position storage position = positions[trader];
 
+        (uint256 notionalPosition, int256 unrealizedPnl) = getNotionalPositionAndUnrealizedPnl(trader);
+        realizedPnl = unrealizedPnl * int(abs(baseAssetQuantity)) / int(abs(position.size));
+        int256 unrealizedPnlAfter = unrealizedPnl - realizedPnl;
+
         bool isLongPosition = position.size > 0 ? true : false;
-        uint256 quoteAsset;
+        int256 remainOpenNotional;
+
+        /**
+        * We need to determine the openNotional value of the reduced position now.
+        * We know notionalPosition and unrealizedPnlAfter (unrealizedPnl times the ratio of open position)
+        * notionalPosition = notionalPosition - quoteAsset (exchangedQuoteAssetAmount)
+        * calculate openNotional (it's different depends on long or short side)
+        * long: unrealizedPnl = notionalPosition - openNotional => openNotional = notionalPosition - unrealizedPnl
+        * short: unrealizedPnl = openNotional - notionalPosition => openNotional = notionalPosition + unrealizedPnl
+        */
         if (isLongPosition) {
-            require(baseAssetQuantity < 0, "VAMM._reducePosition.Long: Incorrect direction");
             log('_reducePosition:2', baseAssetQuantity, quoteAssetLimit);
-            quoteAsset = vamm.exchange(2 /* sell base asset */, 0 /* get quote asset */, uint(-baseAssetQuantity) /* exact input */, quoteAssetLimit);
-            // require(quoteAsset >= quoteAssetLimit, "VAMM._reducePosition.Long: Slippage");
-            realizedPnl = int(quoteAsset) - int(position.openNotional);
+            require(baseAssetQuantity < 0, "VAMM._reducePosition.Long: Incorrect direction");
+            uint256 quoteAsset = _short(uint(-baseAssetQuantity), quoteAssetLimit);
+            remainOpenNotional = int256(notionalPosition) - int256(quoteAsset) - unrealizedPnlAfter;
+            /**
+            * Let baseAssetQuantity = Q, position.size = size, by definition of _reducePosition, abs(size) >= abs(Q)
+            * quoteAsset = notionalPosition * Q / size
+            * unrealizedPnlAfter = unrealizedPnl - realizedPnl = unrealizedPnl - unrealizedPnl * Q / size
+            * remainOpenNotional = notionalPosition - notionalPosition * Q / size - unrealizedPnl + unrealizedPnl * Q / size
+            * => remainOpenNotional = notionalPosition(size-Q)/size - unrealizedPnl(size-Q)/size
+            * => remainOpenNotional = (notionalPosition - unrealizedPnl) * (size-Q)/size
+            * Since notionalPosition includes the PnL component, notionalPosition >= unrealizedPnl and size >= Q
+            * Hence remainOpenNotional >= 0
+            */
         } else {
             require(baseAssetQuantity > 0, "VAMM._reducePosition.Short: Incorrect direction");
-            // we don't yet have vamm.exchangeExactOut
-            // quoteAsset = int(vamm.exchangeExactOut(0 /* sell quote asset */, 2 /* purchase shorted asset */, uint(baseAssetQuantity) /* exact output */, 0));
-            // require(quoteAsset <= quoteAssetLimit, "VAMM._reducePosition.Short: Slippage");
-
-            baseAssetQuantity = int(vamm.exchange(0 /* sell quote asset */, 2 /* purchase shorted asset */, quoteAssetLimit, 0));
-            quoteAsset = quoteAssetLimit;
-
-            realizedPnl = int(position.openNotional) - int(quoteAsset);
+            uint256 quoteAsset = _long(uint(baseAssetQuantity), quoteAssetLimit);
+            remainOpenNotional = int256(notionalPosition) - int256(quoteAsset) + unrealizedPnlAfter;
+            /**
+            * Let baseAssetQuantity = Q, position.size = size, by definition of _reducePosition, abs(size) >= abs(Q)
+            * quoteAsset = notionalPosition * Q / size
+            * unrealizedPnlAfter = unrealizedPnl - realizedPnl = unrealizedPnl - unrealizedPnl * Q / size
+            * remainOpenNotional = notionalPosition - notionalPosition * Q / size + unrealizedPnl - unrealizedPnl * Q / size
+            * => remainOpenNotional = notionalPosition(size-Q)/size + unrealizedPnl(size-Q)/size
+            * => remainOpenNotional = (notionalPosition + unrealizedPnl) * (size-Q)/size
+            * => In AMM.sol, unrealizedPnl = position.openNotional - notionalPosition
+            * => notionalPosition + unrealizedPnl >= 0
+            * Hence remainOpenNotional >= 0
+            */
         }
-        // console.logInt(position.size);
-        // console.logInt(baseAssetQuantity);
+        // console.logInt(realizedPnl);
+        // console.logInt(remainOpenNotional);
         position.size += baseAssetQuantity;
-        console.log("position.openNotional", position.openNotional, quoteAsset);
-        position.openNotional -= quoteAsset;
+        require(remainOpenNotional >= 0, "vamm._reducePosition: Unexpected state");
+        position.openNotional = uint(remainOpenNotional);
+    }
+
+    /**
+    * @dev Go long on an asset
+    * @param baseAssetQuantity Exact base asset quantity to go long
+    * @param max_dx Maximum amount of qoute asset to be used while longing baseAssetQuantity. Lower means longing at a lower price (desirable).
+    * @return qouteAssetQuantity quote asset utilised. qouteAssetQuantity / baseAssetQuantity was the average rate.
+      qouteAssetQuantity <= max_dx
+    */
+    function _long(uint baseAssetQuantity, uint max_dx) internal returns (uint256 qouteAssetQuantity) {
+        return vamm.exchangeExactOut(0 /* sell quote asset */, 2 /* purchase base asset */, baseAssetQuantity, max_dx);
+    }
+
+    /**
+    * @dev Go short on an asset
+    * @param baseAssetQuantity Exact base asset quantity to short
+    * @param min_dy Minimum amount of qoute asset to be used while shorting baseAssetQuantity. Higher means shorting at a higher price (desirable).
+    * @return qouteAssetQuantity quote asset utilised. qouteAssetQuantity / baseAssetQuantity was the average short rate.
+      qouteAssetQuantity >= min_dy.
+    */
+    function _short(uint baseAssetQuantity, uint min_dy) internal returns (uint256 qouteAssetQuantity) {
+        return vamm.exchange(2 /* sell base asset */, 0 /* get quote asset */, baseAssetQuantity, min_dy);
     }
 
     /**
@@ -197,7 +240,7 @@ contract AMM {
     // View
 
     function getNotionalPositionAndUnrealizedPnl(address trader)
-        external
+        public
         view
         returns(uint256 notionalPosition, int256 unrealizedPnl)
     {
