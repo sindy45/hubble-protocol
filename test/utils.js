@@ -6,13 +6,13 @@ const _1e18 = ethers.constants.WeiPerEther
 const ZERO = BigNumber.from(0)
 
 function log(position, notionalPosition, unrealizedPnl, marginFraction) {
-    // console.log({
-    //     size: position.size.toString(),
-    //     openNotional: position.openNotional.toString(),
-    //     notionalPosition: notionalPosition.toString(),
-    //     unrealizedPnl: unrealizedPnl.toString(),
-    //     marginFraction: marginFraction.toString()
-    // })
+    console.log({
+        size: position.size.toString(),
+        openNotional: position.openNotional.toString(),
+        notionalPosition: notionalPosition.toString(),
+        unrealizedPnl: unrealizedPnl.toString(),
+        marginFraction: marginFraction.toString()
+    })
 }
 
 async function setupContracts(tradeFee = 0.0005 * 1e6 /* 0.05% */) {
@@ -51,15 +51,10 @@ async function setupContracts(tradeFee = 0.0005 * 1e6 /* 0.05% */) {
         [_1e18.mul(40000) /* btc initial rate */, _1e18.mul(1000) /* eth initial rate */]
     )
     await swap.add_liquidity([
-        _1e6.mul(_1e6), // 1m USDT
+        _1e18.mul(_1e6), // 1m USDT
         _1e6.mul(100).mul(25), // 25 btc
         _1e18.mul(1000) // 1000 eth
     ], 0)
-    // await swap.add_liquidity([
-    //     _1e6.mul(_1e6).mul(_1e6), // 1m USDT
-    //     _1e6.mul(100).mul(25), // 25 btc
-    //     _1e18.mul(1000).mul(1000) // 1000 eth
-    // ], 0)
     // await swap.exchange(0, 2, '100000000', 0)
     const vUSD = await VUSD.deploy()
     ERC20Mintable = await ethers.getContractFactory('ERC20Mintable')
@@ -68,7 +63,7 @@ async function setupContracts(tradeFee = 0.0005 * 1e6 /* 0.05% */) {
     marginAccount = await MarginAccount.deploy(vUSD.address, usdc.address)
     clearingHouse = await ClearingHouse.deploy(
         marginAccount.address,
-        0.03 * 1e6 /* 3% maintenance margin */,
+        0.1 * 1e6 /* 3% maintenance margin */,
         tradeFee
     )
     await marginAccount.setClearingHouse(clearingHouse.address)

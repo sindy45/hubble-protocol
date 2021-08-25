@@ -43,11 +43,9 @@ contract AMM {
         bool isNewPosition = position.size == 0 ? true : false;
         Side side = baseAssetQuantity > 0 ? Side.LONG : Side.SHORT;
         if (isNewPosition || (position.size > 0 ? Side.LONG : Side.SHORT) == side) {
-            quoteAsset = _increasePosition(trader, baseAssetQuantity, quoteAssetLimit);
-            return (0, quoteAsset, true);
-        } else {
-            return _openReversePosition(trader, baseAssetQuantity, quoteAssetLimit);
+            return (0, _increasePosition(trader, baseAssetQuantity, quoteAssetLimit), true);
         }
+        return _openReversePosition(trader, baseAssetQuantity, quoteAssetLimit);
     }
 
     function _increasePosition(address trader, int256 baseAssetQuantity, uint quoteAssetLimit) internal returns(uint quoteAsset) {
@@ -148,7 +146,11 @@ contract AMM {
       qouteAssetQuantity <= max_dx
     */
     function _long(uint baseAssetQuantity, uint max_dx) internal returns (uint256 qouteAssetQuantity) {
-        return vamm.exchangeExactOut(0 /* sell quote asset */, 2 /* purchase base asset */, baseAssetQuantity, max_dx);
+        if (max_dx != type(uint).max) {
+            max_dx *= 1e12;
+        }
+        qouteAssetQuantity = vamm.exchangeExactOut(0 /* sell quote asset */, 2 /* purchase base asset */, baseAssetQuantity, max_dx);
+        qouteAssetQuantity /= 1e12;
     }
 
     /**
@@ -159,7 +161,11 @@ contract AMM {
       qouteAssetQuantity >= min_dy.
     */
     function _short(uint baseAssetQuantity, uint min_dy) internal returns (uint256 qouteAssetQuantity) {
-        return vamm.exchange(2 /* sell base asset */, 0 /* get quote asset */, baseAssetQuantity, min_dy);
+        if (min_dy != type(uint).max) {
+            min_dy *= 1e12;
+        }
+        qouteAssetQuantity = vamm.exchange(2 /* sell base asset */, 0 /* get quote asset */, baseAssetQuantity, min_dy);
+        qouteAssetQuantity /= 1e12;
     }
 
     /**
@@ -199,12 +205,12 @@ contract AMM {
 
     /**
      * @notice get latest cumulative premium fraction.
-     * @return latest cumulative premium fraction in 18 digits
+     * @return premiumFraction latest cumulative premium fraction in 18 digits
      */
-    function getLatestCumulativePremiumFraction() public view returns (int256) {
+    function getLatestCumulativePremiumFraction() public view returns (int256 premiumFraction) {
         uint256 len = cumulativePremiumFractions.length;
         if (len > 0) {
-            return cumulativePremiumFractions[len - 1];
+            premiumFraction = cumulativePremiumFractions[len - 1];
         }
     }
 
@@ -250,11 +256,11 @@ contract AMM {
         bool isLongPosition = position.size > 0 ? true : false;
         // The following considers the Spot price. Should we also look at TWAP price?
         if (isLongPosition) {
-            notionalPosition = vamm.get_dy(2 /* sell base asset */, 0 /* get quote asset */, uint(position.size) /* exact input */);
+            notionalPosition = vamm.get_dy(2 /* sell base asset */, 0 /* get quote asset */, uint(position.size) /* exact input */) / 1e12;
             // console.log("notionalPosition: %s, position.openNotional %s", notionalPosition, position.openNotional);
             unrealizedPnl = int(notionalPosition) - int(position.openNotional);
         } else {
-            notionalPosition = vamm.get_dx(0 /* sell quote asset */, 2 /* purchase shorted asset */, uint(-position.size) /* exact output */);
+            notionalPosition = vamm.get_dx(0 /* sell quote asset */, 2 /* purchase shorted asset */, uint(-position.size) /* exact output */) / 1e12;
             unrealizedPnl = int(position.openNotional) - int(notionalPosition);
         }
     }

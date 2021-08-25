@@ -21,7 +21,11 @@ contract ClearingHouse {
     }
 
     function openPosition(uint idx, int256 baseAssetQuantity, uint quoteAssetLimit) external {
-        address trader = msg.sender;
+        _openPosition(msg.sender, idx, baseAssetQuantity, quoteAssetLimit);
+    }
+
+    function _openPosition(address trader, uint idx, int256 baseAssetQuantity, uint quoteAssetLimit) internal {
+        require(baseAssetQuantity != 0, "CH: baseAssetQuantity == 0");
         updatePositions(trader);
         (int realizedPnl, uint quoteAsset, bool isPositionIncreased) = amms[idx].openPosition(trader, baseAssetQuantity, quoteAssetLimit);
         uint _tradeFee = quoteAsset * tradeFee / uint(PRECISION);
@@ -65,7 +69,7 @@ contract ClearingHouse {
         // console.logInt(unrealizedPnl);
         int256 accountValue = int256(margin) + unrealizedPnl;
         // console.logInt(accountValue);
-        if (notionalPosition == 0) {
+        if (notionalPosition == 0) { // @todo what if accountValue is -ve?
             return type(int256).max;
         }
         // console.logInt(accountValue * PRECISION / notionalPosition);

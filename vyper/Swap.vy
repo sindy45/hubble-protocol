@@ -191,7 +191,7 @@ PRICE_MASK: constant(uint256) = 2**PRICE_SIZE - 1
 # N_COINS = 4 -> 10**8  (10**18 -> 10**10)
 # PRICE_PRECISION_MUL: constant(uint256) = 1
 PRECISIONS: constant(uint256[N_COINS]) = [
-    1000000000000,
+    1,
     10000000000,
     1,
 ]
@@ -698,7 +698,7 @@ def exchange(i: uint256, j: uint256, dx: uint256, min_dy: uint256) -> uint256:
                 p = _dy * 10**18 / _dx
                 ix = i
 
-    self.tweak_price(A_gamma, xp, ix, p, 0)
+    # self.tweak_price(A_gamma, xp, ix, p, 0)
 
     log TokenExchange(msg.sender, i, dx, j, dy)
     return dy
