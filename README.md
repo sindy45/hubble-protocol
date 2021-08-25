@@ -1,4 +1,4 @@
-# Perpetuals | Optimism
+# Hubble Exchange
 
 Vyper compilation with hardhat takes a ton of time and is performed on every run (no caching). Therefore, we place .vy files outside the contracts directory and manually compile and dump the abi and bytecode in files that are then picked up in the tests.
 
