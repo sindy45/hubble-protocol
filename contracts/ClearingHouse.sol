@@ -1,5 +1,6 @@
 pragma solidity 0.8.4;
 
+import "./VUSD.sol";
 import "hardhat/console.sol";
 
 contract ClearingHouse {
@@ -8,16 +9,21 @@ contract ClearingHouse {
 
     int256 public maintenanceMargin;
     uint public tradeFee;
+    uint public liquidationPenalty;
 
+    VUSD public vusd;
+    address public insuranceFund = address(0x1);
     IMarginAccount public marginAccount;
     IAMM[] public amms;
 
     event PositionOpened(uint indexed idx, int256 indexed baseAssetQuantity, uint indexed quoteAsset);
 
-    constructor(IMarginAccount _marginAccount, int256 _maintenanceMargin, uint _tradeFee) {
+    constructor(IMarginAccount _marginAccount, int256 _maintenanceMargin, uint _tradeFee, uint _liquidationPenalty, address _vusd) {
         marginAccount = _marginAccount;
         maintenanceMargin = _maintenanceMargin;
         tradeFee = _tradeFee;
+        liquidationPenalty = _liquidationPenalty;
+        vusd = VUSD(_vusd);
     }
 
     function openPosition(uint idx, int256 baseAssetQuantity, uint quoteAssetLimit) external {
@@ -28,13 +34,9 @@ contract ClearingHouse {
         require(baseAssetQuantity != 0, "CH: baseAssetQuantity == 0");
         updatePositions(trader);
         (int realizedPnl, uint quoteAsset, bool isPositionIncreased) = amms[idx].openPosition(trader, baseAssetQuantity, quoteAssetLimit);
-        uint _tradeFee = quoteAsset * tradeFee / uint(PRECISION);
-        // console.log("_tradeFee", _tradeFee);
-        int256 marginCharge = realizedPnl - int(_tradeFee);
+        uint _tradeFee = _chargeFeeAndRealizePnL(trader, realizedPnl, quoteAsset, false /* isLiquidation */);
+        vusd.mint(insuranceFund, _tradeFee);
         // @todo credit trading fee to insurance fund
-        if (marginCharge != 0) {
-            marginAccount.realizePnL(trader, marginCharge);
-        }
         if (isPositionIncreased) {
             require(isAboveMaintenanceMargin(trader), "CH: Below Maintenance Margin");
         }
@@ -53,6 +55,40 @@ contract ClearingHouse {
         // @todo should only receive this if user doesn't have bad debt
         // and/or open positions that make the user position insolvent
         marginAccount.realizePnL(trader, -fundingPayment / 1e12);
+    }
+
+    function liquidate(address trader) external {
+        require(getMarginFraction(trader) < maintenanceMargin, "Above Maintenance Margin");
+        int realizedPnl;
+        uint quoteAsset;
+        for (uint i = 0; i < amms.length; i++) { // liquidate all positions
+            (int _realizedPnl, uint _quoteAsset) = amms[i].closePosition(trader);
+            realizedPnl += _realizedPnl;
+            quoteAsset += _quoteAsset;
+        }
+        // extra liquidation penalty
+        uint _liquidationFee = _chargeFeeAndRealizePnL(trader, realizedPnl, quoteAsset, true /* isLiquidation */);
+        uint _toInsurance = _liquidationFee / 2;
+        vusd.mint(insuranceFund, _toInsurance);
+        vusd.mint(msg.sender, _liquidationFee - _toInsurance);
+    }
+
+    function _chargeFeeAndRealizePnL(address trader, int realizedPnl, uint quoteAsset, bool isLiquidation) internal returns (uint fee) {
+        fee = isLiquidation ? _calculateLiquidationPenalty(quoteAsset) : _calculateTradeFee(quoteAsset);
+        int256 marginCharge = realizedPnl - int(fee);
+        if (marginCharge != 0) {
+            marginAccount.realizePnL(trader, marginCharge);
+        }
+    }
+
+    // View
+
+    function _calculateTradeFee(uint quoteAsset) internal view returns (uint) {
+        return quoteAsset * tradeFee / uint(PRECISION);
+    }
+
+    function _calculateLiquidationPenalty(uint quoteAsset) internal view returns (uint) {
+        return quoteAsset * liquidationPenalty / uint(PRECISION);
     }
 
     function isAboveMaintenanceMargin(address trader) public view returns(bool) {
@@ -104,6 +140,7 @@ interface IAMM {
         view
         returns(int256 notionalPosition, int256 unrealizedPnl);
     function updatePosition(address trader) external returns(int256 fundingPayment);
+    function closePosition(address trader) external returns (int realizedPnl, uint quoteAsset);
 }
 
 interface IMarginAccount {

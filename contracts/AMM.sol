@@ -48,6 +48,21 @@ contract AMM {
         return _openReversePosition(trader, baseAssetQuantity, quoteAssetLimit);
     }
 
+    function closePosition(address trader)
+        onlyClearingHouse
+        external
+        returns (int realizedPnl, uint quoteAsset)
+    {
+        Position memory position = positions[trader];
+        bool isLongPosition = position.size > 0 ? true : false;
+        // sending market orders can fk the trader. @todo put some safe guards around price of liquidations
+        if (isLongPosition) {
+            (realizedPnl, quoteAsset) = _reducePosition(trader, -position.size, 0);
+        } else {
+            (realizedPnl, quoteAsset) = _reducePosition(trader, -position.size, type(uint).max);
+        }
+    }
+
     function _increasePosition(address trader, int256 baseAssetQuantity, uint quoteAssetLimit) internal returns(uint quoteAsset) {
         log('_increasePosition', baseAssetQuantity, quoteAssetLimit);
         if (baseAssetQuantity >= 0) { // Long - purchase baseAssetQuantity

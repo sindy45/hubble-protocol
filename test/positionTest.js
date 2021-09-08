@@ -1,13 +1,13 @@
 const { expect } = require('chai');
 
-const { constants: { _1e6, _1e18, ZERO }, log, filterEvent, setupContracts } = require('./utils')
+const { constants: { _1e6, _1e18, ZERO }, log, getTradeDetails, setupContracts } = require('./utils')
 const TRADE_FEE = 0.000567 * _1e6
 
 describe('Position Tests', function() {
     beforeEach('contract factories', async function() {
         signers = await ethers.getSigners()
         ;([ alice ] = signers.map(s => s.address))
-        ;({ swap, marginAccount, clearingHouse, amm, vUSD, usdc } = await setupContracts(TRADE_FEE))
+        ;({ swap, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc } = await setupContracts(TRADE_FEE))
 
         // add margin
         margin = _1e6.mul(1000)
@@ -20,7 +20,7 @@ describe('Position Tests', function() {
             amount = _1e6.mul(5025) // ~5x leverage
 
             const tx = await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* long exactly */, amount /* max_dx */)
-            ;({ quoteAsset, fee } = await getTradeDetails(tx))
+            ;({ quoteAsset, fee } = await getTradeDetails(tx, TRADE_FEE))
 
             // this asserts that long was executed at a price <= amount
             expect(quoteAsset.lte(amount)).to.be.true
@@ -39,10 +39,10 @@ describe('Position Tests', function() {
             amount = _1e6.mul(4050)
 
             let tx = await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* long exactly */, amount /* max_dx */)
-            const trade1 = await getTradeDetails(tx)
+            const trade1 = await getTradeDetails(tx, TRADE_FEE)
 
             tx = await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* long exactly */, amount /* max_dx */)
-            const trade2 = await getTradeDetails(tx)
+            const trade2 = await getTradeDetails(tx, TRADE_FEE)
 
             const quoteAsset = trade1.quoteAsset.add(trade2.quoteAsset)
             const fee = trade1.fee.add(trade2.fee)
@@ -64,7 +64,7 @@ describe('Position Tests', function() {
             amount = _1e6.mul(4975)
 
             let tx = await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* exact base asset */, amount /* min_dy */)
-            ;({ quoteAsset, fee } = await getTradeDetails(tx))
+            ;({ quoteAsset, fee } = await getTradeDetails(tx, TRADE_FEE))
 
             // this asserts that short was executed at a price >= amount
             expect(quoteAsset.gte(amount)).to.be.true
@@ -83,10 +83,10 @@ describe('Position Tests', function() {
             amount = _1e6.mul(4900)
 
             let tx = await clearingHouse.openPosition(0 /* amm index */, '-' + baseAssetQuantity /* exact base asset */, amount)
-            const trade1 = await getTradeDetails(tx)
+            const trade1 = await getTradeDetails(tx, TRADE_FEE)
 
             tx = await clearingHouse.openPosition(0 /* amm index */, '-' + baseAssetQuantity /* exact base asset */, amount)
-            const trade2 = await getTradeDetails(tx)
+            const trade2 = await getTradeDetails(tx, TRADE_FEE)
 
             const quoteAsset = trade1.quoteAsset.add(trade2.quoteAsset)
             const fee = trade1.fee.add(trade2.fee)
@@ -136,11 +136,11 @@ describe('Position Tests', function() {
         it('long + bigger short + bigger long', async () => {
             // Long
             let tx = await clearingHouse.openPosition(0 /* amm index */, _1e18.mul(5) /* long exactly */, ethers.constants.MaxUint256 /* long at any price */)
-            const trade1 = await getTradeDetails(tx)
+            const trade1 = await getTradeDetails(tx, TRADE_FEE)
 
             // Short
             tx = await clearingHouse.openPosition(0 /* amm index */, _1e18.mul(-7) /* exact base asset */, 0 /* short at any price */)
-            const trade2 = await getTradeDetails(tx)
+            const trade2 = await getTradeDetails(tx, TRADE_FEE)
 
             let fee = trade1.fee.add(trade2.fee)
 
@@ -152,7 +152,7 @@ describe('Position Tests', function() {
 
             // Long
             tx = await clearingHouse.openPosition(0 /* amm index */, _1e18.mul(10) /* long exactly */, _1e6.mul(10100)) // long at <= 10100
-            const trade3 = await getTradeDetails(tx)
+            const trade3 = await getTradeDetails(tx, TRADE_FEE)
             fee = fee.add(trade3.fee)
 
             await assertions(alice, {
@@ -165,11 +165,11 @@ describe('Position Tests', function() {
         it('short + bigger long + bigger short', async () => {
             // Short
             let tx = await clearingHouse.openPosition(0 /* amm index */, _1e18.mul(-5) /* short exactly */, 0 /* short at any price */)
-            const trade1 = await getTradeDetails(tx)
+            const trade1 = await getTradeDetails(tx, TRADE_FEE)
 
             // Long
             tx = await clearingHouse.openPosition(0 /* amm index */, _1e18.mul(7) /* exact base asset */, _1e6.mul(7100))
-            const trade2 = await getTradeDetails(tx)
+            const trade2 = await getTradeDetails(tx, TRADE_FEE)
 
             let fee = trade1.fee.add(trade2.fee)
 
@@ -181,7 +181,7 @@ describe('Position Tests', function() {
 
             // Short
             tx = await clearingHouse.openPosition(0 /* amm index */, _1e18.mul(-10) /* long exactly */, 0)
-            const trade3 = await getTradeDetails(tx)
+            const trade3 = await getTradeDetails(tx, TRADE_FEE)
             fee = fee.add(trade3.fee)
 
             await assertions(alice, {
@@ -218,7 +218,7 @@ describe('Position Tests', function() {
         it('close a safe position', async () => {
             // alice shorts
             let tx = await clearingHouse.openPosition(0, _1e18.mul(-5), 0)
-            const trade1 = await getTradeDetails(tx)
+            const trade1 = await getTradeDetails(tx, TRADE_FEE)
 
             // bob longs
             const bob = signers[1]
@@ -232,7 +232,7 @@ describe('Position Tests', function() {
             expect(unrealizedPnl.lt(0)).to.be.true // loss
 
             tx = await clearingHouse.openPosition(0, _1e18.mul(5), _1e6.mul(5100))
-            const trade2 = await getTradeDetails(tx)
+            const trade2 = await getTradeDetails(tx, TRADE_FEE)
             let fee = trade1.fee.add(trade2.fee)
 
             expect(await marginAccount.getNormalizedMargin(alice)).to.eq(margin.add(unrealizedPnl).sub(fee))
@@ -252,7 +252,7 @@ describe('Position Tests', function() {
         it('close a position which is slightly over maintenanceMarginRatio', async () => {
             // alice shorts
             let tx = await clearingHouse.openPosition(0, _1e18.mul(-5), 0)
-            const trade1 = await getTradeDetails(tx)
+            const trade1 = await getTradeDetails(tx, TRADE_FEE)
 
             // bob longs
             const bob = signers[1]
@@ -266,7 +266,7 @@ describe('Position Tests', function() {
             expect(unrealizedPnl.lt(0)).to.be.true // loss
 
             tx = await clearingHouse.openPosition(0, _1e18.mul(5), _1e6.mul(100100))
-            const trade2 = await getTradeDetails(tx)
+            const trade2 = await getTradeDetails(tx, TRADE_FEE)
             let fee = trade1.fee.add(trade2.fee)
 
             expect(await marginAccount.getNormalizedMargin(alice)).to.eq(margin.add(unrealizedPnl).sub(fee))
@@ -286,7 +286,7 @@ describe('Position Tests', function() {
         it('close an under collateral position', async () => {
             // alice shorts
             let tx = await clearingHouse.openPosition(0, _1e18.mul(-5), 0)
-            const trade1 = await getTradeDetails(tx)
+            const trade1 = await getTradeDetails(tx, TRADE_FEE)
 
             // bob longs
             const bob = signers[1]
@@ -300,7 +300,7 @@ describe('Position Tests', function() {
             expect(unrealizedPnl.lt(0)).to.be.true // loss
 
             tx = await clearingHouse.openPosition(0, _1e18.mul(5), _1e6.mul(100100))
-            const trade2 = await getTradeDetails(tx)
+            const trade2 = await getTradeDetails(tx, TRADE_FEE)
             let fee = trade1.fee.add(trade2.fee)
 
             expect(await marginAccount.getNormalizedMargin(alice)).to.eq(margin.add(unrealizedPnl).sub(fee))
@@ -316,22 +316,39 @@ describe('Position Tests', function() {
             ;({ unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(bob.address))
             expect(unrealizedPnl.gt(0)).to.be.true // profit
         })
+
+        it('liquidation', async () => {
+            // alice shorts
+            let tx = await clearingHouse.openPosition(0, _1e18.mul(-5), 0)
+            const trade1 = await getTradeDetails(tx, TRADE_FEE)
+
+            // bob longs
+            const bob = signers[1]
+            await addMargin(bob, _1e6.mul(10000))
+            await clearingHouse.connect(bob).openPosition(0, _1e18.mul(45), _1e6.mul(50000))
+
+            // console.log((await clearingHouse.getMarginFraction(alice)).toString())
+            expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
+
+            ;({ notionalPosition, unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(alice))
+            expect(unrealizedPnl.lt(0)).to.be.true // loss
+
+            // console.log(notionalPosition.toString())
+            await clearingHouse.connect(signers[2]).liquidate(alice)
+
+            const liquidationPenalty = notionalPosition.mul(5e4).div(_1e6)
+            const toInsurance = liquidationPenalty.div(2)
+            // console.log((await vusd.balanceOf(signers[2].address)).toString())
+            expect(await vusd.balanceOf(signers[2].address)).to.eq(liquidationPenalty.sub(toInsurance)) // liquidation penalty
+        })
     })
 
     async function addMargin(trader, margin) {
         await usdc.mint(trader.address, margin)
-        await usdc.connect(trader).approve(marginAccount.address, margin)
-        await marginAccount.connect(trader).addUSDCMargin(margin)
+        await usdc.connect(trader).approve(marginAccountHelper.address, margin)
+        await marginAccountHelper.connect(trader).addVUSDMarginWithReserve(margin)
     }
 })
-
-async function getTradeDetails(tx) {
-    const positionOpenEvent = await filterEvent(tx, 'PositionOpened')
-    return {
-        quoteAsset: positionOpenEvent.args.quoteAsset,
-        fee: positionOpenEvent.args.quoteAsset.mul(TRADE_FEE).div(_1e6)
-    }
-}
 
 async function assertions(trader, vals, shouldLog) {
     const position = await amm.positions(trader)
