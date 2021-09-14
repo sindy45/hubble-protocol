@@ -1,4 +1,8 @@
+// SPDX-License-Identifier: MIT
+
 pragma solidity 0.8.4;
+
+import { IOracle, IRegistry } from "./Interfaces.sol";
 
 import "hardhat/console.sol";
 
@@ -10,8 +14,11 @@ contract AMM {
         int256 lastUpdatedCumulativePremiumFraction;
     }
     mapping(address => Position) public positions;
-    address public clearingHouse;
 
+    address public underlyingAsset;
+    IRegistry public registry;
+
+    address public clearingHouse;
     uint256 public spotPriceTwapInterval;
     uint256 public fundingPeriod;
     uint256 public fundingBufferPeriod;
@@ -28,10 +35,13 @@ contract AMM {
         _;
     }
 
-    constructor(address _clearingHouse, address _vamm) {
+    constructor(address _clearingHouse, address _vamm, address _underlyingAsset, address _registry) {
         vamm = IVAMM(_vamm);
         clearingHouse = _clearingHouse;
         fundingPeriod = 1 hours;
+        spotPriceTwapInterval = 1 hours;
+        underlyingAsset = _underlyingAsset;
+        registry = IRegistry(_registry);
     }
 
     function openPosition(address trader, int256 baseAssetQuantity, uint quoteAssetLimit)
@@ -242,11 +252,13 @@ contract AMM {
     }
 
     function getUnderlyingTwapPrice(uint256 _intervalInSeconds) public view returns (int256) {
-        return int256(vamm.last_prices(1));
+        return IOracle(registry.getOracle()).getUnderlyingTwapPrice(underlyingAsset, _intervalInSeconds);
+        // return int256(vamm.last_prices(1));
     }
 
-    function getTwapPrice(uint256 _intervalInSeconds) public view returns (int256) {
-        return int256(vamm.price_oracle(1));
+    function getTwapPrice(uint256 /* _intervalInSeconds */) public view returns (int256) {
+        return int256(vamm.last_prices(1)) / 1e12;
+        // return int256(vamm.price_oracle(1));
     }
 
     function updateFundingRate(

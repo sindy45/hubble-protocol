@@ -2,16 +2,15 @@ const { expect } = require('chai');
 
 const { constants: { _1e6, _1e18, ZERO }, getTradeDetails, setupContracts } = require('./utils')
 
-describe('liquidation', async function() {
+describe('Liquidation Tests', async function() {
     before('contract factories', async function() {
         signers = await ethers.getSigners()
         ;([ _, bob, liquidator1, liquidator2 ] = signers)
         alice = signers[0].address
-        ;({ swap, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, oracle } = await setupContracts())
+        ;({ swap, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, oracle, weth } = await setupContracts())
     })
 
     it('addCollateral', async () => {
-        weth = await ERC20Mintable.deploy('weth', 'weth', 18)
         await oracle.setPrice(weth.address, 1e6 * 2000) // $2k
         await marginAccount.addCollateral(weth.address, 0.7 * 1e6) // weight = 0.7
     })

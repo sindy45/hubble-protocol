@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 pragma solidity 0.8.4;
 
 import "./VUSD.sol";
@@ -54,7 +56,7 @@ contract ClearingHouse {
         // console.logInt(-fundingPayment / 1e12);
         // @todo should only receive this if user doesn't have bad debt
         // and/or open positions that make the user position insolvent
-        marginAccount.realizePnL(trader, -fundingPayment / 1e12);
+        marginAccount.realizePnL(trader, -fundingPayment);
     }
 
     function liquidate(address trader) external {

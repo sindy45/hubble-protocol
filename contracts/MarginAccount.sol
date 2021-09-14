@@ -1,8 +1,12 @@
+// SPDX-License-Identifier: MIT
+
 pragma solidity 0.8.4;
 
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+
+import { IOracle } from "./Interfaces.sol";
 
 import "./VUSD.sol";
 import "hardhat/console.sol";
@@ -121,10 +125,6 @@ contract MarginAccount is Ownable {
             })
         );
     }
-}
-
-interface IOracle {
-    function getUnderlyingPrice(address asset) external view returns(int256);
 }
 
 interface IClearingHouse {

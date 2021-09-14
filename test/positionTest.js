@@ -1,6 +1,6 @@
 const { expect } = require('chai');
 
-const { constants: { _1e6, _1e18, ZERO }, log, getTradeDetails, setupContracts } = require('./utils')
+const { constants: { _1e6, _1e18, ZERO }, log, assertions, getTradeDetails, setupContracts } = require('./utils')
 const TRADE_FEE = 0.000567 * _1e6
 
 describe('Position Tests', function() {
@@ -25,7 +25,7 @@ describe('Position Tests', function() {
             // this asserts that long was executed at a price <= amount
             expect(quoteAsset.lte(amount)).to.be.true
 
-            await assertions(alice, {
+            await assertions(amm, clearingHouse, alice, {
                 size: baseAssetQuantity,
                 openNotional: quoteAsset,
                 notionalPosition: quoteAsset,
@@ -50,7 +50,7 @@ describe('Position Tests', function() {
             // this asserts that long was executed at a price <= amount
             expect(quoteAsset.lte(amount.mul(2))).to.be.true
 
-            await assertions(alice, {
+            await assertions(amm, clearingHouse, alice, {
                 size: baseAssetQuantity.mul(2),
                 openNotional: quoteAsset,
                 notionalPosition: quoteAsset,
@@ -69,7 +69,7 @@ describe('Position Tests', function() {
             // this asserts that short was executed at a price >= amount
             expect(quoteAsset.gte(amount)).to.be.true
 
-            await assertions(alice, {
+            await assertions(amm, clearingHouse, alice, {
                 size: baseAssetQuantity,
                 openNotional: quoteAsset,
                 notionalPosition: quoteAsset,
@@ -94,7 +94,7 @@ describe('Position Tests', function() {
             // this asserts that short was executed at a price >= amount
             expect(quoteAsset.gte(amount.mul(2))).to.be.true
 
-            await assertions(alice, {
+            await assertions(amm, clearingHouse, alice, {
                 size: baseAssetQuantity.mul(-2),
                 openNotional: quoteAsset,
                 notionalPosition: quoteAsset.add(1), // anomaly: 1 more than expected, which leads to unrealizedPnl = -1
@@ -109,7 +109,7 @@ describe('Position Tests', function() {
             await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* long exactly */, ethers.constants.MaxUint256 /* max_dx */)
             await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity.mul(-1) /* exact base asset */, 0 /* min_dy */)
 
-            await assertions(alice, {
+            await assertions(amm, clearingHouse, alice, {
                 size: ZERO,
                 openNotional: ZERO,
                 notionalPosition: ZERO,
@@ -124,7 +124,7 @@ describe('Position Tests', function() {
             await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity.mul(-1) /* exact base asset */, 0 /* min_dy */)
             await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* long exactly */, ethers.constants.MaxUint256 /* max_dx */)
 
-            await assertions(alice, {
+            await assertions(amm, clearingHouse, alice, {
                 size: ZERO,
                 openNotional: ZERO,
                 notionalPosition: ZERO,
@@ -144,7 +144,7 @@ describe('Position Tests', function() {
 
             let fee = trade1.fee.add(trade2.fee)
 
-            await assertions(alice, {
+            await assertions(amm, clearingHouse, alice, {
                 size: _1e18.mul(-2), // 5 - 7
                 unrealizedPnl: ZERO,
                 marginFractionNumerator: margin.sub(fee)
@@ -155,7 +155,7 @@ describe('Position Tests', function() {
             const trade3 = await getTradeDetails(tx, TRADE_FEE)
             fee = fee.add(trade3.fee)
 
-            await assertions(alice, {
+            await assertions(amm, clearingHouse, alice, {
                 size: _1e18.mul(8), // 5 - 7 + 10
                 unrealizedPnl: 0, // anomaly: ideally be 0
                 marginFractionNumerator: margin.sub(fee).add(-1)
@@ -173,7 +173,7 @@ describe('Position Tests', function() {
 
             let fee = trade1.fee.add(trade2.fee)
 
-            await assertions(alice, {
+            await assertions(amm, clearingHouse, alice, {
                 size: _1e18.mul(2), // -5 + 7
                 unrealizedPnl: 0,
                 marginFractionNumerator: margin.sub(fee)
@@ -184,7 +184,7 @@ describe('Position Tests', function() {
             const trade3 = await getTradeDetails(tx, TRADE_FEE)
             fee = fee.add(trade3.fee)
 
-            await assertions(alice, {
+            await assertions(amm, clearingHouse, alice, {
                 size: _1e18.mul(-8), // -5 + 7 - 10
                 unrealizedPnl: 0,
                 marginFractionNumerator: margin.sub(fee)
@@ -193,24 +193,6 @@ describe('Position Tests', function() {
 
         it("open an empty position", async () => {
             await expect(clearingHouse.openPosition(0, 0, 0)).to.be.revertedWith('CH: baseAssetQuantity == 0')
-        })
-
-        it.skip('settleFunding', async function() {
-            const underlyingTwapPrice = await amm.getUnderlyingTwapPrice(0)
-            const twapPrice = await amm.getTwapPrice(0)
-            const premium = await amm.callStatic.settleFunding()
-            await amm.settleFunding()
-            console.log({
-                premium: premium.toString(),
-                underlyingTwapPrice: underlyingTwapPrice.toString(),
-                twapPrice: twapPrice.toString(),
-                fundingRate: (await amm.fundingRate()).toString()
-            })
-            const normalizedMargin = await marginAccount.getNormalizedMargin(alice)
-            console.log({ normalizedMargin: normalizedMargin.toString()})
-            await clearingHouse.updatePositions(alice)
-            // short position so margin should increase
-            expect((await marginAccount.getNormalizedMargin(alice)).gt(normalizedMargin)).to.be.true
         })
     })
 
@@ -236,7 +218,7 @@ describe('Position Tests', function() {
             let fee = trade1.fee.add(trade2.fee)
 
             expect(await marginAccount.getNormalizedMargin(alice)).to.eq(margin.add(unrealizedPnl).sub(fee))
-            await assertions(alice, {
+            await assertions(amm, clearingHouse, alice, {
                 size: ZERO,
                 openNotional: ZERO,
                 notionalPosition: ZERO,
@@ -270,7 +252,7 @@ describe('Position Tests', function() {
             let fee = trade1.fee.add(trade2.fee)
 
             expect(await marginAccount.getNormalizedMargin(alice)).to.eq(margin.add(unrealizedPnl).sub(fee))
-            await assertions(alice, {
+            await assertions(amm, clearingHouse, alice, {
                 size: ZERO,
                 openNotional: ZERO,
                 notionalPosition: ZERO,
@@ -304,7 +286,7 @@ describe('Position Tests', function() {
             let fee = trade1.fee.add(trade2.fee)
 
             expect(await marginAccount.getNormalizedMargin(alice)).to.eq(margin.add(unrealizedPnl).sub(fee))
-            await assertions(alice, {
+            await assertions(amm, clearingHouse, alice, {
                 size: ZERO,
                 openNotional: ZERO,
                 notionalPosition: ZERO,
@@ -349,34 +331,3 @@ describe('Position Tests', function() {
         await marginAccountHelper.connect(trader).addVUSDMarginWithReserve(margin)
     }
 })
-
-async function assertions(trader, vals, shouldLog) {
-    const position = await amm.positions(trader)
-    const { notionalPosition, unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(trader)
-    const marginFraction = await clearingHouse.getMarginFraction(trader)
-
-    if (shouldLog) {
-        log(position, notionalPosition, unrealizedPnl, marginFraction)
-    }
-
-    if (vals.size != null) {
-        expect(position.size).to.eq(vals.size)
-    }
-    if (vals.openNotional != null) {
-        expect(position.openNotional).to.eq(vals.openNotional)
-    }
-    if (vals.notionalPosition != null) {
-        expect(notionalPosition).to.eq(vals.notionalPosition)
-    }
-    if (vals.unrealizedPnl != null) {
-        expect(unrealizedPnl).to.eq(vals.unrealizedPnl)
-    }
-    if (vals.marginFractionNumerator != null) {
-        expect(marginFraction).to.eq(vals.marginFractionNumerator.mul(_1e6).div(notionalPosition))
-    }
-    if (vals.marginFraction != null) {
-        expect(marginFraction).to.eq(vals.marginFraction)
-    }
-
-    return { position, notionalPosition, unrealizedPnl, marginFraction }
-}

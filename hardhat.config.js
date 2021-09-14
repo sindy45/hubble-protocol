@@ -1,5 +1,6 @@
 require("@nomiclabs/hardhat-waffle");
 require('@nomiclabs/hardhat-web3')
+require('hardhat-spdx-license-identifier')
 // require("@nomiclabs/hardhat-vyper");
 
 // This is a sample Hardhat task. To learn how to create your own go to
@@ -22,5 +23,8 @@ module.exports = {
   solidity: "0.8.4",
   vyper: {
       version: "0.2.12",
+  },
+  spdxLicenseIdentifier: {
+    runOnCompile: true
   }
 };

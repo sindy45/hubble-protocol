@@ -1,3 +1,5 @@
+const { expect } = require('chai');
+
 const fs = require('fs')
 const { BigNumber } = require('ethers')
 
@@ -27,13 +29,14 @@ async function setupContracts(tradeFee = DEFAULT_TRADE_FEE) {
     abiAndBytecode = fs.readFileSync('./vyper/Swap.txt').toString().split('\n').filter(Boolean)
     Swap = new ethers.ContractFactory(JSON.parse(abiAndBytecode[0]), abiAndBytecode[1], signers[0])
 
-    ;([ ClearingHouse, AMM, MarginAccount, MarginAccountHelper, VUSD, Oracle ] = await Promise.all([
+    ;([ ClearingHouse, AMM, MarginAccount, MarginAccountHelper, VUSD, Oracle, Registry ] = await Promise.all([
         ethers.getContractFactory('ClearingHouse'),
         ethers.getContractFactory('AMM'),
         ethers.getContractFactory('MarginAccount'),
         ethers.getContractFactory('MarginAccountHelper'),
         ethers.getContractFactory('VUSD'),
-        ethers.getContractFactory('Oracle')
+        ethers.getContractFactory('Oracle'),
+        ethers.getContractFactory('Registry'),
     ]))
     moonMath = await MoonMath.deploy()
     views = await Views.deploy(moonMath.address)
@@ -65,6 +68,7 @@ async function setupContracts(tradeFee = DEFAULT_TRADE_FEE) {
     const vusd = await VUSD.deploy(usdc.address)
     oracle = await Oracle.deploy()
     await oracle.setPrice(vusd.address, 1e6) // $1
+    registry = await Registry.deploy(oracle.address)
 
     marginAccount = await MarginAccount.deploy(vusd.address, oracle.address)
     marginAccountHelper = await MarginAccountHelper.deploy(marginAccount.address, vusd.address)
@@ -80,10 +84,11 @@ async function setupContracts(tradeFee = DEFAULT_TRADE_FEE) {
     await marginAccount.setClearingHouse(clearingHouse.address)
 
     // whitelistAmm
-    amm = await AMM.deploy(clearingHouse.address, swap.address)
+    weth = await ERC20Mintable.deploy('weth', 'weth', 18)
+    amm = await AMM.deploy(clearingHouse.address, swap.address, weth.address, registry.address)
     await clearingHouse.whitelistAmm(amm.address)
 
-    return { swap, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, oracle }
+    return { swap, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, weth, oracle }
 }
 
 async function filterEvent(tx, name) {
@@ -99,7 +104,38 @@ async function getTradeDetails(tx, tradeFee = DEFAULT_TRADE_FEE) {
     }
 }
 
+async function assertions(amm, clearingHouse, trader, vals, shouldLog) {
+    const position = await amm.positions(trader)
+    const { notionalPosition, unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(trader)
+    const marginFraction = await clearingHouse.getMarginFraction(trader)
+
+    if (shouldLog) {
+        log(position, notionalPosition, unrealizedPnl, marginFraction)
+    }
+
+    if (vals.size != null) {
+        expect(position.size).to.eq(vals.size)
+    }
+    if (vals.openNotional != null) {
+        expect(position.openNotional).to.eq(vals.openNotional)
+    }
+    if (vals.notionalPosition != null) {
+        expect(notionalPosition).to.eq(vals.notionalPosition)
+    }
+    if (vals.unrealizedPnl != null) {
+        expect(unrealizedPnl).to.eq(vals.unrealizedPnl)
+    }
+    if (vals.marginFractionNumerator != null) {
+        expect(marginFraction).to.eq(vals.marginFractionNumerator.mul(_1e6).div(notionalPosition))
+    }
+    if (vals.marginFraction != null) {
+        expect(marginFraction).to.eq(vals.marginFraction)
+    }
+
+    return { position, notionalPosition, unrealizedPnl, marginFraction }
+}
+
 module.exports = {
     constants: { _1e6, _1e18, ZERO },
-    log, setupContracts, filterEvent, getTradeDetails
+    log, setupContracts, filterEvent, getTradeDetails, assertions
 }
