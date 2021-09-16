@@ -32,6 +32,8 @@ contract MarginAccount is Ownable {
     // supportedCollateral index => trader => balance
     mapping(uint => mapping(address => int)) public margin;
 
+    event MarginAdded(address trader, uint idx, uint amount);
+
     modifier onlyClearingHouse() {
         require(msg.sender == address(clearingHouse), "Only clearingHouse");
         _;
@@ -43,14 +45,17 @@ contract MarginAccount is Ownable {
     }
 
     // Add Margin functions
-    function addMarginFor(uint idx, uint amount, address to) external {
-        supportedCollateral[idx].token.safeTransferFrom(msg.sender, address(this), amount);
-        margin[idx][to] += int(amount);
-    }
 
     function addMargin(uint idx, uint amount) external {
+        addMarginFor(idx, amount, msg.sender);
+    }
+
+    function addMarginFor(uint idx, uint amount, address to) public {
+        require(amount > 0, "Add non-zero margin");
+        // will revert for idx >= supportedCollateral.length
         supportedCollateral[idx].token.safeTransferFrom(msg.sender, address(this), amount);
-        margin[idx][msg.sender] += int(amount);
+        margin[idx][to] += int(amount);
+        emit MarginAdded(to, idx, amount);
     }
 
     function removeMargin(uint idx, uint256 amount) external {
@@ -106,13 +111,18 @@ contract MarginAccount is Ownable {
         clearingHouse = _clearingHouse;
     }
 
+    // @todo rename to whitelistCollateral
     function addCollateral(address _coin, uint _weight) external onlyOwner {
         _addCollateral(_coin, _weight);
     }
 
+    // @todo function to change weight of an asset
+
     // Internal
 
     function _addCollateral(address _coin, uint _weight) internal {
+        require(_weight <= PRECISION, "weight > 1e6");
+
         Collateral[] memory _collaterals = supportedCollateral;
         for (uint i = 0; i < _collaterals.length; i++) {
             require(address(_collaterals[i].token) != _coin, "collateral exists");
@@ -121,7 +131,7 @@ contract MarginAccount is Ownable {
             Collateral({
                 token: IERC20(_coin),
                 weight: _weight,
-                decimals: ERC20Detailed(_coin).decimals()
+                decimals: ERC20Detailed(_coin).decimals() // will fail if .decimals() is not defined on the contract
             })
         );
     }

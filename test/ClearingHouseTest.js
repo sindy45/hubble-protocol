@@ -1,6 +1,6 @@
 const { expect } = require('chai');
 
-const { getTradeDetails, assertions, setupContracts, constants: { _1e6, _1e18, ZERO } } = require('./utils')
+const { getTradeDetails, assertions, setupContracts, constants: { _1e6, _1e18, ZERO }, getTwapPrice } = require('./utils')
 
 describe('Funding Tests', function() {
     beforeEach('contract factories', async function() {
@@ -19,13 +19,19 @@ describe('Funding Tests', function() {
         let tx = await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity, _1e6.mul(4975))
         ;({ quoteAsset, fee } = await getTradeDetails(tx))
 
-        await oracle.setTwapPrice(weth.address, _1e6.mul(900))
-        await amm.settleFunding()
-        await clearingHouse.updatePositions(alice)
+        // underlying
+        const oracleTwap = _1e6.mul(900)
+        await oracle.setTwapPrice(weth.address, oracleTwap)
 
-        // (1000 - 900) / 24 = 4.166666
+        tx = await amm.settleFunding()
+        const fundingTimestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp;
+
+        // mark price
+        const twap = await getTwapPrice(amm, 3600, fundingTimestamp)
         const premiumFraction = await amm.getLatestCumulativePremiumFraction()
-        expect(premiumFraction).to.eq('4166666')
+        expect(premiumFraction).to.eq(twap.sub(oracleTwap).div(24))
+
+        await clearingHouse.updatePositions(alice)
 
         const fundingReceived = premiumFraction.mul(baseAssetQuantity.mul(-1)).div(_1e18)
         const remainingMargin = margin.add(fundingReceived).sub(fee)
@@ -46,13 +52,17 @@ describe('Funding Tests', function() {
         let tx = await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity, _1e6.mul(4975))
         ;({ quoteAsset, fee } = await getTradeDetails(tx))
 
-        await oracle.setTwapPrice(weth.address, _1e6.mul(1100))
-        await amm.settleFunding()
-        await clearingHouse.updatePositions(alice)
+        const oracleTwap = _1e6.mul(1100)
+        await oracle.setTwapPrice(weth.address, oracleTwap)
 
-        // (1000 - 1100) / 24 = -4.166666
+        tx = await amm.settleFunding()
+        const fundingTimestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp;
+
+        const twap = await getTwapPrice(amm, 3600, fundingTimestamp)
         const premiumFraction = await amm.getLatestCumulativePremiumFraction()
-        expect(premiumFraction).to.eq('-4166666')
+        expect(premiumFraction).to.eq(twap.sub(oracleTwap).div(24))
+
+        await clearingHouse.updatePositions(alice)
 
         const fundingPaid = premiumFraction.mul(baseAssetQuantity).div(_1e18)
         const remainingMargin = margin.sub(fundingPaid).sub(fee)
@@ -73,13 +83,16 @@ describe('Funding Tests', function() {
         let tx = await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity, _1e6.mul(5100))
         ;({ quoteAsset, fee } = await getTradeDetails(tx))
 
-        await oracle.setTwapPrice(weth.address, _1e6.mul(900))
-        await amm.settleFunding()
-        await clearingHouse.updatePositions(alice)
+        const oracleTwap = _1e6.mul(900)
+        await oracle.setTwapPrice(weth.address, oracleTwap)
+        tx = await amm.settleFunding()
+        const fundingTimestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp;
 
-        // (1000 - 900) / 24 = 4.166666
+        const twap = await getTwapPrice(amm, 3600, fundingTimestamp)
         const premiumFraction = await amm.getLatestCumulativePremiumFraction()
-        expect(premiumFraction).to.eq('4166666')
+        expect(premiumFraction).to.eq((twap.sub(oracleTwap)).div(24))
+
+        await clearingHouse.updatePositions(alice)
 
         const fundingPaid = premiumFraction.mul(baseAssetQuantity).div(_1e18)
         const remainingMargin = margin.sub(fundingPaid).sub(fee)
@@ -100,13 +113,16 @@ describe('Funding Tests', function() {
         let tx = await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity, _1e6.mul(5100))
         ;({ quoteAsset, fee } = await getTradeDetails(tx))
 
-        await oracle.setTwapPrice(weth.address, _1e6.mul(1100))
-        await amm.settleFunding()
-        await clearingHouse.updatePositions(alice)
+        const oracleTwap = _1e6.mul(1100)
+        await oracle.setTwapPrice(weth.address, oracleTwap)
+        tx = await amm.settleFunding()
+        const fundingTimestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp;
 
-        // (1000 - 1100) / 24 = -4.166666
+        const twap = await getTwapPrice(amm, 3600, fundingTimestamp)
         const premiumFraction = await amm.getLatestCumulativePremiumFraction()
-        expect(premiumFraction).to.eq('-4166666')
+        expect(premiumFraction).to.eq((twap.sub(oracleTwap)).div(24))
+
+        await clearingHouse.updatePositions(alice)
 
         const fundingReceived = premiumFraction.mul(baseAssetQuantity).div(_1e18).mul(-1) // premiumFraction is -ve
         const remainingMargin = margin.add(fundingReceived).sub(fee)
@@ -128,13 +144,16 @@ describe('Funding Tests', function() {
         ;({ quoteAsset, fee } = await getTradeDetails(tx))
 
         // $1k margin, ~$5k in notional position, < $500 margin will put them underwater => $100 funding/unit
-        await oracle.setTwapPrice(weth.address, _1e6.mul(3400))
-        await amm.settleFunding()
-        await clearingHouse.updatePositions(alice)
+        const oracleTwap = _1e6.mul(3400)
+        await oracle.setTwapPrice(weth.address, oracleTwap)
+        tx = await amm.settleFunding()
+        const fundingTimestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp;
 
-        // (1000 - 3400) / 24 = -100
+        const twap = await getTwapPrice(amm, 3600, fundingTimestamp)
         const premiumFraction = await amm.getLatestCumulativePremiumFraction()
-        expect(premiumFraction).to.eq(_1e6.mul(-100))
+        expect(premiumFraction).to.eq((twap.sub(oracleTwap)).div(24))
+
+        await clearingHouse.updatePositions(alice)
 
         const fundingPaid = premiumFraction.mul(baseAssetQuantity).div(_1e18)
         const remainingMargin = margin.sub(fundingPaid).sub(fee)

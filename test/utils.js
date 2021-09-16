@@ -4,6 +4,7 @@ const fs = require('fs')
 const { BigNumber } = require('ethers')
 
 const _1e6 = BigNumber.from(10).pow(6)
+const _1e12 = BigNumber.from(10).pow(12)
 const _1e18 = ethers.constants.WeiPerEther
 const ZERO = BigNumber.from(0)
 
@@ -57,11 +58,6 @@ async function setupContracts(tradeFee = DEFAULT_TRADE_FEE) {
         600,
         [_1e18.mul(40000) /* btc initial rate */, _1e18.mul(1000) /* eth initial rate */]
     )
-    await swap.add_liquidity([
-        _1e18.mul(_1e6), // 1m USDT
-        _1e6.mul(100).mul(25), // 25 btc
-        _1e18.mul(1000) // 1000 eth
-    ], 0)
     // await swap.exchange(0, 2, '100000000', 0)
     ERC20Mintable = await ethers.getContractFactory('ERC20Mintable')
     usdc = await ERC20Mintable.deploy('usdc', 'usdc', 6)
@@ -87,6 +83,13 @@ async function setupContracts(tradeFee = DEFAULT_TRADE_FEE) {
     weth = await ERC20Mintable.deploy('weth', 'weth', 18)
     amm = await AMM.deploy(clearingHouse.address, swap.address, weth.address, registry.address)
     await clearingHouse.whitelistAmm(amm.address)
+
+    await swap.setAMM(amm.address)
+    await swap.add_liquidity([
+        _1e18.mul(_1e6), // 1m USDT
+        _1e6.mul(100).mul(25), // 25 btc
+        _1e18.mul(1000) // 1000 eth
+    ], 0)
 
     return { swap, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, weth, oracle }
 }
@@ -135,7 +138,39 @@ async function assertions(amm, clearingHouse, trader, vals, shouldLog) {
     return { position, notionalPosition, unrealizedPnl, marginFraction }
 }
 
+async function getTwapPrice(amm, intervalInSeconds, blockTimestamp) {
+    const len = await amm.getSnapshotLen()
+    let snapshotIndex = len.sub(1)
+    let currentSnapshot = await amm.reserveSnapshots(snapshotIndex)
+    let currentPrice = currentSnapshot.quoteAssetReserve.mul(_1e6).div(currentSnapshot.baseAssetReserve)
+    const baseTimestamp = blockTimestamp - intervalInSeconds
+    let previousTimestamp = currentSnapshot.timestamp
+    if (intervalInSeconds == 0 || len == 1 || previousTimestamp <= baseTimestamp) {
+        return currentPrice
+    }
+    let period = BigNumber.from(blockTimestamp).sub(previousTimestamp)
+    let weightedPrice = currentPrice.mul(period)
+    let timeFraction = 0
+    while (true) {
+        if (snapshotIndex == 0) {
+            return weightedPrice.div(period)
+        }
+        snapshotIndex = snapshotIndex.sub(1)
+        currentSnapshot = await amm.reserveSnapshots(snapshotIndex)
+        currentPrice = currentSnapshot.quoteAssetReserve.mul(_1e6).div(currentSnapshot.baseAssetReserve)
+        if (currentSnapshot.timestamp <= baseTimestamp) {
+            weightedPrice = weightedPrice.add(currentPrice.mul(previousTimestamp.sub(previousTimestamp)))
+            break
+        }
+        timeFraction = previousTimestamp.sub(currentSnapshot.timestamp)
+        weightedPrice = weightedPrice.add(currentPrice.mul(timeFraction))
+        period = period.add(timeFraction)
+        previousTimestamp = currentSnapshot.timestamp
+    }
+    return weightedPrice.div(intervalInSeconds);
+}
+
 module.exports = {
-    constants: { _1e6, _1e18, ZERO },
-    log, setupContracts, filterEvent, getTradeDetails, assertions
+    constants: { _1e6, _1e12, _1e18, ZERO },
+    log, setupContracts, filterEvent, getTradeDetails, assertions, getTwapPrice
 }

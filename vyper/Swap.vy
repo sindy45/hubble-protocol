@@ -33,6 +33,8 @@ interface WETH:
     def deposit(): payable
     def withdraw(_amount: uint256): nonpayable
 
+interface IAMM:
+    def addReserveSnapshot(_quoteAssetReserve: uint256, _baseAssetReserve: uint256): nonpayable
 
 # Events
 event TokenExchange:
@@ -110,6 +112,7 @@ A_MULTIPLIER: constant(uint256) = 10000
 # These addresses are replaced by the deployer
 math: address
 views: address
+amm: address
 totalSupply: uint256
 token: address
 # math: constant(address) = 0x8F68f4810CcE3194B6cB6F3d50fa58c2c9bDD1d5
@@ -402,42 +405,9 @@ def get_xcp(D: uint256) -> uint256:
 def get_virtual_price() -> uint256:
     return 10**18 * self.get_xcp(self.D) / self.totalSupply
 
-
-@internal
-def _claim_admin_fees():
-    A_gamma: uint256[2] = self._A_gamma()
-
-    xcp_profit: uint256 = self.xcp_profit
-    xcp_profit_a: uint256 = self.xcp_profit_a
-
-    # Gulp here
-    _coins: address[N_COINS] = coins
-    for i in range(N_COINS):
-        self.balances[i] = ERC20(_coins[i]).balanceOf(self)
-
-    vprice: uint256 = self.virtual_price
-
-    if xcp_profit > xcp_profit_a:
-        fees: uint256 = (xcp_profit - xcp_profit_a) * self.admin_fee / (2 * 10**10)
-        if fees > 0:
-            receiver: address = self.admin_fee_receiver
-            frac: uint256 = vprice * 10**18 / (vprice - fees) - 10**18
-            claimed: uint256 = CurveToken(self.token).mint_relative(receiver, frac)
-            xcp_profit -= fees*2
-            self.xcp_profit = xcp_profit
-            log ClaimAdminFee(receiver, claimed)
-
-    total_supply: uint256 = self.totalSupply
-
-    # Recalculate D b/c we gulped
-    D: uint256 = Math(self.math).newton_D(A_gamma[0], A_gamma[1], self.xp())
-    self.D = D
-
-    self.virtual_price = 10**18 * self.get_xcp(D) / total_supply
-
-    if xcp_profit > xcp_profit_a:
-        self.xcp_profit_a = xcp_profit
-
+@external
+def setAMM(_address: address):
+    self.amm = _address
 
 @internal
 def tweak_price(A_gamma: uint256[2],
@@ -699,6 +669,7 @@ def exchange(i: uint256, j: uint256, dx: uint256, min_dy: uint256) -> uint256:
                 ix = i
 
     # self.tweak_price(A_gamma, xp, ix, p, 0)
+    IAMM(self.amm).addReserveSnapshot(self.balances[0], self.balances[2])
 
     log TokenExchange(msg.sender, i, dx, j, dy)
     return dy
@@ -805,6 +776,7 @@ def exchangeExactOut(i: uint256, j: uint256, dy: uint256, max_dx: uint256) -> ui
                 ix = i
 
     # self.tweak_price(A_gamma, xp, ix, p, 0)
+    IAMM(self.amm).addReserveSnapshot(self.balances[0], self.balances[2])
 
     log TokenExchange(msg.sender, i, dx, j, dy)
     return dx
@@ -947,6 +919,7 @@ def add_liquidity(amounts: uint256[N_COINS], min_mint_amount: uint256):
 
     assert d_token >= min_mint_amount, "Slippage"
 
+    IAMM(self.amm).addReserveSnapshot(self.balances[0], self.balances[2])
     log AddLiquidity(msg.sender, amounts, d_token_fee, self.totalSupply)
 
 

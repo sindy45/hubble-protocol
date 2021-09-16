@@ -13,6 +13,16 @@ contract AMM {
         uint256 openNotional;
         int256 lastUpdatedCumulativePremiumFraction;
     }
+
+    struct ReserveSnapshot {
+        uint256 quoteAssetReserve;
+        uint256 baseAssetReserve;
+        uint256 timestamp;
+        uint256 blockNumber;
+    }
+
+    ReserveSnapshot[] public reserveSnapshots;
+
     mapping(address => Position) public positions;
 
     address public underlyingAsset;
@@ -193,6 +203,33 @@ contract AMM {
         qouteAssetQuantity /= 1e12;
     }
 
+    function addReserveSnapshot(uint256 _quoteAssetReserve, uint256 _baseAssetReserve) external {
+        require(msg.sender == address(vamm), "Only AMM"); // only vamm can add snapshots
+
+        uint256 currentBlock = block.number;
+        if (reserveSnapshots.length == 0) {
+            reserveSnapshots.push(
+                ReserveSnapshot(_quoteAssetReserve, _baseAssetReserve, _blockTimestamp(), currentBlock)
+            );
+            return;
+        }
+
+        ReserveSnapshot storage latestSnapshot = reserveSnapshots[reserveSnapshots.length - 1];
+        // update values in snapshot if in the same block
+        if (currentBlock == latestSnapshot.blockNumber) {
+            latestSnapshot.quoteAssetReserve = _quoteAssetReserve;
+            latestSnapshot.baseAssetReserve = _baseAssetReserve;
+        } else {
+            reserveSnapshots.push(
+                ReserveSnapshot(_quoteAssetReserve, _baseAssetReserve, _blockTimestamp(), currentBlock)
+            );
+        }
+    }
+
+    function getSnapshotLen() external view returns (uint256) {
+        return reserveSnapshots.length;
+    }
+
     /**
      * @notice update funding rate
      * @dev only allow to update while reaching `nextFundingTime`
@@ -256,9 +293,71 @@ contract AMM {
         // return int256(vamm.last_prices(1));
     }
 
-    function getTwapPrice(uint256 /* _intervalInSeconds */) public view returns (int256) {
-        return int256(vamm.last_prices(1)) / 1e12;
-        // return int256(vamm.price_oracle(1));
+    function getTwapPrice(uint256 _intervalInSeconds) public view returns (int256) {
+        return int256(_calcTwap(_intervalInSeconds));
+    }
+
+    function getSpotPrice() public view returns (int256) {
+        return int256(vamm.balances(0) * 1e6 / vamm.balances(2));
+    }
+
+    function _calcTwap(uint256 _intervalInSeconds)
+        internal
+        view
+        returns (uint256)
+    {
+        uint256 snapshotIndex = reserveSnapshots.length - 1;
+        uint256 currentPrice = getPriceWithSpecificSnapshot(snapshotIndex);
+        if (_intervalInSeconds == 0) {
+            return currentPrice;
+        }
+
+        uint256 baseTimestamp = _blockTimestamp() - _intervalInSeconds;
+        ReserveSnapshot memory currentSnapshot = reserveSnapshots[snapshotIndex];
+        // return the latest snapshot price directly
+        // if only one snapshot or the timestamp of latest snapshot is earlier than asking for
+        if (reserveSnapshots.length == 1 || currentSnapshot.timestamp <= baseTimestamp) {
+            return currentPrice;
+        }
+
+        uint256 previousTimestamp = currentSnapshot.timestamp;
+        uint256 period = _blockTimestamp() - previousTimestamp;
+        uint256 weightedPrice = currentPrice * period;
+        while (true) {
+            // if snapshot history is too short
+            if (snapshotIndex == 0) {
+                return weightedPrice / period;
+            }
+
+            snapshotIndex = snapshotIndex - 1;
+            currentSnapshot = reserveSnapshots[snapshotIndex];
+            currentPrice = getPriceWithSpecificSnapshot(snapshotIndex);
+
+            // check if current round timestamp is earlier than target timestamp
+            if (currentSnapshot.timestamp <= baseTimestamp) {
+                // weighted time period will be (target timestamp - previous timestamp). For example,
+                // now is 1000, _interval is 100, then target timestamp is 900. If timestamp of current round is 970,
+                // and timestamp of NEXT round is 880, then the weighted time period will be (970 - 900) = 70,
+                // instead of (970 - 880)
+                weightedPrice = weightedPrice + (currentPrice * (previousTimestamp - baseTimestamp));
+                break;
+            }
+
+            uint256 timeFraction = previousTimestamp - currentSnapshot.timestamp;
+            weightedPrice = weightedPrice + (currentPrice * timeFraction);
+            period = period + timeFraction;
+            previousTimestamp = currentSnapshot.timestamp;
+        }
+        return weightedPrice / _intervalInSeconds;
+    }
+
+    function getPriceWithSpecificSnapshot(uint256 _snapshotIndex)
+        internal
+        view
+        returns (uint256)
+    {
+        ReserveSnapshot memory snapshot = reserveSnapshots[_snapshotIndex];
+        return snapshot.quoteAssetReserve * 1e6 / snapshot.baseAssetReserve;
     }
 
     function updateFundingRate(

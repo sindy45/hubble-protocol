@@ -10,7 +10,7 @@ import { ERC20PresetMinterPauser } from "@openzeppelin/contracts/token/ERC20/pre
 contract VUSD is ERC20PresetMinterPauser {
     using SafeERC20 for IERC20;
 
-    IERC20 public reserveToken;
+    IERC20 public reserveToken; // usdc
 
     constructor(address _reserveToken) ERC20PresetMinterPauser("vUSD", "vUSD") {
         reserveToken = IERC20(_reserveToken);

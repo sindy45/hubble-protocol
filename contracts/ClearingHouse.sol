@@ -60,7 +60,7 @@ contract ClearingHouse {
     }
 
     function liquidate(address trader) external {
-        require(getMarginFraction(trader) < maintenanceMargin, "Above Maintenance Margin");
+        require(!isAboveMaintenanceMargin(trader), "Above Maintenance Margin");
         int realizedPnl;
         uint quoteAsset;
         for (uint i = 0; i < amms.length; i++) { // liquidate all positions
@@ -127,7 +127,8 @@ contract ClearingHouse {
     }
 
     /* Governance */
-    function whitelistAmm(address _amm) public {
+
+    function whitelistAmm(address _amm) public /* @todo onlyOwner */ {
         amms.push(IAMM(_amm));
     }
 }
