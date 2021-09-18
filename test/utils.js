@@ -30,7 +30,7 @@ async function setupContracts(tradeFee = DEFAULT_TRADE_FEE) {
     abiAndBytecode = fs.readFileSync('./vyper/Swap.txt').toString().split('\n').filter(Boolean)
     Swap = new ethers.ContractFactory(JSON.parse(abiAndBytecode[0]), abiAndBytecode[1], signers[0])
 
-    ;([ ClearingHouse, AMM, MarginAccount, MarginAccountHelper, VUSD, Oracle, Registry ] = await Promise.all([
+    ;([ ClearingHouse, AMM, MarginAccount, MarginAccountHelper, VUSD, Oracle, Registry, InsuranceFund ] = await Promise.all([
         ethers.getContractFactory('ClearingHouse'),
         ethers.getContractFactory('AMM'),
         ethers.getContractFactory('MarginAccount'),
@@ -38,6 +38,7 @@ async function setupContracts(tradeFee = DEFAULT_TRADE_FEE) {
         ethers.getContractFactory('VUSD'),
         ethers.getContractFactory('Oracle'),
         ethers.getContractFactory('Registry'),
+        ethers.getContractFactory('InsuranceFund'),
     ]))
     moonMath = await MoonMath.deploy()
     views = await Views.deploy(moonMath.address)
@@ -64,9 +65,8 @@ async function setupContracts(tradeFee = DEFAULT_TRADE_FEE) {
     const vusd = await VUSD.deploy(usdc.address)
     oracle = await Oracle.deploy()
     await oracle.setPrice(vusd.address, 1e6) // $1
-    registry = await Registry.deploy(oracle.address)
 
-    marginAccount = await MarginAccount.deploy(vusd.address, oracle.address)
+    marginAccount = await MarginAccount.deploy()
     marginAccountHelper = await MarginAccountHelper.deploy(marginAccount.address, vusd.address)
     clearingHouse = await ClearingHouse.deploy(
         marginAccount.address,
@@ -76,22 +76,25 @@ async function setupContracts(tradeFee = DEFAULT_TRADE_FEE) {
         vusd.address
     )
     await vusd.grantRole(await vusd.MINTER_ROLE(), clearingHouse.address)
-    await vusd.grantRole(await vusd.MINTER_ROLE(), alice)
-    await marginAccount.setClearingHouse(clearingHouse.address)
 
-    // whitelistAmm
+    insuranceFund = await InsuranceFund.deploy('if', 'if')
+    registry = await Registry.deploy(oracle.address, clearingHouse.address, insuranceFund.address, marginAccount.address, vusd.address)
     weth = await ERC20Mintable.deploy('weth', 'weth', 18)
     amm = await AMM.deploy(clearingHouse.address, swap.address, weth.address, registry.address)
-    await clearingHouse.whitelistAmm(amm.address)
 
-    await swap.setAMM(amm.address)
-    await swap.add_liquidity([
-        _1e18.mul(_1e6), // 1m USDT
-        _1e6.mul(100).mul(25), // 25 btc
-        _1e18.mul(1000) // 1000 eth
-    ], 0)
+    await Promise.all([
+        clearingHouse.whitelistAmm(amm.address),
+        marginAccount.initialize(registry.address),
+        insuranceFund.syncDeps(registry.address),
+        swap.setAMM(amm.address),
+        swap.add_liquidity([
+            _1e18.mul(_1e6), // 1m USDT
+            _1e6.mul(100).mul(25), // 25 btc
+            _1e18.mul(1000) // 1000 eth
+        ], 0)
+    ])
 
-    return { swap, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, weth, oracle }
+    return { swap, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, weth, oracle, insuranceFund }
 }
 
 async function filterEvent(tx, name) {

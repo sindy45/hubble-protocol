@@ -2,7 +2,7 @@
 
 pragma solidity 0.8.4;
 
-import "./VUSD.sol";
+import { VUSD } from "./VUSD.sol";
 import "hardhat/console.sol";
 
 contract ClearingHouse {

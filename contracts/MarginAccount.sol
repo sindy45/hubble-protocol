@@ -5,17 +5,19 @@ pragma solidity 0.8.4;
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import { Initializable } from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 
-import { IOracle } from "./Interfaces.sol";
-
-import "./VUSD.sol";
+import { VUSD } from "./VUSD.sol";
+import "./Interfaces.sol";
 import "hardhat/console.sol";
 
-contract MarginAccount is Ownable {
+contract MarginAccount is Ownable, Initializable {
     using SafeERC20 for IERC20;
 
     IClearingHouse public clearingHouse;
     IOracle public oracle;
+    IInsuranceFund public insuranceFund;
+    VUSD public vusd;
 
     struct Collateral {
         IERC20 token;
@@ -39,9 +41,10 @@ contract MarginAccount is Ownable {
         _;
     }
 
-    constructor(address _vusd, address _oracle) {
-        _addCollateral(_vusd, PRECISION); // weight = 1 * PRECISION
-        oracle = IOracle(_oracle);
+    function initialize(address _registry) external initializer {
+        IRegistry registry = IRegistry(_registry);
+        syncDeps(registry);
+        _addCollateral(address(vusd), PRECISION); // weight = 1 * PRECISION
     }
 
     // Add Margin functions
@@ -66,6 +69,16 @@ contract MarginAccount is Ownable {
         require(margin[idx][trader] >= int(amount), "Insufficient balance");
         margin[idx][trader] -= int(amount);
         require(clearingHouse.isAboveMaintenanceMargin(trader), "CH: Below Maintenance Margin");
+        if (idx == VUSD_IDX) {
+            uint bal = vusd.balanceOf(address(this));
+            if (bal < amount) {
+                // Say there are 2 traders, Alice and Bob.
+                // Alice has a profitable position and realizes their PnL in form of vusd margin.
+                // But bob has not yet realized their -ve PnL.
+                // In that case we'll take a credit from vusd contract, which will eventually be returned when Bob pays their debt back.
+                vusd.mint(address(this), amount - bal);
+            }
+        }
         supportedCollateral[idx].token.safeTransfer(trader, amount);
     }
 
@@ -83,7 +96,7 @@ contract MarginAccount is Ownable {
         require(-vusdBal >= int(repayAmount), "repaying too much"); // @todo partial liquidation?
 
         supportedCollateral[VUSD_IDX].token.safeTransferFrom(msg.sender, address(this), repayAmount);
-        margin[VUSD_IDX][trader] -= int(repayAmount);
+        margin[VUSD_IDX][trader] += int(repayAmount);
         int priceCollateral = oracle.getUnderlyingPrice(address(supportedCollateral[collateralIdx].token));
         uint seizeAmount = repayAmount * liquidationIncentive / uint(priceCollateral);
 
@@ -92,23 +105,62 @@ contract MarginAccount is Ownable {
         supportedCollateral[collateralIdx].token.safeTransfer(msg.sender, seizeAmount);
     }
 
+    function settleBadDebt(address trader) external {
+        (int256 notionalPosition,) = clearingHouse.getTotalNotionalPositionAndUnrealizedPnl(trader);
+        require(notionalPosition == 0, "Liquidate positions before settling bad debt");
+        require(getSpotCollateralValue(trader) < 0, "Above bad debt threshold");
+        int vusdBal = margin[VUSD_IDX][trader];
+        require(vusdBal < 0, "Nothing to repay");
+
+        Collateral[] memory assets = supportedCollateral;
+
+        insuranceFund.seizeBadDebt(uint(-vusdBal));
+        margin[VUSD_IDX][trader] = 0;
+
+        for (uint i = 1 /* skip vusd */; i < assets.length; i++) {
+            int amount = margin[i][trader];
+            if (amount > 0) {
+                margin[i][trader] = 0;
+                assets[i].token.safeTransfer(address(insuranceFund), uint(amount));
+            }
+        }
+    }
+
     // View
 
-    function getNormalizedMargin(address trader) public view returns(int256 normMargin) {
+    function getSpotCollateralValue(address trader) public view returns(int256) {
+        return _collateralValue(trader, false);
+    }
+
+    function getNormalizedMargin(address trader) public view returns(int256) {
+        return _collateralValue(trader, true);
+    }
+
+    function _collateralValue(address trader, bool weighted) internal view returns (int256 normMargin) {
         Collateral[] memory assets = supportedCollateral;
+        Collateral memory _collateral;
+
         for (uint i = 0; i < assets.length; i++) {
-            Collateral memory _collateral = assets[i];
-            int numerator = margin[i][trader] * int(_collateral.weight) * oracle.getUnderlyingPrice(address(assets[i].token));
-            uint denom = (10 ** _collateral.decimals) * 1e6;
-            int _margin = numerator / int(denom);
+            _collateral = assets[i];
+
+            int numerator = margin[i][trader] * oracle.getUnderlyingPrice(address(assets[i].token));
+            uint denomDecimals = _collateral.decimals;
+            if (weighted) {
+                numerator *= int(_collateral.weight);
+                denomDecimals += 6;
+            }
+            int _margin = numerator / int(10 ** denomDecimals);
             normMargin += _margin;
         }
     }
 
     // Privileged
 
-    function setClearingHouse(IClearingHouse _clearingHouse) external onlyOwner {
-        clearingHouse = _clearingHouse;
+    function syncDeps(IRegistry registry) public onlyOwner {
+        clearingHouse = IClearingHouse(registry.clearingHouse());
+        oracle = IOracle(registry.oracle());
+        insuranceFund = IInsuranceFund(registry.insuranceFund());
+        vusd = VUSD(registry.vusd());
     }
 
     // @todo rename to whitelistCollateral
@@ -135,17 +187,4 @@ contract MarginAccount is Ownable {
             })
         );
     }
-}
-
-interface IClearingHouse {
-    function getTotalNotionalPositionAndUnrealizedPnl(address trader)
-        external
-        view
-        returns(int256 notionalPosition, int256 unrealizedPnl);
-    function isAboveMaintenanceMargin(address trader) external view returns(bool);
-    function updatePositions(address trader) external;
-}
-
-interface ERC20Detailed {
-    function decimals() external view returns (uint8);
 }

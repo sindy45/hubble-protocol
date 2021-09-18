@@ -289,7 +289,7 @@ contract AMM {
     }
 
     function getUnderlyingTwapPrice(uint256 _intervalInSeconds) public view returns (int256) {
-        return IOracle(registry.getOracle()).getUnderlyingTwapPrice(underlyingAsset, _intervalInSeconds);
+        return IOracle(registry.oracle()).getUnderlyingTwapPrice(underlyingAsset, _intervalInSeconds);
         // return int256(vamm.last_prices(1));
     }
 
