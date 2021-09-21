@@ -391,11 +391,20 @@ contract AMM {
         }
     }
 
+    function getQuote(int256 baseAssetQuantity) external view returns(uint256 qouteAssetQuantity) {
+        if (baseAssetQuantity >= 0) {
+            return vamm.get_dx(0, 2, uint(baseAssetQuantity)) / 1e12;
+        }
+        return vamm.get_dy(2, 0, uint(-baseAssetQuantity)) / 1e12;
+    }
+
+    // Pure
+
     function abs(int x) private pure returns (uint) {
         return x >= 0 ? uint(x) : uint(-x);
     }
 
-    function log(string memory name, int256 baseAssetQuantity, uint quoteAssetLimit) internal {
+    function log(string memory name, int256 baseAssetQuantity, uint quoteAssetLimit) internal pure {
         // console.log('function: %s, quoteAssetLimit: %d', name, quoteAssetLimit);
         // console.log('baseAssetQuantity');
         // console.logInt(baseAssetQuantity);

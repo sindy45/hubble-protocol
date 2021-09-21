@@ -85,32 +85,20 @@ contract ClearingHouse {
 
     // View
 
-    function _calculateTradeFee(uint quoteAsset) internal view returns (uint) {
-        return quoteAsset * tradeFee / uint(PRECISION);
-    }
-
-    function _calculateLiquidationPenalty(uint quoteAsset) internal view returns (uint) {
-        return quoteAsset * liquidationPenalty / uint(PRECISION);
-    }
-
     function isAboveMaintenanceMargin(address trader) public view returns(bool) {
-        // console.log("MarginFraction");
-        // console.logInt(getMarginFraction(trader));
         return getMarginFraction(trader) >= maintenanceMargin;
     }
 
     function getMarginFraction(address trader) public view returns(int256) {
         int256 margin = marginAccount.getNormalizedMargin(trader);
         (int256 notionalPosition, int256 unrealizedPnl) = getTotalNotionalPositionAndUnrealizedPnl(trader);
-        // console.log("getMarginFraction:debug");
-        // console.logInt(margin);
-        // console.logInt(unrealizedPnl);
-        int256 accountValue = int256(margin) + unrealizedPnl;
-        // console.logInt(accountValue);
-        if (notionalPosition == 0) { // @todo what if accountValue is -ve?
+        int256 accountValue = margin + unrealizedPnl;
+        if (accountValue <= 0) {
+            return 0;
+        }
+        if (accountValue > 0 && notionalPosition == 0) {
             return type(int256).max;
         }
-        // console.logInt(accountValue * PRECISION / notionalPosition);
         return accountValue * PRECISION / notionalPosition;
     }
 
@@ -126,7 +114,25 @@ contract ClearingHouse {
         }
     }
 
-    /* Governance */
+    function markets() external view returns(address[] memory _amms) {
+        uint length = amms.length;
+        _amms = new address[](length);
+        for (uint i = 0; i < length; i++) {
+            _amms[i] = address(amms[i]);
+        }
+    }
+
+    // Internal View
+
+    function _calculateTradeFee(uint quoteAsset) internal view returns (uint) {
+        return quoteAsset * tradeFee / uint(PRECISION);
+    }
+
+    function _calculateLiquidationPenalty(uint quoteAsset) internal view returns (uint) {
+        return quoteAsset * liquidationPenalty / uint(PRECISION);
+    }
+
+    // Governance
 
     function whitelistAmm(address _amm) public /* @todo onlyOwner */ {
         amms.push(IAMM(_amm));

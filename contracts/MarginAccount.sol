@@ -9,6 +9,7 @@ import { Initializable } from "@openzeppelin/contracts/proxy/utils/Initializable
 
 import { VUSD } from "./VUSD.sol";
 import "./Interfaces.sol";
+
 import "hardhat/console.sol";
 
 contract MarginAccount is Ownable, Initializable {
@@ -88,12 +89,14 @@ contract MarginAccount is Ownable, Initializable {
     }
 
     function liquidate(address trader, uint repayAmount, uint collateralIdx) external {
-        (int256 notionalPosition,) = clearingHouse.getTotalNotionalPositionAndUnrealizedPnl(trader);
-        require(notionalPosition == 0, "Liquidate positions before liquidating margin account");
-        require(getNormalizedMargin(trader) < 0, "Above liquidation threshold");
         int vusdBal = margin[VUSD_IDX][trader];
         require(vusdBal < 0, "Nothing to repay");
         require(-vusdBal >= int(repayAmount), "repaying too much"); // @todo partial liquidation?
+
+        (int256 notionalPosition,) = clearingHouse.getTotalNotionalPositionAndUnrealizedPnl(trader);
+        require(notionalPosition == 0, "Liquidate positions before liquidating margin account");
+
+        require(getNormalizedMargin(trader) < 0, "Above liquidation threshold"); // Cw < |vUSD|
 
         supportedCollateral[VUSD_IDX].token.safeTransferFrom(msg.sender, address(this), repayAmount);
         margin[VUSD_IDX][trader] += int(repayAmount);
@@ -128,15 +131,19 @@ contract MarginAccount is Ownable, Initializable {
 
     // View
 
-    function getSpotCollateralValue(address trader) public view returns(int256) {
-        return _collateralValue(trader, false);
+    function getSpotCollateralValue(address trader) public view returns(int256 spot) {
+        (,spot) = weightedAndSpotCollateral(trader);
     }
 
-    function getNormalizedMargin(address trader) public view returns(int256) {
-        return _collateralValue(trader, true);
+    function getNormalizedMargin(address trader) public view returns(int256 weighted) {
+        (weighted,) = weightedAndSpotCollateral(trader);
     }
 
-    function _collateralValue(address trader, bool weighted) internal view returns (int256 normMargin) {
+    function weightedAndSpotCollateral(address trader)
+        public
+        view
+        returns (int256 weighted, int256 spot)
+    {
         Collateral[] memory assets = supportedCollateral;
         Collateral memory _collateral;
 
@@ -145,13 +152,25 @@ contract MarginAccount is Ownable, Initializable {
 
             int numerator = margin[i][trader] * oracle.getUnderlyingPrice(address(assets[i].token));
             uint denomDecimals = _collateral.decimals;
-            if (weighted) {
-                numerator *= int(_collateral.weight);
-                denomDecimals += 6;
-            }
-            int _margin = numerator / int(10 ** denomDecimals);
-            normMargin += _margin;
+
+            spot += (numerator / int(10 ** denomDecimals));
+            weighted += (numerator * int(_collateral.weight) / int(10 ** (denomDecimals + 6)));
         }
+    }
+
+    // UI Helper functions
+
+    function supportedAssets() external view returns (Collateral[] memory) {
+        return supportedCollateral;
+    }
+
+    function userInfo(address trader) external view returns(int256[] memory) {
+        uint length = supportedCollateral.length;
+        int256[] memory _margin = new int256[](length);
+        for (uint i = 0; i < length; i++) {
+            _margin[i] = margin[i][trader];
+        }
+        return _margin;
     }
 
     // Privileged

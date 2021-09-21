@@ -30,7 +30,7 @@ async function setupContracts(tradeFee = DEFAULT_TRADE_FEE) {
     abiAndBytecode = fs.readFileSync('./vyper/Swap.txt').toString().split('\n').filter(Boolean)
     Swap = new ethers.ContractFactory(JSON.parse(abiAndBytecode[0]), abiAndBytecode[1], signers[0])
 
-    ;([ ClearingHouse, AMM, MarginAccount, MarginAccountHelper, VUSD, Oracle, Registry, InsuranceFund ] = await Promise.all([
+    ;([ ClearingHouse, AMM, MarginAccount, MarginAccountHelper, VUSD, Oracle, Registry, InsuranceFund, ERC20Mintable ] = await Promise.all([
         ethers.getContractFactory('ClearingHouse'),
         ethers.getContractFactory('AMM'),
         ethers.getContractFactory('MarginAccount'),
@@ -39,6 +39,7 @@ async function setupContracts(tradeFee = DEFAULT_TRADE_FEE) {
         ethers.getContractFactory('Oracle'),
         ethers.getContractFactory('Registry'),
         ethers.getContractFactory('InsuranceFund'),
+        ethers.getContractFactory('ERC20Mintable')
     ]))
     moonMath = await MoonMath.deploy()
     views = await Views.deploy(moonMath.address)
@@ -59,8 +60,6 @@ async function setupContracts(tradeFee = DEFAULT_TRADE_FEE) {
         600,
         [_1e18.mul(40000) /* btc initial rate */, _1e18.mul(1000) /* eth initial rate */]
     )
-    // await swap.exchange(0, 2, '100000000', 0)
-    ERC20Mintable = await ethers.getContractFactory('ERC20Mintable')
     usdc = await ERC20Mintable.deploy('usdc', 'usdc', 6)
     const vusd = await VUSD.deploy(usdc.address)
     oracle = await Oracle.deploy()
@@ -173,7 +172,21 @@ async function getTwapPrice(amm, intervalInSeconds, blockTimestamp) {
     return weightedPrice.div(intervalInSeconds);
 }
 
+async function impersonateAcccount(address) {
+    await hre.network.provider.request({
+        method: "hardhat_impersonateAccount",
+        params: [address],
+    });
+}
+
+async function stopImpersonateAcccount(address) {
+    await hre.network.provider.request({
+        method: "hardhat_stopImpersonatingAccount",
+        params: [address],
+    });
+}
+
 module.exports = {
     constants: { _1e6, _1e12, _1e18, ZERO },
-    log, setupContracts, filterEvent, getTradeDetails, assertions, getTwapPrice
+    log, setupContracts, filterEvent, getTradeDetails, assertions, getTwapPrice, impersonateAcccount, stopImpersonateAcccount
 }

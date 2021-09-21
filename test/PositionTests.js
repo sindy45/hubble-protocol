@@ -1,6 +1,6 @@
 const { expect } = require('chai');
 
-const { constants: { _1e6, _1e18, ZERO }, log, assertions, getTradeDetails, setupContracts } = require('./utils')
+const { constants: { _1e6, _1e18, ZERO }, assertions, getTradeDetails, setupContracts } = require('./utils')
 const TRADE_FEE = 0.000567 * _1e6
 
 describe('Position Tests', function() {

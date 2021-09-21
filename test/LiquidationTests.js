@@ -3,12 +3,11 @@ const { expect } = require('chai');
 const { constants: { _1e6, _1e18, ZERO }, getTradeDetails, setupContracts } = require('./utils')
 
 describe('Liquidation Tests', async function() {
-    before('contract factories', async function() {
+    before('factories', async function() {
         signers = await ethers.getSigners()
         ;([ _, bob, liquidator1, liquidator2, admin ] = signers)
         alice = signers[0].address
         ;({ swap, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, oracle, weth, insuranceFund } = await setupContracts())
-        await vusd.grantRole(await vusd.MINTER_ROLE(), admin.address)
     })
 
     it('addCollateral', async () => {
@@ -52,7 +51,9 @@ describe('Liquidation Tests', async function() {
         const repayAmount = aliceVusdMargin.abs().div(2) // 742 / 2 = 371
         // console.log({ repayAmount: repayAmount.toString() })
 
+        await vusd.grantRole(await vusd.MINTER_ROLE(), admin.address)
         await vusd.connect(admin).mint(liquidator2.address, repayAmount)
+
         await vusd.connect(liquidator2).approve(marginAccount.address, repayAmount)
         await marginAccount.connect(liquidator2).liquidate(alice, repayAmount, 1)
 
