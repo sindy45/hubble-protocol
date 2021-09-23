@@ -3,9 +3,10 @@
 pragma solidity 0.8.4;
 
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { Initializable } from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import { Initializable } from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
+import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 import { VUSD } from "./VUSD.sol";
 import "./Interfaces.sol";
@@ -14,6 +15,8 @@ import "hardhat/console.sol";
 
 contract MarginAccount is Ownable, Initializable {
     using SafeERC20 for IERC20;
+    using SafeCast for uint256;
+    using SafeCast for int256;
 
     IClearingHouse public clearingHouse;
     IOracle public oracle;
@@ -30,7 +33,7 @@ contract MarginAccount is Ownable, Initializable {
     uint constant VUSD_IDX = 0;
     uint constant PRECISION = 1e6;
 
-    uint public liquidationIncentive = 1.08e18; // scaled 18 decimals
+    uint public liquidationIncentive = 5e4; // 5% = .05 scaled 6 decimals
 
     // supportedCollateral index => trader => balance
     mapping(uint => mapping(address => int)) public margin;
@@ -58,7 +61,7 @@ contract MarginAccount is Ownable, Initializable {
         require(amount > 0, "Add non-zero margin");
         // will revert for idx >= supportedCollateral.length
         supportedCollateral[idx].token.safeTransferFrom(msg.sender, address(this), amount);
-        margin[idx][to] += int(amount);
+        margin[idx][to] += amount.toInt256();
         emit MarginAdded(to, idx, amount);
     }
 
@@ -66,10 +69,11 @@ contract MarginAccount is Ownable, Initializable {
         address trader = msg.sender;
         clearingHouse.updatePositions(trader);
         require(margin[VUSD_IDX][trader] >= 0, "Cannot remove margin when vusd balance is negative");
-        // uint -> int typecast might be unsafe. @todo fix it
-        require(margin[idx][trader] >= int(amount), "Insufficient balance");
-        margin[idx][trader] -= int(amount);
+        require(margin[idx][trader] >= amount.toInt256(), "Insufficient balance");
+
+        margin[idx][trader] -= amount.toInt256();
         require(clearingHouse.isAboveMaintenanceMargin(trader), "CH: Below Maintenance Margin");
+
         if (idx == VUSD_IDX) {
             uint bal = vusd.balanceOf(address(this));
             if (bal < amount) {
@@ -88,23 +92,55 @@ contract MarginAccount is Ownable, Initializable {
         margin[VUSD_IDX][trader] += realizedPnl;
     }
 
-    function liquidate(address trader, uint repayAmount, uint collateralIdx) external {
+    function liquidate(address trader, uint repayAmount, uint collateralIdx, uint minSeizeAmount) external {
+        require(repayAmount > 0, "repay something");
         int vusdBal = margin[VUSD_IDX][trader];
         require(vusdBal < 0, "Nothing to repay");
-        require(-vusdBal >= int(repayAmount), "repaying too much"); // @todo partial liquidation?
+        require((-vusdBal).toUint256() >= repayAmount, "repaying too much"); // @todo partial liquidation?
 
         (int256 notionalPosition,) = clearingHouse.getTotalNotionalPositionAndUnrealizedPnl(trader);
         require(notionalPosition == 0, "Liquidate positions before liquidating margin account");
 
-        require(getNormalizedMargin(trader) < 0, "Above liquidation threshold"); // Cw < |vUSD|
+        (int256 weighted, int256 spot) = weightedAndSpotCollateral(trader);
 
+        uint incentivePerDollar;
+        if (spot <= 0) {
+            /**
+                Liquidation scenario C, where Cusd < |vUSD|
+                => Cusd - |vUSD| < 0
+                => Cusd + vUSD < 0; since vUSD < 0
+                Since the protocol is already in deficit we don't have any money to give out as liquidationIncentive
+            */
+            incentivePerDollar = 0;
+        } else if (weighted < 0) {
+            /**
+                Liquidation scenario B, where Cw < |vUSD| <= Cusd
+                => Cw - |vUSD| < 0
+                => Cw + vUSD < 0; since vUSD < 0
+                Max possible liquidationIncentive is Cusd - |vUSD| = Cusd + vUSD = spot
+            */
+            incentivePerDollar = spot.toUint256() * PRECISION / (-vusdBal).toUint256();
+            if (incentivePerDollar > liquidationIncentive) {
+                incentivePerDollar = liquidationIncentive;
+            }
+        } else {
+            revert("trader is above liquidation threshold");
+        }
+
+        Collateral memory coll = supportedCollateral[collateralIdx];
+        int priceCollateral = oracle.getUnderlyingPrice(address(coll.token));
+        uint seizeAmount = repayAmount * (PRECISION + incentivePerDollar) / priceCollateral.toUint256(); // scaled 6 decimals
+        if (coll.decimals > 6) {
+            seizeAmount *= (10 ** (coll.decimals - 6));
+        }
+        if (seizeAmount > margin[collateralIdx][trader].toUint256()) {
+            seizeAmount = margin[collateralIdx][trader].toUint256();
+        }
+        require(seizeAmount >= minSeizeAmount, "Not seizing enough");
+
+        margin[VUSD_IDX][trader] += repayAmount.toInt256();
+        margin[collateralIdx][trader] -= seizeAmount.toInt256();
         supportedCollateral[VUSD_IDX].token.safeTransferFrom(msg.sender, address(this), repayAmount);
-        margin[VUSD_IDX][trader] += int(repayAmount);
-        int priceCollateral = oracle.getUnderlyingPrice(address(supportedCollateral[collateralIdx].token));
-        uint seizeAmount = repayAmount * liquidationIncentive / uint(priceCollateral);
-
-        require(int(seizeAmount) <= margin[collateralIdx][trader], "Seizing more than possible");
-        margin[collateralIdx][trader] -= int(seizeAmount);
         supportedCollateral[collateralIdx].token.safeTransfer(msg.sender, seizeAmount);
     }
 
@@ -117,14 +153,14 @@ contract MarginAccount is Ownable, Initializable {
 
         Collateral[] memory assets = supportedCollateral;
 
-        insuranceFund.seizeBadDebt(uint(-vusdBal));
+        insuranceFund.seizeBadDebt((-vusdBal).toUint256());
         margin[VUSD_IDX][trader] = 0;
 
         for (uint i = 1 /* skip vusd */; i < assets.length; i++) {
             int amount = margin[i][trader];
             if (amount > 0) {
                 margin[i][trader] = 0;
-                assets[i].token.safeTransfer(address(insuranceFund), uint(amount));
+                assets[i].token.safeTransfer(address(insuranceFund), amount.toUint256());
             }
         }
     }
@@ -154,7 +190,7 @@ contract MarginAccount is Ownable, Initializable {
             uint denomDecimals = _collateral.decimals;
 
             spot += (numerator / int(10 ** denomDecimals));
-            weighted += (numerator * int(_collateral.weight) / int(10 ** (denomDecimals + 6)));
+            weighted += (numerator * _collateral.weight.toInt256() / int(10 ** (denomDecimals + 6)));
         }
     }
 

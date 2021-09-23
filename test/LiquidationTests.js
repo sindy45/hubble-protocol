@@ -45,20 +45,32 @@ describe('Liquidation Tests', async function() {
         )
     })
 
+    it('alice is in liquidation zone B', async function() {
+        const { weighted, spot } = await marginAccount.weightedAndSpotCollateral(alice)
+        const repayAmount = (await marginAccount.margin(0, alice)).abs()
+        expect(weighted.lt(ZERO)).to.be.true
+        expect(spot.gt(ZERO)).to.be.true
+    })
+
     it('alice\'s margin account is partially liquidated', async function() {
         // the vusd margin is ~ -742, whereas .5 eth at weight = 0.7 and price = 2k allows for $700 margin
         const aliceVusdMargin = await marginAccount.margin(0, alice)
         const repayAmount = aliceVusdMargin.abs().div(2) // 742 / 2 = 371
-        // console.log({ repayAmount: repayAmount.toString() })
 
         await vusd.grantRole(await vusd.MINTER_ROLE(), admin.address)
         await vusd.connect(admin).mint(liquidator2.address, repayAmount)
-
         await vusd.connect(liquidator2).approve(marginAccount.address, repayAmount)
-        await marginAccount.connect(liquidator2).liquidate(alice, repayAmount, 1)
 
-        const liquidationIncentive = _1e18.mul(108).div(100)
-        const seizeAmount = repayAmount.mul(liquidationIncentive).div(1e6 * 2000 /* eth price in the oracle */);
+        const seizeAmount = repayAmount
+            .mul(1e6 + 5e4 /* 5% liquidationIncentive */)
+            .div(1e6 * 2000 /* eth price in the oracle */)
+            .mul(_1e6.mul(_1e6)) // 12 decimals for eth
+
+        await expect(
+            marginAccount.connect(liquidator2).liquidate(alice, repayAmount, 1, seizeAmount.add(1) /* minSeizeAmount */)
+        ).to.be.revertedWith('Not seizing enough')
+
+        await marginAccount.connect(liquidator2).liquidate(alice, repayAmount, 1, seizeAmount /* minSeizeAmount */)
 
         expect(await weth.balanceOf(liquidator2.address)).to.eq(seizeAmount)
         expect(await vusd.balanceOf(liquidator2.address)).to.eq(ZERO)
@@ -66,10 +78,54 @@ describe('Liquidation Tests', async function() {
         expect(await marginAccount.margin(1, alice)).to.eq(wethAmount.sub(seizeAmount))
     })
 
-    it('insurance fund settles alice\'s bad debt', async function() {
+    it('alice is out of liquidation zone', async function() {
+        const { weighted, spot } = await marginAccount.weightedAndSpotCollateral(alice)
+        const repayAmount = (await marginAccount.margin(0, alice)).abs()
+        expect(weighted.gt(ZERO)).to.be.true
+        expect(spot.gt(ZERO)).to.be.true
+    })
+
+    it('alice\'s margin account is partially liquidated with incentivePerDollar < 5%', async function() {
         const aliceVusdMargin = await marginAccount.margin(0, alice) // ~ -371
-        const ethMargin = await marginAccount.margin(1, alice)
+
         // alice has about 0.3 eth margin left over from the liquidation above
+        // to fall in liquidation zone, where 0 < spot < |vUSD| * 1.05
+        // 371 * 1.03 / .3 = $1273
+        oraclePrice = 1e6 * 1250
+        await oracle.setPrice(weth.address, oraclePrice)
+
+        const repayAmount = aliceVusdMargin.abs().div(2) // 371 / 2 = 185
+        await vusd.connect(admin).mint(liquidator2.address, repayAmount)
+        await vusd.connect(liquidator2).approve(marginAccount.address, repayAmount)
+
+        const { weighted, spot } = await marginAccount.weightedAndSpotCollateral(alice)
+        expect(weighted.lt(ZERO)).to.be.true
+        expect(spot.gt(ZERO)).to.be.true
+
+        const incentivePerDollar = spot.mul(_1e6).div(aliceVusdMargin.abs())
+        const seizeAmount = repayAmount
+            .mul(_1e6.add(incentivePerDollar))
+            .div(oraclePrice)
+            .mul(_1e6.mul(_1e6)) // 12 decimals for eth
+        await expect(
+            marginAccount.connect(liquidator2).liquidate(alice, repayAmount, 1, seizeAmount.add(1) /* minSeizeAmount */)
+        ).to.be.revertedWith('Not seizing enough')
+
+        const [ wethLiquidator, wethAlice ] = await Promise.all([
+            weth.balanceOf(liquidator2.address),
+            marginAccount.margin(1, alice)
+        ])
+        await marginAccount.connect(liquidator2).liquidate(alice, repayAmount, 1, seizeAmount /* minSeizeAmount */)
+
+        expect((await weth.balanceOf(liquidator2.address)).sub(wethLiquidator)).to.eq(seizeAmount)
+        expect(await vusd.balanceOf(liquidator2.address)).to.eq(ZERO)
+        expect(await marginAccount.margin(0, alice)).to.eq(aliceVusdMargin.add(repayAmount))
+        expect(wethAlice.sub(await marginAccount.margin(1, alice))).to.eq(seizeAmount)
+    })
+
+    it('insurance fund settles alice\'s bad debt', async function() {
+        const aliceVusdMargin = await marginAccount.margin(0, alice) // ~ -185
+        const ethMargin = await marginAccount.margin(1, alice)
 
         // drop collateral value, so that we get bad debt
         await oracle.setPrice(weth.address, 1e6 * 1000)

@@ -7,7 +7,9 @@ describe('Funding Tests', function() {
         signers = await ethers.getSigners()
         ;([ _, bob, liquidator1, liquidator2 ] = signers)
         alice = signers[0].address
-        ;({ swap, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, oracle, weth } = await setupContracts())
+
+        contracts = await setupContracts()
+        ;({ swap, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, oracle, weth } = contracts)
 
         // add margin
         margin = _1e6.mul(1000)
@@ -38,12 +40,12 @@ describe('Funding Tests', function() {
         expect(await marginAccount.margin(0, alice)).to.eq(remainingMargin)
         expect(await marginAccount.getNormalizedMargin(alice)).to.eq(remainingMargin)
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.true
-        await assertions(amm, clearingHouse, alice, {
+        await assertions(contracts, alice, {
             size: baseAssetQuantity,
             openNotional: quoteAsset,
             notionalPosition: quoteAsset,
             unrealizedPnl: 0,
-            marginFractionNumerator: remainingMargin
+            margin: remainingMargin
         })
     })
 
@@ -69,12 +71,12 @@ describe('Funding Tests', function() {
         expect(await marginAccount.margin(0, alice)).to.eq(remainingMargin)
         expect(await marginAccount.getNormalizedMargin(alice)).to.eq(remainingMargin)
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.true
-        await assertions(amm, clearingHouse, alice, {
+        await assertions(contracts, alice, {
             size: baseAssetQuantity,
             openNotional: quoteAsset,
             notionalPosition: quoteAsset,
             unrealizedPnl: 0,
-            marginFractionNumerator: remainingMargin
+            margin: remainingMargin
         })
     })
 
@@ -90,7 +92,7 @@ describe('Funding Tests', function() {
 
         const twap = await getTwapPrice(amm, 3600, fundingTimestamp)
         const premiumFraction = await amm.getLatestCumulativePremiumFraction()
-        expect(premiumFraction).to.eq((twap.sub(oracleTwap)).div(24))
+        expect(premiumFraction).to.eq(twap.sub(oracleTwap).div(24))
 
         await clearingHouse.updatePositions(alice)
 
@@ -99,12 +101,12 @@ describe('Funding Tests', function() {
         expect(await marginAccount.margin(0, alice)).to.eq(remainingMargin)
         expect(await marginAccount.getNormalizedMargin(alice)).to.eq(remainingMargin)
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.true
-        await assertions(amm, clearingHouse, alice, {
+        await assertions(contracts, alice, {
             size: baseAssetQuantity,
             openNotional: quoteAsset,
             notionalPosition: quoteAsset,
             unrealizedPnl: 0,
-            marginFractionNumerator: remainingMargin
+            margin: remainingMargin
         })
     })
 
@@ -120,7 +122,7 @@ describe('Funding Tests', function() {
 
         const twap = await getTwapPrice(amm, 3600, fundingTimestamp)
         const premiumFraction = await amm.getLatestCumulativePremiumFraction()
-        expect(premiumFraction).to.eq((twap.sub(oracleTwap)).div(24))
+        expect(premiumFraction).to.eq(twap.sub(oracleTwap).div(24))
 
         await clearingHouse.updatePositions(alice)
 
@@ -129,16 +131,16 @@ describe('Funding Tests', function() {
         expect(await marginAccount.margin(0, alice)).to.eq(remainingMargin)
         expect(await marginAccount.getNormalizedMargin(alice)).to.eq(remainingMargin)
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.true
-        await assertions(amm, clearingHouse, alice, {
+        await assertions(contracts, alice, {
             size: baseAssetQuantity,
             openNotional: quoteAsset,
             notionalPosition: quoteAsset,
             unrealizedPnl: 0,
-            marginFractionNumerator: remainingMargin
+            margin: remainingMargin
         })
     })
 
-    it('alice shorts and paying -ve funding causes them to drop below maintenance margin and liquidated', async () => {
+    it('alice shorts and paying -ve funding causes them to drop below maintenance margin and liquidated', async function() {
         const baseAssetQuantity = _1e18.mul(-5)
         let tx = await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity, _1e6.mul(4900))
         ;({ quoteAsset, fee } = await getTradeDetails(tx))
@@ -151,37 +153,45 @@ describe('Funding Tests', function() {
 
         const twap = await getTwapPrice(amm, 3600, fundingTimestamp)
         const premiumFraction = await amm.getLatestCumulativePremiumFraction()
-        expect(premiumFraction).to.eq((twap.sub(oracleTwap)).div(24))
+        expect(premiumFraction).to.eq(twap.sub(oracleTwap).div(24))
 
         await clearingHouse.updatePositions(alice)
 
         const fundingPaid = premiumFraction.mul(baseAssetQuantity).div(_1e18)
-        const remainingMargin = margin.sub(fundingPaid).sub(fee)
+        let remainingMargin = margin.sub(fundingPaid).sub(fee)
         expect(await marginAccount.margin(0, alice)).to.eq(remainingMargin)
         expect(await marginAccount.getNormalizedMargin(alice)).to.eq(remainingMargin)
-        await assertions(amm, clearingHouse, alice, {
+        await assertions(contracts, alice, {
             size: baseAssetQuantity,
             openNotional: quoteAsset,
             notionalPosition: quoteAsset,
             unrealizedPnl: 0,
-            marginFractionNumerator: remainingMargin
+            margin: remainingMargin
         })
 
+        // can\'t open new positions below maintenance margin
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
-        ;({ unrealizedPnl, notionalPosition } = await amm.getNotionalPositionAndUnrealizedPnl(alice))
+        await expect(
+            clearingHouse.openPosition(0, _1e18.mul(-1), 0)
+        ).to.be.revertedWith('CH: Below Maintenance Margin')
 
+        // Liquidate
+        ;({ unrealizedPnl, notionalPosition } = await amm.getNotionalPositionAndUnrealizedPnl(alice))
         await clearingHouse.connect(liquidator1).liquidate(alice)
 
         const liquidationPenalty = notionalPosition.mul(5e4).div(_1e6)
-        expect(await marginAccount.margin(0, alice)).to.eq(remainingMargin.sub(liquidationPenalty))
+        remainingMargin = remainingMargin.sub(liquidationPenalty)
+
+        expect(await marginAccount.margin(0, alice)).to.eq(remainingMargin) // entire margin is in vusd
         expect(await vusd.balanceOf(liquidator1.address)).to.eq(liquidationPenalty.div(2))
-        await assertions(amm, clearingHouse, alice, {
+        await assertions(contracts, alice, {
             size: 0,
             openNotional: 0,
             notionalPosition: 0,
             unrealizedPnl: 0,
-            // marginFractionNumerator: remainingMargin.sub(liquidationPenalty)
+            margin: remainingMargin
         })
+        expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.true
     })
 
     async function addMargin(trader, margin) {

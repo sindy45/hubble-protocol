@@ -7,7 +7,9 @@ describe('Position Tests', function() {
     beforeEach('contract factories', async function() {
         signers = await ethers.getSigners()
         ;([ alice ] = signers.map(s => s.address))
-        ;({ swap, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc } = await setupContracts(TRADE_FEE))
+
+        contracts = await setupContracts(TRADE_FEE)
+        ;({ swap, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc } = contracts)
 
         // add margin
         margin = _1e6.mul(1000)
@@ -25,12 +27,12 @@ describe('Position Tests', function() {
             // this asserts that long was executed at a price <= amount
             expect(quoteAsset.lte(amount)).to.be.true
 
-            await assertions(amm, clearingHouse, alice, {
+            await assertions(contracts, alice, {
                 size: baseAssetQuantity,
                 openNotional: quoteAsset,
                 notionalPosition: quoteAsset,
                 unrealizedPnl: 0,
-                marginFractionNumerator: margin.sub(fee)
+                margin: margin.sub(fee)
             })
         })
 
@@ -50,12 +52,12 @@ describe('Position Tests', function() {
             // this asserts that long was executed at a price <= amount
             expect(quoteAsset.lte(amount.mul(2))).to.be.true
 
-            await assertions(amm, clearingHouse, alice, {
+            await assertions(contracts, alice, {
                 size: baseAssetQuantity.mul(2),
                 openNotional: quoteAsset,
                 notionalPosition: quoteAsset,
                 unrealizedPnl: 0,
-                marginFractionNumerator: margin.sub(fee)
+                margin: margin.sub(fee)
             })
         })
 
@@ -69,23 +71,23 @@ describe('Position Tests', function() {
             // this asserts that short was executed at a price >= amount
             expect(quoteAsset.gte(amount)).to.be.true
 
-            await assertions(amm, clearingHouse, alice, {
+            await assertions(contracts, alice, {
                 size: baseAssetQuantity,
                 openNotional: quoteAsset,
                 notionalPosition: quoteAsset,
                 unrealizedPnl: 0,
-                marginFractionNumerator: margin.sub(fee)
+                margin: margin.sub(fee)
             })
         })
 
         it('two shorts', async () => {
-            const baseAssetQuantity = _1e18.mul(5)
+            const baseAssetQuantity = _1e18.mul(-5)
             amount = _1e6.mul(4900)
 
-            let tx = await clearingHouse.openPosition(0 /* amm index */, '-' + baseAssetQuantity /* exact base asset */, amount)
+            let tx = await clearingHouse.openPosition(0, baseAssetQuantity, amount)
             const trade1 = await getTradeDetails(tx, TRADE_FEE)
 
-            tx = await clearingHouse.openPosition(0 /* amm index */, '-' + baseAssetQuantity /* exact base asset */, amount)
+            tx = await clearingHouse.openPosition(0, baseAssetQuantity, amount)
             const trade2 = await getTradeDetails(tx, TRADE_FEE)
 
             const quoteAsset = trade1.quoteAsset.add(trade2.quoteAsset)
@@ -94,12 +96,13 @@ describe('Position Tests', function() {
             // this asserts that short was executed at a price >= amount
             expect(quoteAsset.gte(amount.mul(2))).to.be.true
 
-            await assertions(amm, clearingHouse, alice, {
-                size: baseAssetQuantity.mul(-2),
+            await assertions(contracts, alice, {
+                size: baseAssetQuantity.mul(2),
                 openNotional: quoteAsset,
                 notionalPosition: quoteAsset.add(1), // anomaly: 1 more than expected, which leads to unrealizedPnl = -1
-                unrealizedPnl: -1, // anomaly: ideally be 0
-                marginFractionNumerator: margin.sub(fee).add(-1)
+                unrealizedPnl: -1, // ideally be 0
+                marginFractionNumerator: margin.sub(fee).add(-1 /* unrealizedPnl */),
+                margin: margin.sub(fee)
             })
         })
 
@@ -109,7 +112,7 @@ describe('Position Tests', function() {
             await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* long exactly */, ethers.constants.MaxUint256 /* max_dx */)
             await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity.mul(-1) /* exact base asset */, 0 /* min_dy */)
 
-            await assertions(amm, clearingHouse, alice, {
+            await assertions(contracts, alice, {
                 size: ZERO,
                 openNotional: ZERO,
                 notionalPosition: ZERO,
@@ -124,7 +127,7 @@ describe('Position Tests', function() {
             await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity.mul(-1) /* exact base asset */, 0 /* min_dy */)
             await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* long exactly */, ethers.constants.MaxUint256 /* max_dx */)
 
-            await assertions(amm, clearingHouse, alice, {
+            await assertions(contracts, alice, {
                 size: ZERO,
                 openNotional: ZERO,
                 notionalPosition: ZERO,
@@ -144,10 +147,10 @@ describe('Position Tests', function() {
 
             let fee = trade1.fee.add(trade2.fee)
 
-            await assertions(amm, clearingHouse, alice, {
+            await assertions(contracts, alice, {
                 size: _1e18.mul(-2), // 5 - 7
                 unrealizedPnl: ZERO,
-                marginFractionNumerator: margin.sub(fee)
+                margin: margin.sub(fee)
             })
 
             // Long
@@ -155,10 +158,10 @@ describe('Position Tests', function() {
             const trade3 = await getTradeDetails(tx, TRADE_FEE)
             fee = fee.add(trade3.fee)
 
-            await assertions(amm, clearingHouse, alice, {
+            await assertions(contracts, alice, {
                 size: _1e18.mul(8), // 5 - 7 + 10
-                unrealizedPnl: 0, // anomaly: ideally be 0
-                marginFractionNumerator: margin.sub(fee).add(-1)
+                unrealizedPnl: 0,
+                margin: margin.sub(fee)
             })
         })
 
@@ -173,10 +176,10 @@ describe('Position Tests', function() {
 
             let fee = trade1.fee.add(trade2.fee)
 
-            await assertions(amm, clearingHouse, alice, {
+            await assertions(contracts, alice, {
                 size: _1e18.mul(2), // -5 + 7
                 unrealizedPnl: 0,
-                marginFractionNumerator: margin.sub(fee)
+                margin: margin.sub(fee)
             })
 
             // Short
@@ -184,10 +187,10 @@ describe('Position Tests', function() {
             const trade3 = await getTradeDetails(tx, TRADE_FEE)
             fee = fee.add(trade3.fee)
 
-            await assertions(amm, clearingHouse, alice, {
+            await assertions(contracts, alice, {
                 size: _1e18.mul(-8), // -5 + 7 - 10
                 unrealizedPnl: 0,
-                marginFractionNumerator: margin.sub(fee)
+                margin: margin.sub(fee)
             })
         })
 
@@ -218,7 +221,7 @@ describe('Position Tests', function() {
             let fee = trade1.fee.add(trade2.fee)
 
             expect(await marginAccount.getNormalizedMargin(alice)).to.eq(margin.add(unrealizedPnl).sub(fee))
-            await assertions(amm, clearingHouse, alice, {
+            await assertions(contracts, alice, {
                 size: ZERO,
                 openNotional: ZERO,
                 notionalPosition: ZERO,
@@ -252,7 +255,7 @@ describe('Position Tests', function() {
             let fee = trade1.fee.add(trade2.fee)
 
             expect(await marginAccount.getNormalizedMargin(alice)).to.eq(margin.add(unrealizedPnl).sub(fee))
-            await assertions(amm, clearingHouse, alice, {
+            await assertions(contracts, alice, {
                 size: ZERO,
                 openNotional: ZERO,
                 notionalPosition: ZERO,
@@ -286,7 +289,7 @@ describe('Position Tests', function() {
             let fee = trade1.fee.add(trade2.fee)
 
             expect(await marginAccount.getNormalizedMargin(alice)).to.eq(margin.add(unrealizedPnl).sub(fee))
-            await assertions(amm, clearingHouse, alice, {
+            await assertions(contracts, alice, {
                 size: ZERO,
                 openNotional: ZERO,
                 notionalPosition: ZERO,

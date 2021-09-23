@@ -109,10 +109,14 @@ async function getTradeDetails(tx, tradeFee = DEFAULT_TRADE_FEE) {
     }
 }
 
-async function assertions(amm, clearingHouse, trader, vals, shouldLog) {
-    const position = await amm.positions(trader)
-    const { notionalPosition, unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(trader)
-    const marginFraction = await clearingHouse.getMarginFraction(trader)
+async function assertions(contracts, trader, vals, shouldLog) {
+    const { amm, clearingHouse, marginAccount } = contracts
+    const [ position, { notionalPosition, unrealizedPnl }, marginFraction, margin ] = await Promise.all([
+        amm.positions(trader),
+        amm.getNotionalPositionAndUnrealizedPnl(trader),
+        clearingHouse.getMarginFraction(trader),
+        marginAccount.getNormalizedMargin(trader)
+    ])
 
     if (shouldLog) {
         log(position, notionalPosition, unrealizedPnl, marginFraction)
@@ -129,6 +133,9 @@ async function assertions(amm, clearingHouse, trader, vals, shouldLog) {
     }
     if (vals.unrealizedPnl != null) {
         expect(unrealizedPnl).to.eq(vals.unrealizedPnl)
+    }
+    if (vals.margin != null) {
+        expect(margin).to.eq(vals.margin)
     }
     if (vals.marginFractionNumerator != null) {
         expect(marginFraction).to.eq(vals.marginFractionNumerator.mul(_1e6).div(notionalPosition))

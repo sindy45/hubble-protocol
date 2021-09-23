@@ -2,12 +2,15 @@
 
 pragma solidity 0.8.4;
 
+import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+
 import { VUSD } from "./VUSD.sol";
 import "hardhat/console.sol";
 
 contract ClearingHouse {
+    using SafeCast for uint256;
 
-    int256 constant PRECISION = 1e6;
+    uint256 constant PRECISION = 1e6;
 
     int256 public maintenanceMargin;
     uint public tradeFee;
@@ -18,7 +21,7 @@ contract ClearingHouse {
     IMarginAccount public marginAccount;
     IAMM[] public amms;
 
-    event PositionOpened(uint indexed idx, int256 indexed baseAssetQuantity, uint indexed quoteAsset);
+    event PositionOpened(address indexed trader, uint indexed idx, int256 indexed baseAssetQuantity, uint quoteAsset);
 
     constructor(IMarginAccount _marginAccount, int256 _maintenanceMargin, uint _tradeFee, uint _liquidationPenalty, address _vusd) {
         marginAccount = _marginAccount;
@@ -28,21 +31,29 @@ contract ClearingHouse {
         vusd = VUSD(_vusd);
     }
 
+    /**
+    * @notice Open/Modify/Close Position
+    * @param idx AMM index
+    * @param baseAssetQuantity Quantity of the base asset to Long (baseAssetQuantity > 0) or Short (baseAssetQuantity < 0)
+    * @param quoteAssetLimit Rate at which the trade is executed in the AMM. Used to cap slippage.
+    */
     function openPosition(uint idx, int256 baseAssetQuantity, uint quoteAssetLimit) external {
         _openPosition(msg.sender, idx, baseAssetQuantity, quoteAssetLimit);
     }
 
     function _openPosition(address trader, uint idx, int256 baseAssetQuantity, uint quoteAssetLimit) internal {
         require(baseAssetQuantity != 0, "CH: baseAssetQuantity == 0");
-        updatePositions(trader);
+
+        updatePositions(trader); // adjust funding payments
+
         (int realizedPnl, uint quoteAsset, bool isPositionIncreased) = amms[idx].openPosition(trader, baseAssetQuantity, quoteAssetLimit);
         uint _tradeFee = _chargeFeeAndRealizePnL(trader, realizedPnl, quoteAsset, false /* isLiquidation */);
         vusd.mint(insuranceFund, _tradeFee);
-        // @todo credit trading fee to insurance fund
+
         if (isPositionIncreased) {
             require(isAboveMaintenanceMargin(trader), "CH: Below Maintenance Margin");
         }
-        emit PositionOpened(idx, baseAssetQuantity, quoteAsset);
+        emit PositionOpened(trader, idx, baseAssetQuantity, quoteAsset);
     }
 
     function updatePositions(address trader) public {
@@ -77,7 +88,7 @@ contract ClearingHouse {
 
     function _chargeFeeAndRealizePnL(address trader, int realizedPnl, uint quoteAsset, bool isLiquidation) internal returns (uint fee) {
         fee = isLiquidation ? _calculateLiquidationPenalty(quoteAsset) : _calculateTradeFee(quoteAsset);
-        int256 marginCharge = realizedPnl - int(fee);
+        int256 marginCharge = realizedPnl - fee.toInt256();
         if (marginCharge != 0) {
             marginAccount.realizePnL(trader, marginCharge);
         }
@@ -99,7 +110,7 @@ contract ClearingHouse {
         if (accountValue > 0 && notionalPosition == 0) {
             return type(int256).max;
         }
-        return accountValue * PRECISION / notionalPosition;
+        return accountValue * PRECISION.toInt256() / notionalPosition;
     }
 
     function getTotalNotionalPositionAndUnrealizedPnl(address trader)
@@ -125,11 +136,11 @@ contract ClearingHouse {
     // Internal View
 
     function _calculateTradeFee(uint quoteAsset) internal view returns (uint) {
-        return quoteAsset * tradeFee / uint(PRECISION);
+        return quoteAsset * tradeFee / PRECISION;
     }
 
     function _calculateLiquidationPenalty(uint quoteAsset) internal view returns (uint) {
-        return quoteAsset * liquidationPenalty / uint(PRECISION);
+        return quoteAsset * liquidationPenalty / PRECISION;
     }
 
     // Governance
