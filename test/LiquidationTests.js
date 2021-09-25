@@ -37,17 +37,25 @@ describe('Liquidation Tests', async function() {
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
         ;({ unrealizedPnl, notionalPosition } = await amm.getNotionalPositionAndUnrealizedPnl(alice))
 
+        const ifVusdBal = await vusd.balanceOf(insuranceFund.address)
         await clearingHouse.connect(liquidator1).liquidate(alice)
 
         const liquidationPenalty = notionalPosition.mul(5e4).div(_1e6)
         expect(await marginAccount.margin(0, alice)).to.eq(
             unrealizedPnl.sub(liquidationPenalty).sub(tradeFee)
         )
+
+        const toInsurace = liquidationPenalty.div(2)
+        expect(
+            (await vusd.balanceOf(insuranceFund.address)).sub(ifVusdBal)
+        ).to.eq(toInsurace)
+        expect(
+            await vusd.balanceOf(liquidator1.address)
+        ).to.eq(liquidationPenalty.sub(toInsurace))
     })
 
     it('alice is in liquidation zone B', async function() {
         const { weighted, spot } = await marginAccount.weightedAndSpotCollateral(alice)
-        const repayAmount = (await marginAccount.margin(0, alice)).abs()
         expect(weighted.lt(ZERO)).to.be.true
         expect(spot.gt(ZERO)).to.be.true
     })
@@ -80,7 +88,6 @@ describe('Liquidation Tests', async function() {
 
     it('alice is out of liquidation zone', async function() {
         const { weighted, spot } = await marginAccount.weightedAndSpotCollateral(alice)
-        const repayAmount = (await marginAccount.margin(0, alice)).abs()
         expect(weighted.gt(ZERO)).to.be.true
         expect(spot.gt(ZERO)).to.be.true
     })
@@ -137,7 +144,11 @@ describe('Liquidation Tests', async function() {
         // })
 
         // provide insurance fund with enough vusd to cover deficit
-        await vusd.connect(admin).mint(insuranceFund.address, aliceVusdMargin.abs())
+        const bal = await vusd.balanceOf(insuranceFund.address) // trade and liquidation fee
+        if (bal.lt(aliceVusdMargin.abs())) {
+            await vusd.connect(admin).mint(insuranceFund.address, aliceVusdMargin.abs().sub(bal))
+        }
+        expect(await vusd.balanceOf(insuranceFund.address)).to.eq(aliceVusdMargin.abs())
 
         await marginAccount.settleBadDebt(alice)
 

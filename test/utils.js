@@ -67,25 +67,30 @@ async function setupContracts(tradeFee = DEFAULT_TRADE_FEE) {
 
     marginAccount = await MarginAccount.deploy()
     marginAccountHelper = await MarginAccountHelper.deploy(marginAccount.address, vusd.address)
+    insuranceFund = await InsuranceFund.deploy('if', 'if')
+
     clearingHouse = await ClearingHouse.deploy(
+        insuranceFund.address,
         marginAccount.address,
+        vusd.address,
         0.1 * 1e6 /* 3% maintenance margin */,
         tradeFee,
         0.05 * 1e6, // liquidationPenalty = 5%
-        vusd.address
     )
     await vusd.grantRole(await vusd.MINTER_ROLE(), clearingHouse.address)
 
-    insuranceFund = await InsuranceFund.deploy('if', 'if')
     registry = await Registry.deploy(oracle.address, clearingHouse.address, insuranceFund.address, marginAccount.address, vusd.address)
+
+    // Setup market/amm
     weth = await ERC20Mintable.deploy('weth', 'weth', 18)
     amm = await AMM.deploy(clearingHouse.address, swap.address, weth.address, registry.address)
+    await amm.togglePause(false)
 
+    await swap.setAMM(amm.address)
     await Promise.all([
         clearingHouse.whitelistAmm(amm.address),
         marginAccount.initialize(registry.address),
-        insuranceFund.syncDeps(registry.address),
-        swap.setAMM(amm.address),
+        insuranceFund.initialize(registry.address),
         swap.add_liquidity([
             _1e18.mul(_1e6), // 1m USDT
             _1e6.mul(100).mul(25), // 25 btc
@@ -193,7 +198,12 @@ async function stopImpersonateAcccount(address) {
     });
 }
 
+async function gotoNextFundingTime(amm) {
+    // @todo check that blockTimeStamp is not already > nextFundingTime
+    return network.provider.send('evm_setNextBlockTimestamp', [(await amm.nextFundingTime()).toNumber()]);
+}
+
 module.exports = {
     constants: { _1e6, _1e12, _1e18, ZERO },
-    log, setupContracts, filterEvent, getTradeDetails, assertions, getTwapPrice, impersonateAcccount, stopImpersonateAcccount
+    log, setupContracts, filterEvent, getTradeDetails, assertions, getTwapPrice, impersonateAcccount, stopImpersonateAcccount, gotoNextFundingTime
 }

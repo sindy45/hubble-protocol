@@ -2,12 +2,16 @@
 
 pragma solidity 0.8.4;
 
+import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+import { Pausable } from "@openzeppelin/contracts/security/Pausable.sol";
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
-import { IOracle, IRegistry } from "./Interfaces.sol";
+import { IOracle, IRegistry, ERC20Detailed } from "./Interfaces.sol";
+import { IVAMM } from "./Interfaces.sol";
+
 import "hardhat/console.sol";
 
-contract AMM {
+contract AMM is Ownable, Pausable {
     using SafeCast for uint256;
     using SafeCast for int256;
 
@@ -29,6 +33,7 @@ contract AMM {
     mapping(address => Position) public positions;
 
     address public underlyingAsset;
+    int256 public precision;
     IRegistry public registry;
 
     address public clearingHouse;
@@ -37,6 +42,8 @@ contract AMM {
     uint256 public fundingBufferPeriod;
     uint256 public nextFundingTime;
     int256 public fundingRate;
+    uint256 public longOpenInterestNotional;
+    uint256 public shortOpenInterestNotional;
 
     int256[] public cumulativePremiumFractions;
 
@@ -54,15 +61,18 @@ contract AMM {
         fundingPeriod = 1 hours;
         spotPriceTwapInterval = 1 hours;
         underlyingAsset = _underlyingAsset;
+        precision = int(10 ** ERC20Detailed(_underlyingAsset).decimals());
         registry = IRegistry(_registry);
+        _pause(); // not open for trading as yet
     }
 
     /**
     * @dev baseAssetQuantity != 0 has been validated in clearingHouse._openPosition()
     */
     function openPosition(address trader, int256 baseAssetQuantity, uint quoteAssetLimit)
-        onlyClearingHouse
         external
+        whenNotPaused
+        onlyClearingHouse
         returns (int realizedPnl, uint quoteAsset, bool isPositionIncreased)
     {
         Position memory position = positions[trader];
@@ -75,8 +85,9 @@ contract AMM {
     }
 
     function closePosition(address trader)
-        onlyClearingHouse
         external
+        whenNotPaused
+        onlyClearingHouse
         returns (int realizedPnl, uint quoteAsset)
     {
         Position memory position = positions[trader];
@@ -93,11 +104,12 @@ contract AMM {
         internal
         returns(uint quoteAsset)
     {
-        log('_increasePosition', baseAssetQuantity, quoteAssetLimit);
         if (baseAssetQuantity > 0) { // Long - purchase baseAssetQuantity
             quoteAsset = _long(baseAssetQuantity, quoteAssetLimit);
+            longOpenInterestNotional += baseAssetQuantity.toUint256();
         } else { // Short - sell baseAssetQuantity
             quoteAsset = _short(baseAssetQuantity, quoteAssetLimit);
+            shortOpenInterestNotional += (-baseAssetQuantity).toUint256();
         }
         positions[trader].size += baseAssetQuantity; // -ve baseAssetQuantity will increase short position
         positions[trader].openNotional += quoteAsset;
@@ -107,7 +119,6 @@ contract AMM {
         internal
         returns (int realizedPnl, uint quoteAsset, bool isPositionIncreased)
     {
-        log('_openReversePosition', baseAssetQuantity, quoteAssetLimit);
         Position memory position = positions[trader];
         if (abs(position.size) >= abs(baseAssetQuantity)) {
             (realizedPnl, quoteAsset) = _reducePosition(trader, baseAssetQuantity, quoteAssetLimit);
@@ -126,7 +137,6 @@ contract AMM {
         internal
         returns (int realizedPnl, uint256 quoteAsset)
     {
-        log('_reducePosition', baseAssetQuantity, quoteAssetLimit);
         Position storage position = positions[trader];
 
         (uint256 notionalPosition, int256 unrealizedPnl) = getNotionalPositionAndUnrealizedPnl(trader);
@@ -145,10 +155,10 @@ contract AMM {
         * short: unrealizedPnl = openNotional - notionalPosition => openNotional = notionalPosition + unrealizedPnl
         */
         if (isLongPosition) {
-            log('_reducePosition:2', baseAssetQuantity, quoteAssetLimit);
             require(baseAssetQuantity < 0, "VAMM._reducePosition.Long: Incorrect direction");
             quoteAsset = _short(baseAssetQuantity, quoteAssetLimit);
             remainOpenNotional = int256(notionalPosition) - int256(quoteAsset) - unrealizedPnlAfter;
+            longOpenInterestNotional -= (-baseAssetQuantity).toUint256();
             /**
             * Let baseAssetQuantity = Q, position.size = size, by definition of _reducePosition, abs(size) >= abs(Q)
             * quoteAsset = notionalPosition * Q / size
@@ -163,6 +173,7 @@ contract AMM {
             require(baseAssetQuantity > 0, "VAMM._reducePosition.Short: Incorrect direction");
             quoteAsset = _long(baseAssetQuantity, quoteAssetLimit);
             remainOpenNotional = int256(notionalPosition) - int256(quoteAsset) + unrealizedPnlAfter;
+            shortOpenInterestNotional -= baseAssetQuantity.toUint256();
             /**
             * Let baseAssetQuantity = Q, position.size = size, by definition of _reducePosition, abs(size) >= abs(Q)
             * quoteAsset = notionalPosition * Q / size
@@ -217,7 +228,10 @@ contract AMM {
         ) / 1e12;
     }
 
-    function addReserveSnapshot(uint256 _quoteAssetReserve, uint256 _baseAssetReserve) external {
+    function addReserveSnapshot(uint256 _quoteAssetReserve, uint256 _baseAssetReserve)
+        whenNotPaused
+        external
+    {
         require(msg.sender == address(vamm), "Only AMM"); // only vamm can add snapshots
 
         uint256 currentBlock = block.number;
@@ -249,7 +263,12 @@ contract AMM {
      * @dev only allow to update while reaching `nextFundingTime`
      * @return premium fraction of this period in 18 digits
      */
-    function settleFunding() external returns (int256) {
+    function settleFunding()
+        external
+        whenNotPaused
+        onlyClearingHouse
+        returns (int256, int256, int256)
+    {
         require(_blockTimestamp() >= nextFundingTime, "settle funding too early");
 
         // premium = twapMarketPrice - twapIndexPrice
@@ -264,7 +283,7 @@ contract AMM {
         );
 
         // update funding rate = premiumFraction / twapIndexPrice
-        updateFundingRate(premiumFraction, underlyingPrice);
+        _updateFundingRate(premiumFraction, underlyingPrice);
 
         // in order to prevent multiple funding settlement during very short time after network congestion
         uint256 minNextValidFundingTime = _blockTimestamp() + fundingBufferPeriod;
@@ -276,7 +295,11 @@ contract AMM {
         nextFundingTime = nextFundingTimeOnHourStart > minNextValidFundingTime
             ? nextFundingTimeOnHourStart
             : minNextValidFundingTime;
-        return premiumFraction;
+        return (
+            premiumFraction,
+            longOpenInterestNotional.toInt256() - shortOpenInterestNotional.toInt256(),
+            precision
+        );
     }
 
     /**
@@ -290,11 +313,18 @@ contract AMM {
         }
     }
 
-    function updatePosition(address trader) external onlyClearingHouse returns(int256 fundingPayment) {
+    function updatePosition(address trader)
+        external
+        /* whenNotPaused - fix */
+        onlyClearingHouse
+        returns(int256 fundingPayment)
+    {
         // @todo update position due to liquidity migration etc.
         int256 latestCumulativePremiumFraction = getLatestCumulativePremiumFraction();
         Position storage position = positions[trader];
-        fundingPayment = ((latestCumulativePremiumFraction - position.lastUpdatedCumulativePremiumFraction) * position.size) / 1e18;
+        fundingPayment = (latestCumulativePremiumFraction - position.lastUpdatedCumulativePremiumFraction)
+            * position.size
+            / precision;
         position.lastUpdatedCumulativePremiumFraction = latestCumulativePremiumFraction;
     }
 
@@ -304,7 +334,6 @@ contract AMM {
 
     function getUnderlyingTwapPrice(uint256 _intervalInSeconds) public view returns (int256) {
         return IOracle(registry.oracle()).getUnderlyingTwapPrice(underlyingAsset, _intervalInSeconds);
-        // return int256(vamm.last_prices(1));
     }
 
     function getTwapPrice(uint256 _intervalInSeconds) public view returns (int256) {
@@ -374,10 +403,10 @@ contract AMM {
         return snapshot.quoteAssetReserve * 1e6 / snapshot.baseAssetReserve;
     }
 
-    function updateFundingRate(
+    function _updateFundingRate(
         int256 _premiumFraction,
         int256 _underlyingPrice
-    ) private {
+    ) internal {
         fundingRate = _premiumFraction * 1e18 / _underlyingPrice;
         // emit FundingRateUpdated(fundingRate, _underlyingPrice);
     }
@@ -397,7 +426,6 @@ contract AMM {
         // The following considers the spot price. Should we also look at TWAP price?
         if (isLongPosition) {
             notionalPosition = vamm.get_dy(2 /* sell base asset */, 0 /* get quote asset */, position.size.toUint256() /* exact input */) / 1e12;
-            // console.log("notionalPosition: %s, position.openNotional %s", notionalPosition, position.openNotional);
             unrealizedPnl = notionalPosition.toInt256() - position.openNotional.toInt256();
         } else {
             notionalPosition = vamm.get_dx(0 /* sell quote asset */, 2 /* purchase shorted asset */, (-position.size).toUint256() /* exact output */) / 1e12;
@@ -412,48 +440,29 @@ contract AMM {
         return vamm.get_dy(2, 0, (-baseAssetQuantity).toUint256()) / 1e12;
     }
 
+    function lastPrice() external view returns(uint256) {
+        return vamm.last_prices(2);
+    }
+
+    function openInterestNotional() external view returns (uint256) {
+        return longOpenInterestNotional + shortOpenInterestNotional;
+    }
+
     // Pure
 
     function abs(int x) private pure returns (int) {
         return x >= 0 ? x : -x;
     }
 
-    function log(string memory name, int256 baseAssetQuantity, uint quoteAssetLimit) internal pure {
-        // console.log('function: %s, quoteAssetLimit: %d', name, quoteAssetLimit);
-        // console.log('baseAssetQuantity');
-        // console.logInt(baseAssetQuantity);
+    // Privileged
+
+    function togglePause(bool pause_) external onlyOwner {
+        if (pause_ == paused()) return;
+        if (pause_) {
+            _pause();
+        } else {
+            _unpause();
+            nextFundingTime = ((_blockTimestamp() + fundingPeriod) / 1 hours) * 1 hours;
+        }
     }
-}
-
-interface IVAMM {
-    function balances(uint256) external view returns (uint256);
-
-    function get_dy(
-        uint256 i,
-        uint256 j,
-        uint256 dx
-    ) external view returns (uint256);
-
-    function get_dx(
-        uint256 i,
-        uint256 j,
-        uint256 dy
-    ) external view returns (uint256);
-
-    function exchange(
-        uint256 i,
-        uint256 j,
-        uint256 dx,
-        uint256 min_dy
-    ) external returns (uint256 dy);
-
-    function exchangeExactOut(
-        uint256 i,
-        uint256 j,
-        uint256 dy,
-        uint256 max_dx
-    ) external returns (uint256 dx);
-
-    function last_prices(uint256 k) external view returns(uint256);
-    function price_oracle(uint256 k) external view returns(uint256);
 }

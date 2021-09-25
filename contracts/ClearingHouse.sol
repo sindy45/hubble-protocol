@@ -5,30 +5,56 @@ pragma solidity 0.8.4;
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 import { VUSD } from "./VUSD.sol";
+import "./Interfaces.sol";
+
 import "hardhat/console.sol";
 
 contract ClearingHouse {
     using SafeCast for uint256;
+    using SafeCast for int256;
 
     uint256 constant PRECISION = 1e6;
 
-    int256 public maintenanceMargin;
+    uint256 public maintenanceMargin;
     uint public tradeFee;
     uint public liquidationPenalty;
 
     VUSD public vusd;
-    address public insuranceFund = address(0x1);
+    IInsuranceFund public insuranceFund;
     IMarginAccount public marginAccount;
     IAMM[] public amms;
 
+    /// @dev UI Helper
+    struct MarketInfo {
+        address amm;
+        address underlying;
+        uint256 precision;
+    }
+
+    struct Position {
+        int256 size;
+        uint256 openNotional;
+        int256 unrealizedPnl;
+        uint256 avgOpen;
+    }
+
     event PositionOpened(address indexed trader, uint indexed idx, int256 indexed baseAssetQuantity, uint quoteAsset);
 
-    constructor(IMarginAccount _marginAccount, int256 _maintenanceMargin, uint _tradeFee, uint _liquidationPenalty, address _vusd) {
-        marginAccount = _marginAccount;
+    constructor(
+        address _insuranceFund,
+        address _marginAccount,
+        address _vusd,
+        uint256 _maintenanceMargin,
+        uint _tradeFee,
+        uint _liquidationPenalty
+    ) {
+        insuranceFund = IInsuranceFund(_insuranceFund);
+        marginAccount = IMarginAccount(_marginAccount);
+        vusd = VUSD(_vusd);
+
         maintenanceMargin = _maintenanceMargin;
         tradeFee = _tradeFee;
         liquidationPenalty = _liquidationPenalty;
-        vusd = VUSD(_vusd);
     }
 
     /**
@@ -48,7 +74,7 @@ contract ClearingHouse {
 
         (int realizedPnl, uint quoteAsset, bool isPositionIncreased) = amms[idx].openPosition(trader, baseAssetQuantity, quoteAssetLimit);
         uint _tradeFee = _chargeFeeAndRealizePnL(trader, realizedPnl, quoteAsset, false /* isLiquidation */);
-        vusd.mint(insuranceFund, _tradeFee);
+        vusd.mint(address(insuranceFund), _tradeFee);
 
         if (isPositionIncreased) {
             require(isAboveMaintenanceMargin(trader), "CH: Below Maintenance Margin");
@@ -70,6 +96,24 @@ contract ClearingHouse {
         marginAccount.realizePnL(trader, -fundingPayment);
     }
 
+    function settleFunding() external {
+        int256 premiumFraction;
+        int256 longMinusShortOpenInterestNotional;
+        int256 precision;
+        int256 insurancePnL;
+        for (uint i = 0; i < amms.length; i++) {
+            (premiumFraction, longMinusShortOpenInterestNotional, precision) = amms[i].settleFunding();
+            // if premiumFraction > 0, longs pay shorts, extra shorts are paid for by insurance fund
+            // if premiumFraction < 0, shorts pay longs, extra longs are paid for by insurance fund
+            insurancePnL += premiumFraction * longMinusShortOpenInterestNotional / precision;
+        }
+        if (insurancePnL > 0) {
+            vusd.mint(address(insuranceFund), insurancePnL.toUint256());
+        } else if (insurancePnL < 0) {
+            insuranceFund.seizeBadDebt((-insurancePnL).toUint256());
+        }
+    }
+
     function liquidate(address trader) external {
         require(!isAboveMaintenanceMargin(trader), "Above Maintenance Margin");
         int realizedPnl;
@@ -82,11 +126,15 @@ contract ClearingHouse {
         // extra liquidation penalty
         uint _liquidationFee = _chargeFeeAndRealizePnL(trader, realizedPnl, quoteAsset, true /* isLiquidation */);
         uint _toInsurance = _liquidationFee / 2;
-        vusd.mint(insuranceFund, _toInsurance);
+        vusd.mint(address(insuranceFund), _toInsurance);
         vusd.mint(msg.sender, _liquidationFee - _toInsurance);
     }
 
-    function _chargeFeeAndRealizePnL(address trader, int realizedPnl, uint quoteAsset, bool isLiquidation) internal returns (uint fee) {
+    function _chargeFeeAndRealizePnL(
+        address trader, int realizedPnl, uint quoteAsset, bool isLiquidation)
+        internal
+        returns (uint fee)
+    {
         fee = isLiquidation ? _calculateLiquidationPenalty(quoteAsset) : _calculateTradeFee(quoteAsset);
         int256 marginCharge = realizedPnl - fee.toInt256();
         if (marginCharge != 0) {
@@ -100,36 +148,64 @@ contract ClearingHouse {
         return getMarginFraction(trader) >= maintenanceMargin;
     }
 
-    function getMarginFraction(address trader) public view returns(int256) {
+    function getMarginFraction(address trader) public view returns(uint256) {
         int256 margin = marginAccount.getNormalizedMargin(trader);
-        (int256 notionalPosition, int256 unrealizedPnl) = getTotalNotionalPositionAndUnrealizedPnl(trader);
+        (uint256 notionalPosition, int256 unrealizedPnl) = getTotalNotionalPositionAndUnrealizedPnl(trader);
         int256 accountValue = margin + unrealizedPnl;
         if (accountValue <= 0) {
             return 0;
         }
         if (accountValue > 0 && notionalPosition == 0) {
-            return type(int256).max;
+            return type(uint256).max;
         }
-        return accountValue * PRECISION.toInt256() / notionalPosition;
+        return accountValue.toUint256() * PRECISION / notionalPosition;
     }
 
     function getTotalNotionalPositionAndUnrealizedPnl(address trader)
         public
         view
-        returns(int256 notionalPosition, int256 unrealizedPnl)
+        returns(uint256 notionalPosition, int256 unrealizedPnl)
     {
+        uint256 _notionalPosition;
+        int256 _unrealizedPnl;
         for (uint i = 0; i < amms.length; i++) {
-            (int256 _notionalPosition, int256 _unrealizedPnl) = amms[i].getNotionalPositionAndUnrealizedPnl(trader);
+            (_notionalPosition, _unrealizedPnl) = amms[i].getNotionalPositionAndUnrealizedPnl(trader);
             notionalPosition += _notionalPosition;
             unrealizedPnl += _unrealizedPnl;
         }
     }
 
-    function markets() external view returns(address[] memory _amms) {
-        uint length = amms.length;
-        _amms = new address[](length);
-        for (uint i = 0; i < length; i++) {
-            _amms[i] = address(amms[i]);
+    // UI Helpers
+
+    /**
+    * @notice Get information about all user positions
+    * @param trader Trader for which information is to be obtained
+    * @return positions in order of amms
+    *   positions[i].size - BaseAssetQuantity amount longed (+ve) or shorted (-ve)
+    *   positions[i].openNotional - $ value of position
+    *   positions[i].unrealizedPnl - in dollars. +ve is profit, -ve if loss
+    *   positions[i].avgOpen - Average $ value at which position was started
+    */
+    function userPositions(address trader) external view returns(Position[] memory positions) {
+        uint l = amms.length;
+        positions = new Position[](l);
+        for (uint i = 0; i < l; i++) {
+            (positions[i].size, positions[i].openNotional, ) = amms[i].positions(trader);
+            if (positions[i].size == 0) {
+                positions[i].unrealizedPnl = 0;
+                positions[i].avgOpen = 0;
+            } else {
+                (,positions[i].unrealizedPnl) = amms[i].getNotionalPositionAndUnrealizedPnl(trader);
+                positions[i].avgOpen = positions[i].openNotional * amms[i].precision().toUint256() / abs(positions[i].size).toUint256();
+            }
+        }
+    }
+
+    function markets() external view returns(MarketInfo[] memory _markets) {
+        uint l = amms.length;
+        _markets = new MarketInfo[](l);
+        for (uint i = 0; i < l; i++) {
+            _markets[i] = MarketInfo(address(amms[i]), amms[i].underlyingAsset(), amms[i].precision().toUint256());
         }
     }
 
@@ -143,27 +219,15 @@ contract ClearingHouse {
         return quoteAsset * liquidationPenalty / PRECISION;
     }
 
+    // Pure
+
+    function abs(int x) private pure returns (int) {
+        return x >= 0 ? x : -x;
+    }
+
     // Governance
 
     function whitelistAmm(address _amm) public /* @todo onlyOwner */ {
         amms.push(IAMM(_amm));
     }
-}
-
-interface IAMM {
-    function openPosition(address trader, int256 baseAssetQuantity, uint quoteAssetLimit)
-        external
-        returns (int realizedPnl, uint quoteAsset, bool isPositionIncreased);
-    function getUnrealizedPnL(address trade) external returns(int256);
-    function getNotionalPositionAndUnrealizedPnl(address trader)
-        external
-        view
-        returns(int256 notionalPosition, int256 unrealizedPnl);
-    function updatePosition(address trader) external returns(int256 fundingPayment);
-    function closePosition(address trader) external returns (int realizedPnl, uint quoteAsset);
-}
-
-interface IMarginAccount {
-    function getNormalizedMargin(address trader) external view returns(int256);
-    function realizePnL(address trader, int256 realizedPnl) external;
 }

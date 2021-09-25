@@ -2,6 +2,7 @@
 
 pragma solidity 0.8.4;
 
+import { AccessControlEnumerable } from "@openzeppelin/contracts/access/AccessControlEnumerable.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
@@ -10,9 +11,12 @@ import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 import { Initializable } from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 
 import "./Interfaces.sol";
+import "hardhat/console.sol";
 
-contract InsuranceFund is Ownable, Initializable, ERC20 {
+contract InsuranceFund is Ownable, AccessControlEnumerable, Initializable, ERC20 {
     using SafeERC20 for IERC20;
+
+    bytes32 public constant SEIZE_ROLE = keccak256("SEIZE_ROLE");
 
     IERC20 public vusd;
     address public marginAccount;
@@ -25,20 +29,25 @@ contract InsuranceFund is Ownable, Initializable, ERC20 {
 
     constructor(string memory name_, string memory symbol_) ERC20(name_, symbol_) {}
 
-    function initialize(address _registry) external initializer {
-        IRegistry registry = IRegistry(_registry);
+    function initialize(IRegistry registry) external initializer {
         vusd = IERC20(registry.vusd());
         marginAccount = registry.marginAccount();
+
+        _setupRole(SEIZE_ROLE, marginAccount);
+        _setupRole(SEIZE_ROLE, registry.clearingHouse());
     }
 
-    function seizeBadDebt(uint amount) external onlyMarginAccount {
+    function seizeBadDebt(uint amount) external {
+        require(hasRole(SEIZE_ROLE, msg.sender), "InsuranceFund: must have seize role");
         settlePendingObligation();
         uint bal = vusd.balanceOf(address(this));
         if (bal < amount) {
             pendingObligation += (amount - bal);
             amount = bal;
         }
-        vusd.safeTransfer(msg.sender, amount);
+        if (amount > 0) {
+            vusd.safeTransfer(marginAccount, amount);
+        }
     }
 
     function settlePendingObligation() public {
@@ -67,12 +76,5 @@ contract InsuranceFund is Ownable, Initializable, ERC20 {
 
     function balance() public view returns (uint) {
         return vusd.balanceOf(address(this));
-    }
-
-    // Privileged
-
-    function syncDeps(IRegistry registry) public onlyOwner {
-        marginAccount = registry.marginAccount();
-        vusd = IERC20(registry.vusd());
     }
 }

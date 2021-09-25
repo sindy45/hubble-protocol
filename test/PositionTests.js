@@ -34,6 +34,14 @@ describe('Position Tests', function() {
                 unrealizedPnl: 0,
                 margin: margin.sub(fee)
             })
+            expect(await amm.longOpenInterestNotional()).to.eq(baseAssetQuantity)
+            expect(await amm.shortOpenInterestNotional()).to.eq(ZERO)
+
+            const [ pos ] = await clearingHouse.userPositions(alice)
+            expect(pos.size).to.eq(baseAssetQuantity)
+            expect(pos.openNotional).to.eq(quoteAsset)
+            expect(pos.unrealizedPnl).to.eq(0)
+            expect(pos.avgOpen).to.eq(quoteAsset.mul(_1e18).div(baseAssetQuantity))
         })
 
         it('two longs', async () => {
@@ -59,6 +67,8 @@ describe('Position Tests', function() {
                 unrealizedPnl: 0,
                 margin: margin.sub(fee)
             })
+            expect(await amm.longOpenInterestNotional()).to.eq(baseAssetQuantity.mul(2))
+            expect(await amm.shortOpenInterestNotional()).to.eq(ZERO)
         })
 
         it('short', async () => {
@@ -78,6 +88,14 @@ describe('Position Tests', function() {
                 unrealizedPnl: 0,
                 margin: margin.sub(fee)
             })
+            expect(await amm.longOpenInterestNotional()).to.eq(ZERO)
+            expect(await amm.shortOpenInterestNotional()).to.eq(baseAssetQuantity.abs())
+
+            const [ pos ] = await clearingHouse.userPositions(alice)
+            expect(pos.size).to.eq(baseAssetQuantity)
+            expect(pos.openNotional).to.eq(quoteAsset)
+            expect(pos.unrealizedPnl).to.eq(0)
+            expect(pos.avgOpen).to.eq(quoteAsset.mul(_1e18).div(baseAssetQuantity.mul(-1)))
         })
 
         it('two shorts', async () => {
@@ -104,6 +122,8 @@ describe('Position Tests', function() {
                 marginFractionNumerator: margin.sub(fee).add(-1 /* unrealizedPnl */),
                 margin: margin.sub(fee)
             })
+            expect(await amm.longOpenInterestNotional()).to.eq(ZERO)
+            expect(await amm.shortOpenInterestNotional()).to.eq(baseAssetQuantity.mul(2).abs())
         })
 
         it('long + short', async () => {
@@ -117,8 +137,10 @@ describe('Position Tests', function() {
                 openNotional: ZERO,
                 notionalPosition: ZERO,
                 unrealizedPnl: ZERO,
-                marginFraction: ethers.constants.MaxInt256,
+                marginFraction: ethers.constants.MaxUint256,
             })
+            expect(await amm.longOpenInterestNotional()).to.eq(ZERO)
+            expect(await amm.shortOpenInterestNotional()).to.eq(ZERO)
         })
 
         it('short + long', async () => {
@@ -132,21 +154,26 @@ describe('Position Tests', function() {
                 openNotional: ZERO,
                 notionalPosition: ZERO,
                 unrealizedPnl: ZERO,
-                marginFraction: ethers.constants.MaxInt256,
+                marginFraction: ethers.constants.MaxUint256,
             })
+            expect(await amm.longOpenInterestNotional()).to.eq(ZERO)
+            expect(await amm.shortOpenInterestNotional()).to.eq(ZERO)
         })
 
         it('long + bigger short + bigger long', async () => {
             // Long
             let tx = await clearingHouse.openPosition(0 /* amm index */, _1e18.mul(5) /* long exactly */, ethers.constants.MaxUint256 /* long at any price */)
             const trade1 = await getTradeDetails(tx, TRADE_FEE)
+            expect(await amm.longOpenInterestNotional()).to.eq(_1e18.mul(5))
+            expect(await amm.shortOpenInterestNotional()).to.eq(ZERO)
 
             // Short
             tx = await clearingHouse.openPosition(0 /* amm index */, _1e18.mul(-7) /* exact base asset */, 0 /* short at any price */)
             const trade2 = await getTradeDetails(tx, TRADE_FEE)
+            expect(await amm.longOpenInterestNotional()).to.eq(ZERO)
+            expect(await amm.shortOpenInterestNotional()).to.eq(_1e18.mul(2))
 
             let fee = trade1.fee.add(trade2.fee)
-
             await assertions(contracts, alice, {
                 size: _1e18.mul(-2), // 5 - 7
                 unrealizedPnl: ZERO,
@@ -163,16 +190,22 @@ describe('Position Tests', function() {
                 unrealizedPnl: 0,
                 margin: margin.sub(fee)
             })
+            expect(await amm.longOpenInterestNotional()).to.eq(_1e18.mul(8))
+            expect(await amm.shortOpenInterestNotional()).to.eq(ZERO)
         })
 
         it('short + bigger long + bigger short', async () => {
             // Short
             let tx = await clearingHouse.openPosition(0 /* amm index */, _1e18.mul(-5) /* short exactly */, 0 /* short at any price */)
             const trade1 = await getTradeDetails(tx, TRADE_FEE)
+            expect(await amm.longOpenInterestNotional()).to.eq(ZERO)
+            expect(await amm.shortOpenInterestNotional()).to.eq(_1e18.mul(5))
 
             // Long
             tx = await clearingHouse.openPosition(0 /* amm index */, _1e18.mul(7) /* exact base asset */, _1e6.mul(7100))
             const trade2 = await getTradeDetails(tx, TRADE_FEE)
+            expect(await amm.longOpenInterestNotional()).to.eq(_1e18.mul(2))
+            expect(await amm.shortOpenInterestNotional()).to.eq(ZERO)
 
             let fee = trade1.fee.add(trade2.fee)
 
@@ -192,10 +225,14 @@ describe('Position Tests', function() {
                 unrealizedPnl: 0,
                 margin: margin.sub(fee)
             })
+            expect(await amm.longOpenInterestNotional()).to.eq(ZERO)
+            expect(await amm.shortOpenInterestNotional()).to.eq(_1e18.mul(8))
         })
 
         it("open an empty position", async () => {
             await expect(clearingHouse.openPosition(0, 0, 0)).to.be.revertedWith('CH: baseAssetQuantity == 0')
+            expect(await amm.longOpenInterestNotional()).to.eq(ZERO)
+            expect(await amm.shortOpenInterestNotional()).to.eq(ZERO)
         })
     })
 
@@ -210,7 +247,6 @@ describe('Position Tests', function() {
             await addMargin(bob, margin)
             await clearingHouse.connect(bob).openPosition(0 /* amm index */, _1e18.mul(3) /* exact base asset */, _1e6.mul(3100))
 
-            // console.log((await clearingHouse.getMarginFraction(alice)).toString())
             expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.true
 
             ;({ unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(alice))
@@ -218,6 +254,7 @@ describe('Position Tests', function() {
 
             tx = await clearingHouse.openPosition(0, _1e18.mul(5), _1e6.mul(5100))
             const trade2 = await getTradeDetails(tx, TRADE_FEE)
+
             let fee = trade1.fee.add(trade2.fee)
 
             expect(await marginAccount.getNormalizedMargin(alice)).to.eq(margin.add(unrealizedPnl).sub(fee))
@@ -226,7 +263,7 @@ describe('Position Tests', function() {
                 openNotional: ZERO,
                 notionalPosition: ZERO,
                 unrealizedPnl: ZERO,
-                marginFraction: ethers.constants.MaxInt256,
+                marginFraction: ethers.constants.MaxUint256,
             })
 
             // bob is profitable
@@ -252,6 +289,7 @@ describe('Position Tests', function() {
 
             tx = await clearingHouse.openPosition(0, _1e18.mul(5), _1e6.mul(100100))
             const trade2 = await getTradeDetails(tx, TRADE_FEE)
+
             let fee = trade1.fee.add(trade2.fee)
 
             expect(await marginAccount.getNormalizedMargin(alice)).to.eq(margin.add(unrealizedPnl).sub(fee))
@@ -260,7 +298,7 @@ describe('Position Tests', function() {
                 openNotional: ZERO,
                 notionalPosition: ZERO,
                 unrealizedPnl: ZERO,
-                marginFraction: ethers.constants.MaxInt256,
+                marginFraction: ethers.constants.MaxUint256,
             })
 
             // bob is profitable
@@ -294,7 +332,7 @@ describe('Position Tests', function() {
                 openNotional: ZERO,
                 notionalPosition: ZERO,
                 unrealizedPnl: ZERO,
-                marginFraction: ethers.constants.MaxInt256,
+                marginFraction: ethers.constants.MaxUint256,
             })
 
             // bob is profitable

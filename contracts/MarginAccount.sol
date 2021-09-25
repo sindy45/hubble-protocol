@@ -46,8 +46,7 @@ contract MarginAccount is Ownable, Initializable {
     }
 
     function initialize(address _registry) external initializer {
-        IRegistry registry = IRegistry(_registry);
-        syncDeps(registry);
+        syncDeps(_registry);
         _addCollateral(address(vusd), PRECISION); // weight = 1 * PRECISION
     }
 
@@ -211,7 +210,8 @@ contract MarginAccount is Ownable, Initializable {
 
     // Privileged
 
-    function syncDeps(IRegistry registry) public onlyOwner {
+    function syncDeps(address _registry) public onlyOwner {
+        IRegistry registry = IRegistry(_registry);
         clearingHouse = IClearingHouse(registry.clearingHouse());
         oracle = IOracle(registry.oracle());
         insuranceFund = IInsuranceFund(registry.insuranceFund());
