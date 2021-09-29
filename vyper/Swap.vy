@@ -636,7 +636,7 @@ def exchange(i: uint256, j: uint256, dx: uint256, min_dy: uint256) -> uint256:
             dy = dy * PRECISION / price_scale[j-1]
         dy /= prec_j
 
-        dy -= self._fee(xp) * dy / 10**10
+        # dy -= self._fee(xp) * dy / 10**10
         assert dy >= min_dy, "Slippage"
         y -= dy
 
@@ -668,7 +668,7 @@ def exchange(i: uint256, j: uint256, dx: uint256, min_dy: uint256) -> uint256:
                 p = _dy * 10**18 / _dx
                 ix = i
 
-    # self.tweak_price(A_gamma, xp, ix, p, 0)
+    self.tweak_price(A_gamma, xp, ix, p, 0)
     IAMM(self.amm).addReserveSnapshot(self.balances[0], self.balances[2])
 
     log TokenExchange(msg.sender, i, dx, j, dy)
@@ -775,7 +775,7 @@ def exchangeExactOut(i: uint256, j: uint256, dy: uint256, max_dx: uint256) -> ui
                 p = _dy * 10**18 / _dx
                 ix = i
 
-    # self.tweak_price(A_gamma, xp, ix, p, 0)
+    self.tweak_price(A_gamma, xp, ix, p, 0)
     IAMM(self.amm).addReserveSnapshot(self.balances[0], self.balances[2])
 
     log TokenExchange(msg.sender, i, dx, j, dy)
@@ -790,30 +790,6 @@ def get_dy(i: uint256, j: uint256, dx: uint256) -> uint256:
 @view
 def get_dx(i: uint256, j: uint256, dy: uint256) -> uint256:
     return Views(self.views).get_dx(i, j, dy)
-
-@view
-@internal
-def _calc_token_fee(amounts: uint256[N_COINS], xp: uint256[N_COINS]) -> uint256:
-    # fee = sum(amounts_i - avg(amounts)) * fee' / sum(amounts)
-    fee: uint256 = self._fee(xp) * N_COINS / (4 * (N_COINS-1))
-    S: uint256 = 0
-    for _x in amounts:
-        S += _x
-    avg: uint256 = S / N_COINS
-    Sdiff: uint256 = 0
-    for _x in amounts:
-        if _x > avg:
-            Sdiff += _x - avg
-        else:
-            Sdiff += avg - _x
-    return fee * Sdiff / S + NOISE_FEE
-
-
-@external
-@view
-def calc_token_fee(amounts: uint256[N_COINS], xp: uint256[N_COINS]) -> uint256:
-    return self._calc_token_fee(amounts, xp)
-
 
 @external
 @nonreentrant('lock')
@@ -880,8 +856,8 @@ def add_liquidity(amounts: uint256[N_COINS], min_mint_amount: uint256):
     assert d_token > 0  # dev: nothing minted
 
     if old_D > 0:
-        d_token_fee = self._calc_token_fee(amountsp, xp) * d_token / 10**10 + 1
-        d_token -= d_token_fee
+        # d_token_fee = self._calc_token_fee(amountsp, xp) * d_token / 10**10 + 1
+        # d_token -= d_token_fee
         token_supply += d_token
         self.totalSupply = token_supply
         # CurveToken(token).mint(msg.sender, d_token)

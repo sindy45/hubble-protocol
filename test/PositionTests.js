@@ -36,6 +36,7 @@ describe('Position Tests', function() {
             })
             expect(await amm.longOpenInterestNotional()).to.eq(baseAssetQuantity)
             expect(await amm.shortOpenInterestNotional()).to.eq(ZERO)
+            expect((await amm.lastPrice()).gt(_1e6.mul(1000))).to.be.true // rate increases after long
 
             const [ pos ] = await clearingHouse.userPositions(alice)
             expect(pos.size).to.eq(baseAssetQuantity)
@@ -63,8 +64,8 @@ describe('Position Tests', function() {
             await assertions(contracts, alice, {
                 size: baseAssetQuantity.mul(2),
                 openNotional: quoteAsset,
-                notionalPosition: quoteAsset,
-                unrealizedPnl: 0,
+                notionalPosition: quoteAsset.add(1), // due to rounding off error
+                unrealizedPnl: 1, // due to rounding off error
                 margin: margin.sub(fee)
             })
             expect(await amm.longOpenInterestNotional()).to.eq(baseAssetQuantity.mul(2))
@@ -90,6 +91,7 @@ describe('Position Tests', function() {
             })
             expect(await amm.longOpenInterestNotional()).to.eq(ZERO)
             expect(await amm.shortOpenInterestNotional()).to.eq(baseAssetQuantity.abs())
+            expect((await amm.lastPrice()).lt(_1e6.mul(1000))).to.be.true // rate decreases after short
 
             const [ pos ] = await clearingHouse.userPositions(alice)
             expect(pos.size).to.eq(baseAssetQuantity)
@@ -99,8 +101,8 @@ describe('Position Tests', function() {
         })
 
         it('two shorts', async () => {
-            const baseAssetQuantity = _1e18.mul(-5)
-            amount = _1e6.mul(4900)
+            const baseAssetQuantity = _1e18.mul(-4)
+            amount = _1e6.mul(3900)
 
             let tx = await clearingHouse.openPosition(0, baseAssetQuantity, amount)
             const trade1 = await getTradeDetails(tx, TRADE_FEE)
@@ -117,9 +119,8 @@ describe('Position Tests', function() {
             await assertions(contracts, alice, {
                 size: baseAssetQuantity.mul(2),
                 openNotional: quoteAsset,
-                notionalPosition: quoteAsset.add(1), // anomaly: 1 more than expected, which leads to unrealizedPnl = -1
-                unrealizedPnl: -1, // ideally be 0
-                marginFractionNumerator: margin.sub(fee).add(-1 /* unrealizedPnl */),
+                notionalPosition: quoteAsset,
+                unrealizedPnl: 0,
                 margin: margin.sub(fee)
             })
             expect(await amm.longOpenInterestNotional()).to.eq(ZERO)
@@ -313,8 +314,8 @@ describe('Position Tests', function() {
 
             // bob longs
             const bob = signers[1]
-            await addMargin(bob, _1e6.mul(10000))
-            await clearingHouse.connect(bob).openPosition(0, _1e18.mul(45), _1e6.mul(50000))
+            await addMargin(bob, _1e6.mul(20000))
+            await clearingHouse.connect(bob).openPosition(0, _1e18.mul(70), _1e6.mul(73000))
 
             // console.log((await clearingHouse.getMarginFraction(alice)).toString())
             expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
@@ -347,8 +348,8 @@ describe('Position Tests', function() {
 
             // bob longs
             const bob = signers[1]
-            await addMargin(bob, _1e6.mul(10000))
-            await clearingHouse.connect(bob).openPosition(0, _1e18.mul(45), _1e6.mul(50000))
+            await addMargin(bob, _1e6.mul(20000))
+            await clearingHouse.connect(bob).openPosition(0, _1e18.mul(70), _1e6.mul(73000))
 
             // console.log((await clearingHouse.getMarginFraction(alice)).toString())
             expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false

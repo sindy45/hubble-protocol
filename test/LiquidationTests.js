@@ -29,8 +29,8 @@ describe('Liquidation Tests', async function() {
 
     it('bob makes a counter-trade', async function() {
         const bob = signers[1]
-        await addMargin(bob, _1e6.mul(10000))
-        await clearingHouse.connect(bob).openPosition(0, _1e18.mul(45), _1e6.mul(50000))
+        await addMargin(bob, _1e6.mul(20000))
+        await clearingHouse.connect(bob).openPosition(0, _1e18.mul(70), _1e6.mul(73000))
     })
 
     it('alice\'s position is liquidated', async function() {
@@ -61,9 +61,9 @@ describe('Liquidation Tests', async function() {
     })
 
     it('alice\'s margin account is partially liquidated', async function() {
-        // the vusd margin is ~ -742, whereas .5 eth at weight = 0.7 and price = 2k allows for $700 margin
+        // the vusd margin is ~ -795, whereas .5 eth at weight = 0.7 and price = 2k allows for $700 margin
         const aliceVusdMargin = await marginAccount.margin(0, alice)
-        const repayAmount = aliceVusdMargin.abs().div(2) // 742 / 2 = 371
+        const repayAmount = aliceVusdMargin.abs().div(2) // 795 / 2 ~ 397
 
         await vusd.grantRole(await vusd.MINTER_ROLE(), admin.address)
         await vusd.connect(admin).mint(liquidator2.address, repayAmount)
@@ -93,15 +93,15 @@ describe('Liquidation Tests', async function() {
     })
 
     it('alice\'s margin account is partially liquidated with incentivePerDollar < 5%', async function() {
-        const aliceVusdMargin = await marginAccount.margin(0, alice) // ~ -371
+        const aliceVusdMargin = await marginAccount.margin(0, alice) // ~ -397
 
-        // alice has about 0.3 eth margin left over from the liquidation above
+        // alice has about 0.29 eth margin left over from the liquidation above
         // to fall in liquidation zone, where 0 < spot < |vUSD| * 1.05
-        // 371 * 1.03 / .3 = $1273
-        oraclePrice = 1e6 * 1250
+        // 397 * 1.03 / .29 = $1410
+        oraclePrice = 1e6 * 1390
         await oracle.setPrice(weth.address, oraclePrice)
 
-        const repayAmount = aliceVusdMargin.abs().div(2) // 371 / 2 = 185
+        const repayAmount = aliceVusdMargin.abs().div(2) // 397 / 2 = 198
         await vusd.connect(admin).mint(liquidator2.address, repayAmount)
         await vusd.connect(liquidator2).approve(marginAccount.address, repayAmount)
 

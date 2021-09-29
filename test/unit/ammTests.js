@@ -34,7 +34,32 @@ describe('AMM Spec', function() {
         expect(initialETHBalance.sub((await swap.balances(2)))).to.eq(baseAssetQuantity)
         expect(await amm.getSnapshotLen()).to.eq(2)
         expect(latestSnapshot.quoteAssetReserve).to.eq(finalUSDTBalance)
-        expect(latestSnapshot.baseAssetReserve).to.eq(_1e18.mul(1000).sub(baseAssetQuantity))
+        expect(latestSnapshot.baseAssetReserve).to.eq(initialETHBalance.sub(baseAssetQuantity))
+    })
+
+    it('exchangeExactOut multiple transactions', async () => {
+        const baseAssetQuantity = _1e18.mul(5)
+        const amount = _1e18.mul(5300) // ~5x leverage
+        const initialUSDTBalance = await swap.balances(0);
+        const initialETHBalance = await swap.balances(2);
+
+        const numberOfTransactions = 10
+        var dx1 = ZERO
+        for (let i = 0; i < numberOfTransactions; i++) {
+            let tx = await swap.exchangeExactOut(0, 2, baseAssetQuantity, amount)
+            let transactionEvent = await filterEvent(tx, 'TokenExchange')
+            dx1 = dx1.add(transactionEvent.args[2]);
+        }
+
+        const dx2 = await swap.get_dy(2, 0, baseAssetQuantity.mul(numberOfTransactions), {gasLimit: 100000})
+        const finalUSDTBalance = await swap.balances(0)
+        const latestSnapshot = await amm.reserveSnapshots(numberOfTransactions) // total snapshots = numberOfTransactions + 1 (add_liquidity)
+        expect(dx1.div(_1e12)).to.eq(dx2.div(_1e12))
+        expect((finalUSDTBalance.sub(initialUSDTBalance)).lte(amount.mul(numberOfTransactions))).to.be.true
+        expect(initialETHBalance.sub((await swap.balances(2)))).to.eq(baseAssetQuantity.mul(numberOfTransactions))
+        expect(await amm.getSnapshotLen()).to.eq(numberOfTransactions+1)
+        expect(latestSnapshot.quoteAssetReserve).to.eq(finalUSDTBalance)
+        expect(latestSnapshot.baseAssetReserve).to.eq(initialETHBalance.sub(baseAssetQuantity.mul(numberOfTransactions)))
     })
 
     it('exchange', async () => {
@@ -48,12 +73,37 @@ describe('AMM Spec', function() {
         const dy1 = transactionEvent.args[4];
 
         const dy2 = await swap.get_dx(0, 2, baseAssetQuantity, {gasLimit: 100000})
+        const latestSnapshot = await amm.reserveSnapshots(1)
         expect(dy1.div(_1e12)).to.eq(dy2.div(_1e12))
         expect((initialUSDTBalance.sub((await swap.balances(0)))).gte(amount)).to.be.true
         expect((await swap.balances(2)).sub(initialETHBalance)).to.eq(baseAssetQuantity)
         expect(await amm.getSnapshotLen()).to.eq(2)
-        expect((await amm.reserveSnapshots(1)).quoteAssetReserve).to.eq(await swap.balances(0))
-        expect((await amm.reserveSnapshots(1)).baseAssetReserve).to.eq(_1e18.mul(1000).add(baseAssetQuantity))
+        expect(latestSnapshot.quoteAssetReserve).to.eq(initialUSDTBalance.sub(dy1))
+        expect(latestSnapshot.baseAssetReserve).to.eq(initialETHBalance.add(baseAssetQuantity))
+    })
+
+    it('exchange multiple transactions', async () => {
+        const baseAssetQuantity = _1e18.mul(5)
+        const amount = _1e18.mul(4700) // ~5x leverage
+        const initialUSDTBalance = await swap.balances(0);
+        const initialETHBalance = await swap.balances(2);
+
+        const numberOfTransactions = 10
+        var dy1 = ZERO
+        for (let i = 0; i < numberOfTransactions; i++) {
+            let tx = await swap.exchange(2, 0, baseAssetQuantity, amount)
+            let transactionEvent = await filterEvent(tx, 'TokenExchange')
+            dy1 = dy1.add(transactionEvent.args[4]);
+        }
+
+        const dy2 = await swap.get_dx(0, 2, baseAssetQuantity.mul(numberOfTransactions), {gasLimit: 100000})
+        const latestSnapshot = await amm.reserveSnapshots(numberOfTransactions)
+        expect(dy1.div(_1e12)).to.eq(dy2.div(_1e12))
+        expect((initialUSDTBalance.sub((await swap.balances(0)))).gte(amount.mul(numberOfTransactions))).to.be.true
+        expect((await swap.balances(2)).sub(initialETHBalance)).to.eq(baseAssetQuantity.mul(numberOfTransactions))
+        expect(await amm.getSnapshotLen()).to.eq(numberOfTransactions+1)
+        expect(latestSnapshot.quoteAssetReserve).to.eq(initialUSDTBalance.sub(dy1))
+        expect(latestSnapshot.baseAssetReserve).to.eq(initialETHBalance.add(baseAssetQuantity.mul(numberOfTransactions)))
     })
 })
 
@@ -90,7 +140,7 @@ describe('TWAP Price', function() {
         // twap = (1020 * 6 snapshots * 14 sec + 1010*6*28 + 1000*6*28)/420 = 1008
 
         const twap = await amm.getTwapPrice(420)
-        expect(twap).to.eq('1008088179')
+        expect(twap).to.eq('1008071531')
     })
 
     it('the timestamp of latest snapshot is now, the latest snapshot wont have any effect', async () => {
@@ -100,7 +150,7 @@ describe('TWAP Price', function() {
         // Shaving off 20 secs from the 420s window would mean dropping the first 1020 snapshot and 6 secs off the 1010 reading.
         // twap = (1020 * 5 snapshots * 14 sec + 1010 * 22 sec + 1010*5*28 +  + 1000*6*28)/400 = 1007
         const twap = await amm.getTwapPrice(400)
-        expect(twap).to.eq('1007631167')
+        expect(twap).to.eq('1007615851')
     })
 
     it('asking interval more than the snapshots', async () => {
@@ -108,7 +158,7 @@ describe('TWAP Price', function() {
         // twap = (1020 * 10 snapshots * 14 sec + 1010*10*28 + 1000*11*28)/728 = 1007
 
         const twap = await amm.getTwapPrice(900)
-        expect(twap).to.eq('1007929587')
+        expect(twap).to.eq('1007913266')
     })
 
     it('asking interval less than latest snapshot, return latest price directly', async () => {
@@ -117,7 +167,7 @@ describe('TWAP Price', function() {
         await swap.exchange(2, 0, baseAssetQuantity, ZERO) // add a delay of 500 seconds
 
         const twap = await amm.getTwapPrice(420)
-        expect(twap).to.eq('990071997')
+        expect(twap).to.eq('990058671')
     })
 
     it('price with interval 0 should be the same as spot price', async () => {

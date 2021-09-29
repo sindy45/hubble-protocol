@@ -441,7 +441,7 @@ contract AMM is Ownable, Pausable {
     }
 
     function lastPrice() external view returns(uint256) {
-        return vamm.last_prices(2);
+        return vamm.last_prices(1) / 1e12;
     }
 
     function openInterestNotional() external view returns (uint256) {

@@ -45,19 +45,19 @@ async function setupContracts(tradeFee = DEFAULT_TRADE_FEE) {
     views = await Views.deploy(moonMath.address)
 
     swap = await Swap.deploy(
-        "0xbabe61887f1de2713c6f97e567623453d3c79f67",
-        "0xbabe61887f1de2713c6f97e567623453d3c79f67",
-        moonMath.address,
-        views.address,
-        3645,
-        "69999999999999",
+        "0xbabe61887f1de2713c6f97e567623453d3c79f67", // owner
+        "0xbabe61887f1de2713c6f97e567623453d3c79f67", // admin_fee_receiver
+        moonMath.address, // math
+        views.address, // views
+        54000, // A
+        "3500000000000000", // gamma
         0,
         0,
-        "2800000000000000",
+        "0",
         0,
-        "1500000000000000",
+        "490000000000000", // adjustment_step
         0,
-        600,
+        600, // ma_half_time
         [_1e18.mul(40000) /* btc initial rate */, _1e18.mul(1000) /* eth initial rate */]
     )
     usdc = await ERC20Mintable.deploy('usdc', 'usdc', 6)
