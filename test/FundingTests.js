@@ -1,6 +1,14 @@
+const { BigNumber } = require('@ethersproject/bignumber');
 const { expect } = require('chai');
 
-const { getTradeDetails, assertions, gotoNextFundingTime, setupContracts, constants: { _1e6, _1e18, ZERO }, getTwapPrice } = require('./utils')
+const {
+    getTradeDetails,
+    assertions,
+    gotoNextFundingTime,
+    setupContracts,
+    getTwapPrice,
+    constants: { _1e6, _1e18, ZERO }
+} = require('./utils')
 
 describe('Funding Tests', function() {
     before(async function() {

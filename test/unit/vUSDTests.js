@@ -1,24 +1,24 @@
 const { expect } = require('chai')
 
-const { constants: { _1e6, ZERO }, impersonateAcccount, stopImpersonateAcccount} = require('../utils')
+const { constants: { _1e6, _1e18, ZERO }, impersonateAcccount, stopImpersonateAcccount} = require('../utils')
 
 describe('vUSD Tests', function() {
     before('factories', async function() {
         signers = await ethers.getSigners()
         alice = signers[0].address
-        admin = signers[5]
+        admin = signers[11]
 
         ;([ ERC20Mintable, VUSD ] = await Promise.all([
             ethers.getContractFactory('ERC20Mintable'),
             ethers.getContractFactory('VUSD')
         ]))
-        usdc = await ERC20Mintable.deploy('usdc', 'usdc', 6)
 
         amount = _1e6.mul(123)
     })
 
     describe('minter role', async function() {
         before('deploy vUSD', async function() {
+            usdc = await ERC20Mintable.deploy('usdc', 'usdc', 6)
             vusd = await VUSD.deploy(usdc.address)
             minterRole = await vusd.MINTER_ROLE()
         })
@@ -54,6 +54,7 @@ describe('vUSD Tests', function() {
 
     describe('withdrawal Q', async function() {
         before('deploy vUSD', async function() {
+            usdc = await ERC20Mintable.deploy('usdc', 'usdc', 6)
             vusd = await VUSD.deploy(usdc.address)
         })
 
@@ -82,7 +83,6 @@ describe('vUSD Tests', function() {
             for (let i = 1; i <= 10; i++) {
                 trader = signers[i]
                 _amount = amount.mul(i)
-                await usdc.mint(trader.address, _amount)
                 await mintVusdWithReserve(trader, _amount)
                 expect(await vusd.balanceOf(trader.address)).to.eq(_amount)
             }
@@ -104,29 +104,42 @@ describe('vUSD Tests', function() {
             }
             expect(await usdc.balanceOf(vusd.address)).to.eq(ZERO)
         })
+    })
+
+    describe('partial withdrawals', async function() {
+        before('deploy vUSD', async function() {
+            usdc = await ERC20Mintable.deploy('usdc', 'usdc', 6)
+            vusd = await VUSD.deploy(usdc.address)
+        })
 
         it('process partial withdrawals', async function () {
             let _amount
-            for (let i = 1; i <= 10; i++) {
+            for (let i = 1; i <= 5; i++) {
                 _amount = amount.mul(i)
                 await mintVusdWithReserve(signers[i], _amount)
                 await vusd.connect(signers[i]).withdraw(_amount)
+                expect(await usdc.balanceOf(signers[i].address)).to.eq(ZERO)
             }
 
-            // reduce usdc balance so that only first 5 withdrawals can process
-            await impersonateAcccount(vusd.address)
-            const signer = await ethers.getSigner(vusd.address)
-            await usdc.connect(signer).transfer(alice, _1e6.mul(4900), { gasPrice: 0 })
-            await stopImpersonateAcccount(vusd.address)
+            // free mints will cause usdc balance enough for only first 5 withdrawals
+            await vusd.grantRole(await vusd.MINTER_ROLE(), admin.address)
+            for (let i = 6; i <= 10; i++) {
+                _amount = amount.mul(i)
+                await vusd.connect(admin).mint(signers[i].address, _amount)
+                await vusd.connect(signers[i]).withdraw(_amount)
+            }
+            const spareUsdc = _1e6.mul(20)
+            await usdc.mint(vusd.address, spareUsdc)
 
             await vusd.processWithdrawals()
+
             for (let i = 1; i <= 5; i++) {
                 expect(await usdc.balanceOf(signers[i].address)).to.eq(amount.mul(i))
             }
             for (let i = 6; i <= 10; i++) {
                 expect(await usdc.balanceOf(signers[i].address)).to.eq(ZERO)
             }
-            expect(await usdc.balanceOf(vusd.address)).to.eq(_1e6.mul(20)) // 6765 (initial) - 4900 (taken out) - 1845 (withdrawn) = 20
+            expect(await usdc.balanceOf(vusd.address)).to.eq(spareUsdc)
         })
 
         it('revert if not enough balance', async function () {
@@ -146,6 +159,7 @@ describe('vUSD Tests', function() {
     })
 
     async function mintVusdWithReserve(trader, _amount) {
+        await usdc.mint(trader.address, _amount)
         await usdc.connect(trader).approve(vusd.address, _amount)
         await vusd.connect(trader).mintWithReserve(trader.address, _amount)
     }

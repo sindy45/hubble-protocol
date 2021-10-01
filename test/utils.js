@@ -36,7 +36,7 @@ async function setupContracts(tradeFee = DEFAULT_TRADE_FEE) {
         ethers.getContractFactory('MarginAccount'),
         ethers.getContractFactory('MarginAccountHelper'),
         ethers.getContractFactory('VUSD'),
-        ethers.getContractFactory('Oracle'),
+        ethers.getContractFactory('TestOracle'),
         ethers.getContractFactory('Registry'),
         ethers.getContractFactory('InsuranceFund'),
         ethers.getContractFactory('ERC20Mintable')
@@ -62,8 +62,9 @@ async function setupContracts(tradeFee = DEFAULT_TRADE_FEE) {
     )
     usdc = await ERC20Mintable.deploy('usdc', 'usdc', 6)
     const vusd = await VUSD.deploy(usdc.address)
+
     oracle = await Oracle.deploy()
-    await oracle.setPrice(vusd.address, 1e6) // $1
+    await oracle.setStablePrice(vusd.address, 1e6) // $1
 
     marginAccount = await MarginAccount.deploy()
     marginAccountHelper = await MarginAccountHelper.deploy(marginAccount.address, vusd.address)
@@ -203,7 +204,28 @@ async function gotoNextFundingTime(amm) {
     return network.provider.send('evm_setNextBlockTimestamp', [(await amm.nextFundingTime()).toNumber()]);
 }
 
+function forkNetwork(_network, blockNumber) {
+    return network.provider.request({
+        method: "hardhat_reset",
+        params: [{
+            forking: {
+                jsonRpcUrl: `https://eth-${_network}.alchemyapi.io/v2/${process.env.ALCHEMY}`,
+                blockNumber
+            }
+        }]
+    })
+}
+
 module.exports = {
     constants: { _1e6, _1e12, _1e18, ZERO },
-    log, setupContracts, filterEvent, getTradeDetails, assertions, getTwapPrice, impersonateAcccount, stopImpersonateAcccount, gotoNextFundingTime
+    log,
+    setupContracts,
+    filterEvent,
+    getTradeDetails,
+    assertions,
+    getTwapPrice,
+    impersonateAcccount,
+    stopImpersonateAcccount,
+    gotoNextFundingTime,
+    forkNetwork
 }
