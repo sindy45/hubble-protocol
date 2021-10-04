@@ -1,17 +1,20 @@
 const { expect } = require('chai')
+const utils = require('../utils')
 
-const { constants: { _1e6, _1e18, ZERO }, impersonateAcccount, stopImpersonateAcccount} = require('../utils')
+const { constants: { _1e6, ZERO } } = utils
 
-describe('vUSD Tests', function() {
+describe('vUSD  Unit Tests', function() {
     before('factories', async function() {
         signers = await ethers.getSigners()
         alice = signers[0].address
         admin = signers[11]
 
-        ;([ ERC20Mintable, VUSD ] = await Promise.all([
+        ;([ ERC20Mintable, TransparentUpgradeableProxy, ProxyAdmin ] = await Promise.all([
             ethers.getContractFactory('ERC20Mintable'),
-            ethers.getContractFactory('VUSD')
+            ethers.getContractFactory('TransparentUpgradeableProxy'),
+            ethers.getContractFactory('ProxyAdmin')
         ]))
+        proxyAdmin = await ProxyAdmin.deploy()
 
         amount = _1e6.mul(123)
     })
@@ -19,7 +22,7 @@ describe('vUSD Tests', function() {
     describe('minter role', async function() {
         before('deploy vUSD', async function() {
             usdc = await ERC20Mintable.deploy('usdc', 'usdc', 6)
-            vusd = await VUSD.deploy(usdc.address)
+            vusd = await setupVusd()
             minterRole = await vusd.MINTER_ROLE()
         })
 
@@ -55,7 +58,7 @@ describe('vUSD Tests', function() {
     describe('withdrawal Q', async function() {
         before('deploy vUSD', async function() {
             usdc = await ERC20Mintable.deploy('usdc', 'usdc', 6)
-            vusd = await VUSD.deploy(usdc.address)
+            vusd = await setupVusd()
         })
 
         it('mintWithReserve', async function() {
@@ -109,7 +112,7 @@ describe('vUSD Tests', function() {
     describe('partial withdrawals', async function() {
         before('deploy vUSD', async function() {
             usdc = await ERC20Mintable.deploy('usdc', 'usdc', 6)
-            vusd = await VUSD.deploy(usdc.address)
+            vusd = await setupVusd()
         })
 
         it('process partial withdrawals', async function () {
@@ -162,5 +165,14 @@ describe('vUSD Tests', function() {
         await usdc.mint(trader.address, _amount)
         await usdc.connect(trader).approve(vusd.address, _amount)
         await vusd.connect(trader).mintWithReserve(trader.address, _amount)
+    }
+
+    function setupVusd() {
+        return utils.setupUpgradeableProxy(
+            'VUSD',
+            proxyAdmin.address,
+            [ admin.address ],
+            [ usdc.address ]
+        )
     }
 })

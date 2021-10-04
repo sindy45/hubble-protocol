@@ -4,12 +4,11 @@ pragma solidity 0.8.4;
 
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import { ERC20PresetMinterPauser } from "@openzeppelin/contracts/token/ERC20/presets/ERC20PresetMinterPauser.sol";
+import { ERC20PresetMinterPauserUpgradeable } from "@openzeppelin/contracts-upgradeable/token/ERC20/presets/ERC20PresetMinterPauserUpgradeable.sol";
 
-import "hardhat/console.sol";
+import { VanillaGovernable } from "./Governable.sol";
 
-contract VUSD is ERC20PresetMinterPauser {
+contract VUSD is VanillaGovernable, ERC20PresetMinterPauserUpgradeable {
     using SafeERC20 for IERC20;
 
     struct Withdrawal {
@@ -17,20 +16,26 @@ contract VUSD is ERC20PresetMinterPauser {
         uint amount;
     }
 
+    /// @notice vUSD is backed 1:1 with reserveToken (USDC)
+    IERC20 public immutable reserveToken;
+
     Withdrawal[] public withdrawals;
 
     /// @dev withdrawals will start processing at withdrawals[start]
-    uint start;
+    uint public start;
 
     /// @dev Constrained by block gas limit
-    uint maxWithdrawalProcesses = 100;
+    uint public maxWithdrawalProcesses;
 
-    /// @notice vUSD is backed 1:1 with reserveToken (USDC)
-    IERC20 public reserveToken;
-
-    constructor(address _reserveToken) ERC20PresetMinterPauser("Hubble-virtual-usd", "vUSD") {
+    constructor(address _reserveToken) {
         require(_reserveToken != address(0), "vUSD: null _reserveToken");
         reserveToken = IERC20(_reserveToken);
+    }
+
+    function init(address _governance) external {
+        super.initialize("Hubble-virtual-usd", "hvUSD"); // has initializer modifier
+        _setGovernace(_governance);
+        maxWithdrawalProcesses = 100;
     }
 
     function mintWithReserve(address to, uint amount) external {
@@ -61,5 +66,9 @@ contract VUSD is ERC20PresetMinterPauser {
 
     function decimals() public pure override returns (uint8) {
         return 6;
+    }
+
+    function setMaxWithdrawalProcesses(uint _maxWithdrawalProcesses) external onlyGovernance {
+        maxWithdrawalProcesses = _maxWithdrawalProcesses;
     }
 }

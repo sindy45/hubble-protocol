@@ -5,14 +5,19 @@ pragma solidity 0.8.4;
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
+import { Governable } from "./Governable.sol";
 import { AggregatorV3Interface } from "./Interfaces.sol";
 
-contract Oracle is Ownable {
+contract Oracle is Governable {
     using SafeCast for uint256;
     using SafeCast for int256;
 
     mapping(address => address) public chainLinkAggregatorMap;
     mapping(address => int256) public stablePrice;
+
+    function initialize(address _governance) external initializer {
+        _setGovernace(_governance);
+    }
 
     function getUnderlyingPrice(address underlying)
         virtual
@@ -24,18 +29,6 @@ contract Oracle is Ownable {
             return stablePrice[underlying];
         }
         (,answer,,,) = AggregatorV3Interface(chainLinkAggregatorMap[underlying]).latestRoundData();
-    }
-
-    function setAggregator(address underlying, address aggregator) external onlyOwner {
-        requireNonEmptyAddress(underlying);
-        requireNonEmptyAddress(aggregator);
-        chainLinkAggregatorMap[underlying] = aggregator;
-        AggregatorV3Interface(chainLinkAggregatorMap[underlying]).latestRoundData(); // sanity check
-    }
-
-    function setStablePrice(address underlying, int256 price) external onlyOwner {
-        requireNonEmptyAddress(underlying);
-        stablePrice[underlying] = price;
     }
 
     function getUnderlyingTwapPrice(address underlying, uint256 intervalInSeconds)
@@ -151,9 +144,7 @@ contract Oracle is Ownable {
         return block.timestamp;
     }
 
-    //
-    // REQUIRE FUNCTIONS
-    //
+    // Internal
 
     function requireEnoughHistory(uint80 _round) internal pure {
         require(_round > 0, "Not enough history");
@@ -161,5 +152,19 @@ contract Oracle is Ownable {
 
     function requireNonEmptyAddress(address _addr) internal pure {
         require(_addr != address(0), "empty address");
+    }
+
+    // Governance
+
+    function setAggregator(address underlying, address aggregator) external onlyGovernance {
+        requireNonEmptyAddress(underlying);
+        requireNonEmptyAddress(aggregator);
+        chainLinkAggregatorMap[underlying] = aggregator;
+        AggregatorV3Interface(chainLinkAggregatorMap[underlying]).latestRoundData(); // sanity check
+    }
+
+    function setStablePrice(address underlying, int256 price) external onlyGovernance {
+        requireNonEmptyAddress(underlying);
+        stablePrice[underlying] = price;
     }
 }

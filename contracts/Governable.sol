@@ -1,0 +1,20 @@
+// SPDX-License-Identifier: MIT
+
+pragma solidity 0.8.4;
+
+import { Initializable } from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
+
+contract VanillaGovernable {
+    address public governance;
+
+    modifier onlyGovernance() {
+        require(msg.sender == governance, "ONLY_GOVERNANCE");
+        _;
+    }
+
+    function _setGovernace(address _governance) internal {
+        governance = _governance;
+    }
+}
+
+contract Governable is VanillaGovernable, Initializable {}

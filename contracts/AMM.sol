@@ -6,20 +6,39 @@ import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { Pausable } from "@openzeppelin/contracts/security/Pausable.sol";
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
-import { IOracle, IRegistry, ERC20Detailed } from "./Interfaces.sol";
-import { IVAMM } from "./Interfaces.sol";
+import { Governable } from "./Governable.sol";
+import { ERC20Detailed, IOracle, IRegistry, IVAMM } from "./Interfaces.sol";
 
-import "hardhat/console.sol";
-
-contract AMM is Ownable, Pausable {
+contract AMM is Governable, Pausable {
     using SafeCast for uint256;
     using SafeCast for int256;
+
+    uint256 public constant spotPriceTwapInterval = 1 hours;
+    uint256 public constant fundingPeriod = 1 hours;
+
+    // System-wide config
+
+    IOracle public oracle;
+    address public clearingHouse;
+
+    // AMM config
+
+    IVAMM public vamm;
+    address public underlyingAsset;
+    int256 public precision;
+
+    uint256 public fundingBufferPeriod;
+    uint256 public nextFundingTime;
+    int256 public fundingRate;
+    uint256 public longOpenInterestNotional;
+    uint256 public shortOpenInterestNotional;
 
     struct Position {
         int256 size;
         uint256 openNotional;
         int256 lastUpdatedCumulativePremiumFraction;
     }
+    mapping(address => Position) public positions;
 
     struct ReserveSnapshot {
         uint256 quoteAssetReserve;
@@ -27,42 +46,42 @@ contract AMM is Ownable, Pausable {
         uint256 timestamp;
         uint256 blockNumber;
     }
-
     ReserveSnapshot[] public reserveSnapshots;
 
-    mapping(address => Position) public positions;
+    struct PremiumFraction {
+        uint256 blockNumber;
+        int256 cumulativePremiumFraction;
+    }
+    PremiumFraction[] public cumulativePremiumFractions;
 
-    address public underlyingAsset;
-    int256 public precision;
-    IRegistry public registry;
-
-    address public clearingHouse;
-    uint256 public spotPriceTwapInterval;
-    uint256 public fundingPeriod;
-    uint256 public fundingBufferPeriod;
-    uint256 public nextFundingTime;
-    int256 public fundingRate;
-    uint256 public longOpenInterestNotional;
-    uint256 public shortOpenInterestNotional;
-
-    int256[] public cumulativePremiumFractions;
-
-    IVAMM public vamm;
     enum Side { LONG, SHORT }
+
+    // Events
+
+    event FundingRateUpdated(int256 rate, uint256 underlyingPrice);
+    event FundingPaid(address indexed trader, int256 positionSize, int256 fundingPayment);
+    event PositionChanged(address indexed trader, int256 size, uint256 openNotional, int256 lastUpdatedCumulativePremiumFraction);
+    event Swap(int256 baseAssetQuantity, uint256 qouteAssetQuantity);
+    event ReserveSnapshotted(uint256 quoteAssetReserve, uint256 baseAssetReserve, uint256 timestamp, uint256 blockNumber);
 
     modifier onlyClearingHouse() {
         require(msg.sender == clearingHouse, "Only clearingHouse");
         _;
     }
 
-    constructor(address _clearingHouse, address _vamm, address _underlyingAsset, address _registry) {
+    modifier onlyVamm() {
+        require(msg.sender == address(vamm), "Only VAMM");
+        _;
+    }
+
+    function initialize(address _governance, address _vamm, address _underlyingAsset, address _registry) external initializer {
+        _setGovernace(_governance);
+
         vamm = IVAMM(_vamm);
-        clearingHouse = _clearingHouse;
-        fundingPeriod = 1 hours;
-        spotPriceTwapInterval = 1 hours;
         underlyingAsset = _underlyingAsset;
         precision = int(10 ** ERC20Detailed(_underlyingAsset).decimals());
-        registry = IRegistry(_registry);
+
+        syncDeps(_registry);
         _pause(); // not open for trading as yet
     }
 
@@ -79,12 +98,16 @@ contract AMM is Ownable, Pausable {
         bool isNewPosition = position.size == 0 ? true : false;
         Side side = baseAssetQuantity > 0 ? Side.LONG : Side.SHORT;
         if (isNewPosition || (position.size > 0 ? Side.LONG : Side.SHORT) == side) {
-            return (0, _increasePosition(trader, baseAssetQuantity, quoteAssetLimit), true);
+            // realizedPnl = 0;
+            quoteAsset = _increasePosition(trader, baseAssetQuantity, quoteAssetLimit);
+            isPositionIncreased = true;
+        } else {
+            (realizedPnl, quoteAsset, isPositionIncreased) = _openReversePosition(trader, baseAssetQuantity, quoteAssetLimit);
         }
-        return _openReversePosition(trader, baseAssetQuantity, quoteAssetLimit);
+        _emitPositionChanged(trader);
     }
 
-    function closePosition(address trader)
+    function liquidatePosition(address trader)
         external
         whenNotPaused
         onlyClearingHouse
@@ -98,6 +121,26 @@ contract AMM is Ownable, Pausable {
         } else {
             (realizedPnl, quoteAsset) = _reducePosition(trader, -position.size, type(uint).max);
         }
+        _emitPositionChanged(trader);
+    }
+
+    function updatePosition(address trader)
+        external
+        whenNotPaused
+        onlyClearingHouse
+        returns(int256 fundingPayment)
+    {
+        // @todo update position due to liquidity migration / param updates etc.
+        int256 latestCumulativePremiumFraction = getLatestCumulativePremiumFraction();
+        Position storage position = positions[trader];
+
+        // +: trader paid, -: trader received
+        fundingPayment = (latestCumulativePremiumFraction - position.lastUpdatedCumulativePremiumFraction)
+            * position.size
+            / precision;
+        position.lastUpdatedCumulativePremiumFraction = latestCumulativePremiumFraction;
+        emit FundingPaid(trader, position.size, fundingPayment);
+        _emitPositionChanged(trader);
     }
 
     function _increasePosition(address trader, int256 baseAssetQuantity, uint quoteAssetLimit)
@@ -197,7 +240,7 @@ contract AMM is Ownable, Pausable {
     * @return qouteAssetQuantity quote asset utilised. qouteAssetQuantity / baseAssetQuantity was the average rate.
       qouteAssetQuantity <= max_dx
     */
-    function _long(int baseAssetQuantity, uint max_dx) internal returns (uint256 qouteAssetQuantity) {
+    function _long(int256 baseAssetQuantity, uint max_dx) internal returns (uint256 qouteAssetQuantity) {
         if (max_dx != type(uint).max) {
             max_dx *= 1e12;
         }
@@ -207,6 +250,7 @@ contract AMM is Ownable, Pausable {
             baseAssetQuantity.toUint256(), // long exactly
             max_dx
         ) / 1e12; // 6 decimals precision
+        emit Swap(baseAssetQuantity, qouteAssetQuantity);
     }
 
     /**
@@ -216,7 +260,7 @@ contract AMM is Ownable, Pausable {
     * @return qouteAssetQuantity quote asset utilised. qouteAssetQuantity / baseAssetQuantity was the average short rate.
       qouteAssetQuantity >= min_dy.
     */
-    function _short(int baseAssetQuantity, uint min_dy) internal returns (uint256 qouteAssetQuantity) {
+    function _short(int256 baseAssetQuantity, uint min_dy) internal returns (uint256 qouteAssetQuantity) {
         if (min_dy != type(uint).max) {
             min_dy *= 1e12;
         }
@@ -226,18 +270,26 @@ contract AMM is Ownable, Pausable {
             (-baseAssetQuantity).toUint256(), // short exactly
             min_dy
         ) / 1e12;
+        emit Swap(baseAssetQuantity, qouteAssetQuantity);
+    }
+
+    function _emitPositionChanged(address trader) internal {
+        Position memory position = positions[trader];
+        emit PositionChanged(trader, position.size, position.openNotional, position.lastUpdatedCumulativePremiumFraction);
     }
 
     function addReserveSnapshot(uint256 _quoteAssetReserve, uint256 _baseAssetReserve)
+        onlyVamm
         whenNotPaused
         external
     {
-        require(msg.sender == address(vamm), "Only AMM"); // only vamm can add snapshots
-
         uint256 currentBlock = block.number;
+        uint256 blockTimestamp = _blockTimestamp();
+        emit ReserveSnapshotted(_quoteAssetReserve, _baseAssetReserve, blockTimestamp, currentBlock);
+
         if (reserveSnapshots.length == 0) {
             reserveSnapshots.push(
-                ReserveSnapshot(_quoteAssetReserve, _baseAssetReserve, _blockTimestamp(), currentBlock)
+                ReserveSnapshot(_quoteAssetReserve, _baseAssetReserve, blockTimestamp, currentBlock)
             );
             return;
         }
@@ -249,7 +301,7 @@ contract AMM is Ownable, Pausable {
             latestSnapshot.baseAssetReserve = _baseAssetReserve;
         } else {
             reserveSnapshots.push(
-                ReserveSnapshot(_quoteAssetReserve, _baseAssetReserve, _blockTimestamp(), currentBlock)
+                ReserveSnapshot(_quoteAssetReserve, _baseAssetReserve, blockTimestamp, currentBlock)
             );
         }
     }
@@ -279,7 +331,7 @@ contract AMM is Ownable, Pausable {
         int256 premiumFraction = (premium * int256(fundingPeriod)) / 1 days;
 
         cumulativePremiumFractions.push(
-            premiumFraction + getLatestCumulativePremiumFraction()
+            PremiumFraction(block.number, premiumFraction + getLatestCumulativePremiumFraction())
         );
 
         // update funding rate = premiumFraction / twapIndexPrice
@@ -302,6 +354,8 @@ contract AMM is Ownable, Pausable {
         );
     }
 
+    // View
+
     /**
      * @notice get latest cumulative premium fraction.
      * @return premiumFraction latest cumulative premium fraction in 18 digits
@@ -309,23 +363,8 @@ contract AMM is Ownable, Pausable {
     function getLatestCumulativePremiumFraction() public view returns (int256 premiumFraction) {
         uint256 len = cumulativePremiumFractions.length;
         if (len > 0) {
-            premiumFraction = cumulativePremiumFractions[len - 1];
+            premiumFraction = cumulativePremiumFractions[len - 1].cumulativePremiumFraction;
         }
-    }
-
-    function updatePosition(address trader)
-        external
-        /* whenNotPaused - fix */
-        onlyClearingHouse
-        returns(int256 fundingPayment)
-    {
-        // @todo update position due to liquidity migration etc.
-        int256 latestCumulativePremiumFraction = getLatestCumulativePremiumFraction();
-        Position storage position = positions[trader];
-        fundingPayment = (latestCumulativePremiumFraction - position.lastUpdatedCumulativePremiumFraction)
-            * position.size
-            / precision;
-        position.lastUpdatedCumulativePremiumFraction = latestCumulativePremiumFraction;
     }
 
     function _blockTimestamp() internal view virtual returns (uint256) {
@@ -333,7 +372,7 @@ contract AMM is Ownable, Pausable {
     }
 
     function getUnderlyingTwapPrice(uint256 _intervalInSeconds) public view returns (int256) {
-        return IOracle(registry.oracle()).getUnderlyingTwapPrice(underlyingAsset, _intervalInSeconds);
+        return oracle.getUnderlyingTwapPrice(underlyingAsset, _intervalInSeconds);
     }
 
     function getTwapPrice(uint256 _intervalInSeconds) public view returns (int256) {
@@ -408,7 +447,7 @@ contract AMM is Ownable, Pausable {
         int256 _underlyingPrice
     ) internal {
         fundingRate = _premiumFraction * 1e18 / _underlyingPrice;
-        // emit FundingRateUpdated(fundingRate, _underlyingPrice);
+        emit FundingRateUpdated(fundingRate, _underlyingPrice.toUint256());
     }
 
     // View
@@ -454,9 +493,9 @@ contract AMM is Ownable, Pausable {
         return x >= 0 ? x : -x;
     }
 
-    // Privileged
+    // Governance
 
-    function togglePause(bool pause_) external onlyOwner {
+    function togglePause(bool pause_) external onlyGovernance {
         if (pause_ == paused()) return;
         if (pause_) {
             _pause();
@@ -464,5 +503,11 @@ contract AMM is Ownable, Pausable {
             _unpause();
             nextFundingTime = ((_blockTimestamp() + fundingPeriod) / 1 hours) * 1 hours;
         }
+    }
+
+    function syncDeps(address _registry) public onlyGovernance {
+        IRegistry registry = IRegistry(_registry);
+        clearingHouse = registry.clearingHouse();
+        oracle = IOracle(registry.oracle());
     }
 }

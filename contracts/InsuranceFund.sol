@@ -9,11 +9,12 @@ import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 import { Initializable } from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
+import { ERC20PresetMinterPauserUpgradeable } from "@openzeppelin/contracts-upgradeable/token/ERC20/presets/ERC20PresetMinterPauserUpgradeable.sol";
 
+import { VanillaGovernable } from "./Governable.sol";
 import "./Interfaces.sol";
-import "hardhat/console.sol";
 
-contract InsuranceFund is Ownable, AccessControlEnumerable, Initializable, ERC20 {
+contract InsuranceFund is VanillaGovernable, ERC20PresetMinterPauserUpgradeable {
     using SafeERC20 for IERC20;
 
     bytes32 public constant SEIZE_ROLE = keccak256("SEIZE_ROLE");
@@ -27,14 +28,9 @@ contract InsuranceFund is Ownable, AccessControlEnumerable, Initializable, ERC20
         _;
     }
 
-    constructor(string memory name_, string memory symbol_) ERC20(name_, symbol_) {}
-
-    function initialize(IRegistry registry) external initializer {
-        vusd = IERC20(registry.vusd());
-        marginAccount = registry.marginAccount();
-
-        _setupRole(SEIZE_ROLE, marginAccount);
-        _setupRole(SEIZE_ROLE, registry.clearingHouse());
+    function init(address _governance) external {
+        super.initialize("Hubble-Insurance-Fund", "HIF"); // has initializer modifier
+        _setGovernace(_governance);
     }
 
     function seizeBadDebt(uint amount) external {
@@ -60,7 +56,7 @@ contract InsuranceFund is Ownable, AccessControlEnumerable, Initializable, ERC20
         uint _pool = balance();
         uint _totalSupply = totalSupply();
         if (_totalSupply == 0 && _pool > 0) { // trading fee accumulated while there were no IF LPs
-            vusd.safeTransfer(owner(), _pool);
+            // vusd.safeTransfer(owner(), _pool);
             _pool = 0;
         }
 
@@ -76,5 +72,21 @@ contract InsuranceFund is Ownable, AccessControlEnumerable, Initializable, ERC20
 
     function balance() public view returns (uint) {
         return vusd.balanceOf(address(this));
+    }
+
+    // Governance
+
+    function syncDeps(IRegistry _registry) public onlyGovernance {
+        vusd = IERC20(_registry.vusd());
+
+        address newMarginAccount = _registry.marginAccount();
+        if (marginAccount != address(0)) {
+            revokeRole(SEIZE_ROLE, marginAccount);
+        }
+        marginAccount = newMarginAccount;
+
+        // @todo revoke SEIZE_ROLE for oldClearingHouse
+        _setupRole(SEIZE_ROLE, marginAccount);
+        _setupRole(SEIZE_ROLE, _registry.clearingHouse());
     }
 }

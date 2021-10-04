@@ -8,12 +8,11 @@ import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
+import { Governable } from "./Governable.sol";
+import { ERC20Detailed, IClearingHouse, IInsuranceFund, IOracle, IRegistry } from "./Interfaces.sol";
 import { VUSD } from "./VUSD.sol";
-import "./Interfaces.sol";
 
-import "hardhat/console.sol";
-
-contract MarginAccount is Ownable, Initializable {
+contract MarginAccount is Governable {
     using SafeERC20 for IERC20;
     using SafeCast for uint256;
     using SafeCast for int256;
@@ -33,21 +32,28 @@ contract MarginAccount is Ownable, Initializable {
     uint constant VUSD_IDX = 0;
     uint constant PRECISION = 1e6;
 
-    uint public liquidationIncentive = 5e4; // 5% = .05 scaled 6 decimals
+    uint public liquidationIncentive;
 
     // supportedCollateral index => trader => balance
     mapping(uint => mapping(address => int)) public margin;
 
-    event MarginAdded(address trader, uint idx, uint amount);
+    // Events
+
+    event MarginAdded(address indexed trader, uint256 indexed idx, uint amount);
+    event MarginRemoved(address indexed trader, uint256 indexed idx, uint256 amount);
+    event PnLRealized(address indexed trader, int256 realizedPnl);
+    event MarginAccountLiquidated(address indexed trader, uint indexed idx, uint seizeAmount, uint repayAmount);
+    event SettledBadDebt(address indexed trader, uint badDebt, uint[] seized);
 
     modifier onlyClearingHouse() {
         require(msg.sender == address(clearingHouse), "Only clearingHouse");
         _;
     }
 
-    function initialize(address _registry) external initializer {
-        syncDeps(_registry);
-        _addCollateral(address(vusd), PRECISION); // weight = 1 * PRECISION
+    function initialize(address _governance, address _vusd) external initializer {
+        _setGovernace(_governance);
+        _addCollateral(_vusd, PRECISION); // weight = 1 * PRECISION
+        vusd = VUSD(_vusd);
     }
 
     // Add Margin functions
@@ -84,14 +90,16 @@ contract MarginAccount is Ownable, Initializable {
             }
         }
         supportedCollateral[idx].token.safeTransfer(trader, amount);
+        emit MarginRemoved(trader, idx, amount);
     }
 
     function realizePnL(address trader, int256 realizedPnl) onlyClearingHouse external {
         // -ve PnL will reduce balance
         margin[VUSD_IDX][trader] += realizedPnl;
+        emit PnLRealized(trader, realizedPnl);
     }
 
-    function liquidate(address trader, uint repayAmount, uint collateralIdx, uint minSeizeAmount) external {
+    function liquidate(address trader, uint repayAmount, uint idx, uint minSeizeAmount) external {
         require(repayAmount > 0, "repay something");
         int vusdBal = margin[VUSD_IDX][trader];
         require(vusdBal < 0, "Nothing to repay");
@@ -126,21 +134,22 @@ contract MarginAccount is Ownable, Initializable {
             revert("trader is above liquidation threshold");
         }
 
-        Collateral memory coll = supportedCollateral[collateralIdx];
+        Collateral memory coll = supportedCollateral[idx];
         int priceCollateral = oracle.getUnderlyingPrice(address(coll.token));
         uint seizeAmount = repayAmount * (PRECISION + incentivePerDollar) / priceCollateral.toUint256(); // scaled 6 decimals
         if (coll.decimals > 6) {
             seizeAmount *= (10 ** (coll.decimals - 6));
         }
-        if (seizeAmount > margin[collateralIdx][trader].toUint256()) {
-            seizeAmount = margin[collateralIdx][trader].toUint256();
+        if (seizeAmount > margin[idx][trader].toUint256()) {
+            seizeAmount = margin[idx][trader].toUint256();
         }
         require(seizeAmount >= minSeizeAmount, "Not seizing enough");
 
         margin[VUSD_IDX][trader] += repayAmount.toInt256();
-        margin[collateralIdx][trader] -= seizeAmount.toInt256();
+        margin[idx][trader] -= seizeAmount.toInt256();
         supportedCollateral[VUSD_IDX].token.safeTransferFrom(msg.sender, address(this), repayAmount);
-        supportedCollateral[collateralIdx].token.safeTransfer(msg.sender, seizeAmount);
+        supportedCollateral[idx].token.safeTransfer(msg.sender, seizeAmount);
+        emit MarginAccountLiquidated(trader, repayAmount, idx, seizeAmount);
     }
 
     function settleBadDebt(address trader) external {
@@ -150,18 +159,22 @@ contract MarginAccount is Ownable, Initializable {
         int vusdBal = margin[VUSD_IDX][trader];
         require(vusdBal < 0, "Nothing to repay");
 
+        uint badDebt = (-vusdBal).toUint256();
         Collateral[] memory assets = supportedCollateral;
 
-        insuranceFund.seizeBadDebt((-vusdBal).toUint256());
+        insuranceFund.seizeBadDebt(badDebt);
         margin[VUSD_IDX][trader] = 0;
 
+        uint[] memory seized = new uint[](assets.length);
         for (uint i = 1 /* skip vusd */; i < assets.length; i++) {
             int amount = margin[i][trader];
             if (amount > 0) {
                 margin[i][trader] = 0;
                 assets[i].token.safeTransfer(address(insuranceFund), amount.toUint256());
+                seized[i] = amount.toUint256();
             }
         }
+        emit SettledBadDebt(trader, badDebt, seized);
     }
 
     // View
@@ -208,23 +221,6 @@ contract MarginAccount is Ownable, Initializable {
         return _margin;
     }
 
-    // Privileged
-
-    function syncDeps(address _registry) public onlyOwner {
-        IRegistry registry = IRegistry(_registry);
-        clearingHouse = IClearingHouse(registry.clearingHouse());
-        oracle = IOracle(registry.oracle());
-        insuranceFund = IInsuranceFund(registry.insuranceFund());
-        vusd = VUSD(registry.vusd());
-    }
-
-    // @todo rename to whitelistCollateral
-    function addCollateral(address _coin, uint _weight) external onlyOwner {
-        _addCollateral(_coin, _weight);
-    }
-
-    // @todo function to change weight of an asset
-
     // Internal
 
     function _addCollateral(address _coin, uint _weight) internal {
@@ -242,4 +238,21 @@ contract MarginAccount is Ownable, Initializable {
             })
         );
     }
+
+    // Governance
+
+    function syncDeps(address _registry, uint _liquidationIncentive) public onlyGovernance {
+        IRegistry registry = IRegistry(_registry);
+        clearingHouse = IClearingHouse(registry.clearingHouse());
+        oracle = IOracle(registry.oracle());
+        insuranceFund = IInsuranceFund(registry.insuranceFund());
+        liquidationIncentive = _liquidationIncentive;
+    }
+
+    // @todo rename to whitelistCollateral
+    function addCollateral(address _coin, uint _weight) external onlyGovernance {
+        _addCollateral(_coin, _weight);
+    }
+
+    // @todo function to change weight of an asset
 }

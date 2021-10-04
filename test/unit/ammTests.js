@@ -2,7 +2,7 @@ const { expect } = require('chai');
 const { constants: { _1e6, _1e12, _1e18, ZERO }, filterEvent, setupContracts } = require('../utils')
 const TRADE_FEE = 0.000567 * _1e6
 
-describe('AMM Spec', function() {
+describe('AMM Unit Tests', function() {
     beforeEach('contract factories', async function() {
         signers = await ethers.getSigners()
         alice = signers[0].address

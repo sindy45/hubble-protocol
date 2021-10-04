@@ -42,7 +42,7 @@ interface IAMM {
         view
         returns(uint256 notionalPosition, int256 unrealizedPnl);
     function updatePosition(address trader) external returns(int256 fundingPayment);
-    function closePosition(address trader) external returns (int realizedPnl, uint quoteAsset);
+    function liquidatePosition(address trader) external returns (int realizedPnl, uint quoteAsset);
     function settleFunding() external returns (int256, int256, int256);
     function underlyingAsset() external view returns (address);
     function precision() external view returns (int256);

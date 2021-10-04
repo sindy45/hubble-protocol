@@ -4,12 +4,11 @@ pragma solidity 0.8.4;
 
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
+import { Governable } from "./Governable.sol";
+import { IAMM, IInsuranceFund, IMarginAccount } from "./Interfaces.sol";
 import { VUSD } from "./VUSD.sol";
-import "./Interfaces.sol";
 
-import "hardhat/console.sol";
-
-contract ClearingHouse {
+contract ClearingHouse is Governable {
     using SafeCast for uint256;
     using SafeCast for int256;
 
@@ -38,16 +37,20 @@ contract ClearingHouse {
         uint256 avgOpen;
     }
 
-    event PositionOpened(address indexed trader, uint indexed idx, int256 indexed baseAssetQuantity, uint quoteAsset);
+    event PositionModified(address indexed trader, uint indexed idx, int256 baseAssetQuantity, uint quoteAsset);
+    event PositionLiquidated(address indexed trader, address indexed amm, int256 size, uint256 quoteAsset, int256 realizedPnl);
 
-    constructor(
+    function initialize(
+        address _governance,
         address _insuranceFund,
         address _marginAccount,
         address _vusd,
         uint256 _maintenanceMargin,
         uint _tradeFee,
         uint _liquidationPenalty
-    ) {
+    ) external initializer {
+        _setGovernace(_governance);
+
         insuranceFund = IInsuranceFund(_insuranceFund);
         marginAccount = IMarginAccount(_marginAccount);
         vusd = VUSD(_vusd);
@@ -67,6 +70,11 @@ contract ClearingHouse {
         _openPosition(msg.sender, idx, baseAssetQuantity, quoteAssetLimit);
     }
 
+    function closePosition(uint idx, uint quoteAssetLimit) external {
+        (int256 size,,) = amms[idx].positions(msg.sender);
+        _openPosition(msg.sender, idx, -size, quoteAssetLimit);
+    }
+
     function _openPosition(address trader, uint idx, int256 baseAssetQuantity, uint quoteAssetLimit) internal {
         require(baseAssetQuantity != 0, "CH: baseAssetQuantity == 0");
 
@@ -79,7 +87,7 @@ contract ClearingHouse {
         if (isPositionIncreased) {
             require(isAboveMaintenanceMargin(trader), "CH: Below Maintenance Margin");
         }
-        emit PositionOpened(trader, idx, baseAssetQuantity, quoteAsset);
+        emit PositionModified(trader, idx, baseAssetQuantity, quoteAsset);
     }
 
     function updatePositions(address trader) public {
@@ -88,11 +96,6 @@ contract ClearingHouse {
             fundingPayment += amms[i].updatePosition(trader);
         }
         // -ve fundingPayment means trader should receive funds
-        // console.log("fundingPayment");
-        // console.logInt(fundingPayment);
-        // console.logInt(-fundingPayment / 1e12);
-        // @todo should only receive this if user doesn't have bad debt
-        // and/or open positions that make the user position insolvent
         marginAccount.realizePnL(trader, -fundingPayment);
     }
 
@@ -114,24 +117,40 @@ contract ClearingHouse {
         }
     }
 
+    /**
+    @notice Wooosh, you are now liquidate
+    */
     function liquidate(address trader) external {
         require(!isAboveMaintenanceMargin(trader), "Above Maintenance Margin");
         int realizedPnl;
         uint quoteAsset;
+        int256 size;
+        IAMM _amm;
         for (uint i = 0; i < amms.length; i++) { // liquidate all positions
-            (int _realizedPnl, uint _quoteAsset) = amms[i].closePosition(trader);
-            realizedPnl += _realizedPnl;
-            quoteAsset += _quoteAsset;
+            _amm = amms[i];
+            (size,,) = _amm.positions(trader);
+            if (size != 0) {
+                (int _realizedPnl, uint _quoteAsset) = _amm.liquidatePosition(trader);
+                realizedPnl += _realizedPnl;
+                quoteAsset += _quoteAsset;
+                emit PositionLiquidated(trader, address(_amm), size, _quoteAsset, _realizedPnl);
+            }
         }
         // extra liquidation penalty
         uint _liquidationFee = _chargeFeeAndRealizePnL(trader, realizedPnl, quoteAsset, true /* isLiquidation */);
-        uint _toInsurance = _liquidationFee / 2;
-        vusd.mint(address(insuranceFund), _toInsurance);
-        vusd.mint(msg.sender, _liquidationFee - _toInsurance);
+        if (_liquidationFee > 0) {
+            uint _toInsurance = _liquidationFee / 2;
+            vusd.mint(address(insuranceFund), _toInsurance);
+            vusd.mint(msg.sender, _liquidationFee - _toInsurance);
+        }
     }
 
     function _chargeFeeAndRealizePnL(
-        address trader, int realizedPnl, uint quoteAsset, bool isLiquidation)
+        address trader,
+        int realizedPnl,
+        uint quoteAsset,
+        bool isLiquidation
+    )
         internal
         returns (uint fee)
     {
@@ -227,7 +246,7 @@ contract ClearingHouse {
 
     // Governance
 
-    function whitelistAmm(address _amm) public /* @todo onlyOwner */ {
+    function whitelistAmm(address _amm) external onlyGovernance {
         amms.push(IAMM(_amm));
     }
 }
