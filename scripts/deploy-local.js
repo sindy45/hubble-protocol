@@ -3,6 +3,8 @@ const { constants: { _1e6, _1e18 }, setupContracts } = require('../test/utils')
 
 async function main() {
     signers = await ethers.getSigners()
+    alice = signers[0].address
+
     const { swap, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, weth, oracle, insuranceFund } = await setupContracts()
 
     // provide some vusd balance to signers[1]
