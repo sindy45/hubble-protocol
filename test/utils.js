@@ -36,36 +36,21 @@ async function setupContracts(tradeFee = DEFAULT_TRADE_FEE) {
     moonMath = await MoonMath.deploy()
     views = await Views.deploy(moonMath.address)
 
-    vamm = await Swap.deploy(
-        "0xbabe61887f1de2713c6f97e567623453d3c79f67", // owner
-        "0xbabe61887f1de2713c6f97e567623453d3c79f67", // admin_fee_receiver
-        moonMath.address, // math
-        views.address, // views
-        54000, // A
-        "3500000000000000", // gamma
-        0,
-        0,
-        "0",
-        0,
-        "490000000000000", // adjustment_step
-        0,
-        600, // ma_half_time
-        [_1e18.mul(40000) /* btc initial rate */, _1e18.mul(1000) /* eth initial rate */]
-    )
-
     // vyper deployment complete
-    ;([ MarginAccountHelper, VUSD, Registry, InsuranceFund, ERC20Mintable, TransparentUpgradeableProxy, ProxyAdmin ] = await Promise.all([
+    ;([ MarginAccountHelper, Registry, ERC20Mintable, TransparentUpgradeableProxy, ProxyAdmin ] = await Promise.all([
         ethers.getContractFactory('MarginAccountHelper'),
-        ethers.getContractFactory('VUSD'),
         ethers.getContractFactory('Registry'),
-        ethers.getContractFactory('InsuranceFund'),
         ethers.getContractFactory('ERC20Mintable'),
         ethers.getContractFactory('TransparentUpgradeableProxy'),
         ethers.getContractFactory('ProxyAdmin')
     ]))
-    proxyAdmin = await ProxyAdmin.deploy()
 
-    usdc = await ERC20Mintable.deploy('usdc', 'usdc', 6)
+    ;([ proxyAdmin, usdc, weth ] = await Promise.all([
+        ProxyAdmin.deploy(),
+        ERC20Mintable.deploy('USD Coin', 'USDC', 6),
+        ERC20Mintable.deploy('WETH', 'WETH', 18)
+    ]))
+
     const vusd = await setupUpgradeableProxy('VUSD', proxyAdmin.address, [ governance ], [ usdc.address ])
 
     oracle = await setupUpgradeableProxy('TestOracle', proxyAdmin.address, [ governance ])
@@ -73,11 +58,7 @@ async function setupContracts(tradeFee = DEFAULT_TRADE_FEE) {
 
     marginAccount = await setupUpgradeableProxy('MarginAccount', proxyAdmin.address, [ governance, vusd.address ])
     marginAccountHelper = await MarginAccountHelper.deploy(marginAccount.address, vusd.address)
-    insuranceFund = await setupUpgradeableProxy(
-        'InsuranceFund',
-        proxyAdmin.address,
-        [ governance ]
-    )
+    insuranceFund = await setupUpgradeableProxy('InsuranceFund', proxyAdmin.address, [ governance ])
 
     clearingHouse = await setupUpgradeableProxy(
         'ClearingHouse',
@@ -87,7 +68,7 @@ async function setupContracts(tradeFee = DEFAULT_TRADE_FEE) {
             insuranceFund.address,
             marginAccount.address,
             vusd.address,
-            0.1 * 1e6 /* 3% maintenance margin */,
+            0.1 * 1e6 /* 10% maintenance margin */,
             tradeFee,
             0.05 * 1e6, // liquidationPenalty = 5%])
         ]
@@ -96,24 +77,16 @@ async function setupContracts(tradeFee = DEFAULT_TRADE_FEE) {
 
     registry = await Registry.deploy(oracle.address, clearingHouse.address, insuranceFund.address, marginAccount.address, vusd.address)
 
-    // Setup market/amm
-    weth = await ERC20Mintable.deploy('weth', 'weth', 18)
-    amm = await setupUpgradeableProxy('AMM', proxyAdmin.address, [ governance, vamm.address, weth.address, registry.address ])
-    await amm.togglePause(false)
-
-    await vamm.setAMM(amm.address)
+    const { amm, vamm } = await setupAmm(
+        [ governance, registry.address, weth.address, 'ETH-Perp' ],
+        1000, // initialRate,
+        1000 // initialLiquidity
+    )
     await Promise.all([
-        clearingHouse.whitelistAmm(amm.address),
         marginAccount.syncDeps(registry.address, 5e4), // liquidationIncentive = 5% = .05 scaled 6 decimals
-        insuranceFund.syncDeps(registry.address),
-        vamm.add_liquidity([
-            _1e18.mul(_1e6), // 1m USDT
-            _1e6.mul(100).mul(25), // 25 btc
-            _1e18.mul(1000) // 1000 eth
-        ], 0)
+        insuranceFund.syncDeps(registry.address)
     ])
-
-    return { swap: vamm, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, weth, oracle, insuranceFund }
+    return { swap: vamm, registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, weth, oracle, insuranceFund }
 }
 
 async function setupUpgradeableProxy(contract, admin, initArgs, deployArgs) {
@@ -135,6 +108,39 @@ async function setupUpgradeableProxy(contract, admin, initArgs, deployArgs) {
             : '0x'
     )
     return ethers.getContractAt(contract, proxy.address)
+}
+
+async function setupAmm(args, initialRate, initialLiquidity, _pause = false) {
+    const vamm = await Swap.deploy(
+        "0xbabe61887f1de2713c6f97e567623453d3c79f67", // owner
+        "0xbabe61887f1de2713c6f97e567623453d3c79f67", // admin_fee_receiver
+        moonMath.address, // math
+        views.address, // views
+        54000, // A
+        "3500000000000000", // gamma
+        0,
+        0,
+        "0",
+        0,
+        "490000000000000", // adjustment_step
+        0,
+        600, // ma_half_time
+        [_1e18.mul(40000) /* btc initial rate */, _1e18.mul(initialRate)]
+    )
+    const amm = await setupUpgradeableProxy('AMM', proxyAdmin.address, args.concat([vamm.address]))
+    if (!_pause) {
+        await amm.togglePause(_pause)
+    }
+    await vamm.setAMM(amm.address)
+
+    initialLiquidity = _1e18.mul(initialLiquidity)
+    await vamm.add_liquidity([
+        initialLiquidity.mul(initialRate), // USD
+        _1e6.mul(100).mul(25), // 25 btc - value not used
+        initialLiquidity
+    ], 0)
+    await clearingHouse.whitelistAmm(amm.address)
+    return { amm, vamm }
 }
 
 async function filterEvent(tx, name) {
@@ -209,7 +215,7 @@ async function getTwapPrice(amm, intervalInSeconds, blockTimestamp) {
         currentSnapshot = await amm.reserveSnapshots(snapshotIndex)
         currentPrice = currentSnapshot.quoteAssetReserve.mul(_1e6).div(currentSnapshot.baseAssetReserve)
         if (currentSnapshot.timestamp <= baseTimestamp) {
-            weightedPrice = weightedPrice.add(currentPrice.mul(previousTimestamp.sub(previousTimestamp)))
+            weightedPrice = weightedPrice.add(currentPrice.mul(previousTimestamp.sub(baseTimestamp)))
             break
         }
         timeFraction = previousTimestamp.sub(currentSnapshot.timestamp)
@@ -263,5 +269,6 @@ module.exports = {
     impersonateAcccount,
     stopImpersonateAcccount,
     gotoNextFundingTime,
-    forkNetwork
+    forkNetwork,
+    setupAmm
 }

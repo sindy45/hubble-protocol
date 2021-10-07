@@ -25,7 +25,7 @@ contract AMM is Governable, Pausable {
 
     IVAMM public vamm;
     address public underlyingAsset;
-    int256 public precision;
+    string public name;
 
     uint256 public fundingBufferPeriod;
     uint256 public nextFundingTime;
@@ -58,9 +58,9 @@ contract AMM is Governable, Pausable {
 
     // Events
 
-    event FundingRateUpdated(int256 rate, uint256 underlyingPrice);
-    event FundingPaid(address indexed trader, int256 positionSize, int256 fundingPayment);
-    event PositionChanged(address indexed trader, int256 size, uint256 openNotional, int256 lastUpdatedCumulativePremiumFraction);
+    event PositionChanged(address indexed trader, int256 size, uint256 openNotional);
+    event FundingRateUpdated(int256 premiumFraction, int256 rate, uint256 underlyingPrice, uint256 timestamp, uint256 blockNumber);
+    event FundingPaid(address indexed trader, int256 latestCumulativePremiumFraction, int256 positionSize, int256 fundingPayment);
     event Swap(int256 baseAssetQuantity, uint256 qouteAssetQuantity);
     event ReserveSnapshotted(uint256 quoteAssetReserve, uint256 baseAssetReserve, uint256 timestamp, uint256 blockNumber);
 
@@ -74,12 +74,18 @@ contract AMM is Governable, Pausable {
         _;
     }
 
-    function initialize(address _governance, address _vamm, address _underlyingAsset, address _registry) external initializer {
+    function initialize(
+        address _governance,
+        address _registry,
+        address _underlyingAsset,
+        string memory _name,
+        address _vamm
+    ) external initializer {
         _setGovernace(_governance);
 
         vamm = IVAMM(_vamm);
         underlyingAsset = _underlyingAsset;
-        precision = int(10 ** ERC20Detailed(_underlyingAsset).decimals());
+        name = _name;
 
         syncDeps(_registry);
         _pause(); // not open for trading as yet
@@ -130,17 +136,23 @@ contract AMM is Governable, Pausable {
         onlyClearingHouse
         returns(int256 fundingPayment)
     {
-        // @todo update position due to liquidity migration / param updates etc.
-        int256 latestCumulativePremiumFraction = getLatestCumulativePremiumFraction();
         Position storage position = positions[trader];
+        if (position.size == 0) {
+            return 0;
+        }
+
+        // @todo update position due to liquidity migration / vamm param updates etc.
+        int256 latestCumulativePremiumFraction = getLatestCumulativePremiumFraction();
+        if (latestCumulativePremiumFraction == position.lastUpdatedCumulativePremiumFraction) {
+            return 0;
+        }
 
         // +: trader paid, -: trader received
         fundingPayment = (latestCumulativePremiumFraction - position.lastUpdatedCumulativePremiumFraction)
             * position.size
-            / precision;
+            / 1e18;
         position.lastUpdatedCumulativePremiumFraction = latestCumulativePremiumFraction;
-        emit FundingPaid(trader, position.size, fundingPayment);
-        _emitPositionChanged(trader);
+        emit FundingPaid(trader, latestCumulativePremiumFraction, position.size, fundingPayment);
     }
 
     function _increasePosition(address trader, int256 baseAssetQuantity, uint quoteAssetLimit)
@@ -168,7 +180,12 @@ contract AMM is Governable, Pausable {
         } else {
             uint closedRatio = (quoteAssetLimit * abs(position.size).toUint256()) / abs(baseAssetQuantity).toUint256();
             (realizedPnl, quoteAsset) = _reducePosition(trader, -position.size, closedRatio);
-            quoteAsset += _increasePosition(trader, baseAssetQuantity + position.size, quoteAssetLimit - closedRatio);
+
+            // this is required because the user might pass a very less value (slippage-prone) while shorting
+            if (quoteAssetLimit >= quoteAsset) {
+                quoteAssetLimit -= quoteAsset;
+            }
+            quoteAsset += _increasePosition(trader, baseAssetQuantity + position.size, quoteAssetLimit);
             isPositionIncreased = true;
         }
     }
@@ -275,7 +292,7 @@ contract AMM is Governable, Pausable {
 
     function _emitPositionChanged(address trader) internal {
         Position memory position = positions[trader];
-        emit PositionChanged(trader, position.size, position.openNotional, position.lastUpdatedCumulativePremiumFraction);
+        emit PositionChanged(trader, position.size, position.openNotional);
     }
 
     function addReserveSnapshot(uint256 _quoteAssetReserve, uint256 _baseAssetReserve)
@@ -319,7 +336,7 @@ contract AMM is Governable, Pausable {
         external
         whenNotPaused
         onlyClearingHouse
-        returns (int256, int256, int256)
+        returns (int256, int256)
     {
         require(_blockTimestamp() >= nextFundingTime, "settle funding too early");
 
@@ -349,8 +366,7 @@ contract AMM is Governable, Pausable {
             : minNextValidFundingTime;
         return (
             premiumFraction,
-            longOpenInterestNotional.toInt256() - shortOpenInterestNotional.toInt256(),
-            precision
+            longOpenInterestNotional.toInt256() - shortOpenInterestNotional.toInt256()
         );
     }
 
@@ -446,8 +462,8 @@ contract AMM is Governable, Pausable {
         int256 _premiumFraction,
         int256 _underlyingPrice
     ) internal {
-        fundingRate = _premiumFraction * 1e18 / _underlyingPrice;
-        emit FundingRateUpdated(fundingRate, _underlyingPrice.toUint256());
+        fundingRate = _premiumFraction * 1e6 / _underlyingPrice;
+        emit FundingRateUpdated(_premiumFraction, fundingRate, _underlyingPrice.toUint256(), _blockTimestamp(), block.number);
     }
 
     // View
@@ -474,8 +490,10 @@ contract AMM is Governable, Pausable {
 
     function getQuote(int256 baseAssetQuantity) external view returns(uint256 qouteAssetQuantity) {
         if (baseAssetQuantity >= 0) {
-            return vamm.get_dx(0, 2, baseAssetQuantity.toUint256()) / 1e12;
+            return vamm.get_dx(0, 2, baseAssetQuantity.toUint256()) / 1e12 + 1;
         }
+        // rounding-down while shorting is not a problem
+        // because lower the min_dy, more permissible it is
         return vamm.get_dy(2, 0, (-baseAssetQuantity).toUint256()) / 1e12;
     }
 

@@ -27,7 +27,6 @@ contract ClearingHouse is Governable {
     struct MarketInfo {
         address amm;
         address underlying;
-        uint256 precision;
     }
 
     struct Position {
@@ -39,6 +38,7 @@ contract ClearingHouse is Governable {
 
     event PositionModified(address indexed trader, uint indexed idx, int256 baseAssetQuantity, uint quoteAsset);
     event PositionLiquidated(address indexed trader, address indexed amm, int256 size, uint256 quoteAsset, int256 realizedPnl);
+    event MarketAdded(address indexed amm);
 
     function initialize(
         address _governance,
@@ -102,13 +102,12 @@ contract ClearingHouse is Governable {
     function settleFunding() external {
         int256 premiumFraction;
         int256 longMinusShortOpenInterestNotional;
-        int256 precision;
         int256 insurancePnL;
         for (uint i = 0; i < amms.length; i++) {
-            (premiumFraction, longMinusShortOpenInterestNotional, precision) = amms[i].settleFunding();
+            (premiumFraction, longMinusShortOpenInterestNotional) = amms[i].settleFunding();
             // if premiumFraction > 0, longs pay shorts, extra shorts are paid for by insurance fund
             // if premiumFraction < 0, shorts pay longs, extra longs are paid for by insurance fund
-            insurancePnL += premiumFraction * longMinusShortOpenInterestNotional / precision;
+            insurancePnL += (premiumFraction * longMinusShortOpenInterestNotional / 1e18);
         }
         if (insurancePnL > 0) {
             vusd.mint(address(insuranceFund), insurancePnL.toUint256());
@@ -120,7 +119,7 @@ contract ClearingHouse is Governable {
     /**
     @notice Wooosh, you are now liquidate
     */
-    function liquidate(address trader) external {
+    function liquidate(address trader) public {
         require(!isAboveMaintenanceMargin(trader), "Above Maintenance Margin");
         int realizedPnl;
         uint quoteAsset;
@@ -142,6 +141,12 @@ contract ClearingHouse is Governable {
             uint _toInsurance = _liquidationFee / 2;
             vusd.mint(address(insuranceFund), _toInsurance);
             vusd.mint(msg.sender, _liquidationFee - _toInsurance);
+        }
+    }
+
+    function liquidateMany(address[] calldata traders) external {
+        for (uint i = 0; i < traders.length; i++) {
+            liquidate(traders[i]);
         }
     }
 
@@ -170,14 +175,7 @@ contract ClearingHouse is Governable {
     function getMarginFraction(address trader) public view returns(uint256) {
         int256 margin = marginAccount.getNormalizedMargin(trader);
         (uint256 notionalPosition, int256 unrealizedPnl) = getTotalNotionalPositionAndUnrealizedPnl(trader);
-        int256 accountValue = margin + unrealizedPnl;
-        if (accountValue <= 0) {
-            return 0;
-        }
-        if (accountValue > 0 && notionalPosition == 0) {
-            return type(uint256).max;
-        }
-        return accountValue.toUint256() * PRECISION / notionalPosition;
+        return _getMarginFraction(margin + unrealizedPnl, notionalPosition);
     }
 
     function getTotalNotionalPositionAndUnrealizedPnl(address trader)
@@ -215,7 +213,7 @@ contract ClearingHouse is Governable {
                 positions[i].avgOpen = 0;
             } else {
                 (,positions[i].unrealizedPnl) = amms[i].getNotionalPositionAndUnrealizedPnl(trader);
-                positions[i].avgOpen = positions[i].openNotional * amms[i].precision().toUint256() / abs(positions[i].size).toUint256();
+                positions[i].avgOpen = positions[i].openNotional * 1e18 / _abs(positions[i].size).toUint256();
             }
         }
     }
@@ -224,8 +222,41 @@ contract ClearingHouse is Governable {
         uint l = amms.length;
         _markets = new MarketInfo[](l);
         for (uint i = 0; i < l; i++) {
-            _markets[i] = MarketInfo(address(amms[i]), amms[i].underlyingAsset(), amms[i].precision().toUint256());
+            _markets[i] = MarketInfo(address(amms[i]), amms[i].underlyingAsset());
         }
+    }
+
+    /**
+    * Get final margin fraction if user longs/shorts baseAssetQuantity
+    * @param idx AMM Index
+    * @param baseAssetQuantity Positive if long, negative if short, scaled 18 decimals
+    * @return marginFraction Resultant Margin fraction when the trade is executed
+    * @return quoteAssetQuantity USD rate for the trade
+    */
+    function expectedMarginFraction(address trader, uint idx, int256 baseAssetQuantity)
+        external
+        view
+        returns (uint256 marginFraction, uint256 quoteAssetQuantity)
+    {
+        quoteAssetQuantity = amms[idx].getQuote(baseAssetQuantity);
+        int256 quoteAssetQuantitySigned = quoteAssetQuantity.toInt256();
+        if (baseAssetQuantity < 0) {
+            quoteAssetQuantitySigned *= -1;
+        }
+
+        int256 margin = marginAccount.getNormalizedMargin(trader);
+        (uint256 notionalPosition, int256 unrealizedPnl) = getTotalNotionalPositionAndUnrealizedPnl(trader);
+        (uint256 currentMarketNotionalPosition, ) = amms[idx].getNotionalPositionAndUnrealizedPnl(trader);
+        (int256 currentPositionSize, , ) = amms[idx].positions(trader);
+
+        int256 notionalPositionSigned = currentMarketNotionalPosition.toInt256();
+        if (currentPositionSize < 0) {
+            notionalPositionSigned *= -1;
+        }
+
+        uint newCurrentMarketNotionalPosition = _abs(quoteAssetQuantitySigned + notionalPositionSigned).toUint256();
+        notionalPosition = notionalPosition - currentMarketNotionalPosition + newCurrentMarketNotionalPosition;
+        marginFraction = _getMarginFraction(margin + unrealizedPnl - _calculateTradeFee(quoteAssetQuantity).toInt256(), notionalPosition);
     }
 
     // Internal View
@@ -240,13 +271,24 @@ contract ClearingHouse is Governable {
 
     // Pure
 
-    function abs(int x) private pure returns (int) {
+    function _abs(int x) private pure returns (int) {
         return x >= 0 ? x : -x;
+    }
+
+    function _getMarginFraction(int256 accountValue, uint notionalPosition) private pure returns(uint256) {
+        if (accountValue <= 0) {
+            return 0;
+        }
+        if (accountValue > 0 && notionalPosition == 0) {
+            return type(uint256).max;
+        }
+        return accountValue.toUint256() * PRECISION / notionalPosition;
     }
 
     // Governance
 
     function whitelistAmm(address _amm) external onlyGovernance {
         amms.push(IAMM(_amm));
+        emit MarketAdded(_amm);
     }
 }

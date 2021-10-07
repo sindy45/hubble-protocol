@@ -12,6 +12,10 @@ contract VanillaGovernable {
         _;
     }
 
+    function setGovernace(address _governance) external onlyGovernance {
+        _setGovernace(_governance);
+    }
+
     function _setGovernace(address _governance) internal {
         governance = _governance;
     }

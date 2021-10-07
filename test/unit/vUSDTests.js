@@ -3,7 +3,7 @@ const utils = require('../utils')
 
 const { constants: { _1e6, ZERO } } = utils
 
-describe('vUSD  Unit Tests', function() {
+describe('vUSD Unit Tests', function() {
     before('factories', async function() {
         signers = await ethers.getSigners()
         alice = signers[0].address

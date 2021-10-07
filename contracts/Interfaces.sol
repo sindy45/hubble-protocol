@@ -22,6 +22,7 @@ interface IClearingHouse {
         returns(int256 notionalPosition, int256 unrealizedPnl);
     function isAboveMaintenanceMargin(address trader) external view returns(bool);
     function updatePositions(address trader) external;
+    function getMarginFraction(address trader) external view returns(uint256);
 }
 
 interface ERC20Detailed {
@@ -43,10 +44,10 @@ interface IAMM {
         returns(uint256 notionalPosition, int256 unrealizedPnl);
     function updatePosition(address trader) external returns(int256 fundingPayment);
     function liquidatePosition(address trader) external returns (int realizedPnl, uint quoteAsset);
-    function settleFunding() external returns (int256, int256, int256);
+    function settleFunding() external returns (int256, int256);
     function underlyingAsset() external view returns (address);
-    function precision() external view returns (int256);
     function positions(address trader) external view returns (int256,uint256,int256);
+    function getQuote(int256 baseAssetQuantity) external view returns(uint256 qouteAssetQuantity);
 }
 
 interface IMarginAccount {
