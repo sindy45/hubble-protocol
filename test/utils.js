@@ -1,5 +1,4 @@
-const { expect } = require('chai');
-
+const { expect } = require('chai')
 const fs = require('fs')
 const { BigNumber } = require('ethers')
 
