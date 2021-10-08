@@ -43,15 +43,17 @@ describe('UI Helpers', async function() {
         fundingTimestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp;
         const twap2 = await getTwapPrice(amm, 3600, fundingTimestamp)
 
-        const fundingInfo = await getFundingPaymentInfo(alice)
+        const fundingInfo = await getFundingPaymentInfo(amm, alice)
 
         expect(fundingInfo[0].fundingAmount).eq(twap1.sub(oracleTwap).div(24).mul(baseAssetQuantity.mul(2)).div(_1e18))
         expect(fundingInfo[1].fundingAmount).eq(twap2.sub(oracleTwap).div(24).mul(baseAssetQuantity).div(_1e18))
     })
 
-    async function getFundingPaymentInfo(alice) {
-        const positionChangedEvent = await amm.queryFilter(amm.filters.PositionChanged(alice))
-        const fundingRateEvent = await amm.queryFilter('FundingRateUpdated')
+    async function getFundingPaymentInfo(amm, alice) {
+        const [ positionChangedEvent, fundingRateEvent ] = await Promise.all([
+            amm.queryFilter(amm.filters.PositionChanged(alice)),
+            amm.queryFilter('FundingRateUpdated')
+        ])
         const positionChangedEventLength = positionChangedEvent.length;
 
         const fundingInfo = []
@@ -71,9 +73,9 @@ describe('UI Helpers', async function() {
             }
 
             fundingInfo.push({
-                'timestamp' : fundingRateEvent[i].args.timestamp,
-                'fundingRate' : fundingRateEvent[i].args.fundingRate, // scaled 6 decimals
-                'fundingAmount' : fundingRateEvent[i].args.premiumFraction.mul(positionSize).div(_1e18) // scaled 6 decimals
+                timestamp : fundingRateEvent[i].args.timestamp,
+                fundingRate : fundingRateEvent[i].args.fundingRate, // scaled 6 decimals
+                fundingAmount : fundingRateEvent[i].args.premiumFraction.mul(positionSize).div(_1e18) // scaled 6 decimals
             })
         }
         return fundingInfo
