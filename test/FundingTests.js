@@ -35,7 +35,7 @@ describe('Funding Tests', function() {
 
             // underlying
             const oracleTwap = _1e6.mul(900)
-            await oracle.setTwapPrice(weth.address, oracleTwap)
+            await oracle.setUnderlyingTwapPrice(weth.address, oracleTwap)
 
             tx = await clearingHouse.settleFunding()
             const fundingTimestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp;
@@ -67,7 +67,7 @@ describe('Funding Tests', function() {
             ;({ quoteAsset, fee } = await getTradeDetails(tx))
 
             const oracleTwap = _1e6.mul(1100)
-            await oracle.setTwapPrice(weth.address, oracleTwap)
+            await oracle.setUnderlyingTwapPrice(weth.address, oracleTwap)
 
             tx = await clearingHouse.settleFunding()
             const fundingTimestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp;
@@ -98,7 +98,7 @@ describe('Funding Tests', function() {
             ;({ quoteAsset, fee } = await getTradeDetails(tx))
 
             const oracleTwap = _1e6.mul(900)
-            await oracle.setTwapPrice(weth.address, oracleTwap)
+            await oracle.setUnderlyingTwapPrice(weth.address, oracleTwap)
             tx = await clearingHouse.settleFunding()
             const fundingTimestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp;
 
@@ -128,7 +128,7 @@ describe('Funding Tests', function() {
             ;({ quoteAsset, fee } = await getTradeDetails(tx))
 
             const oracleTwap = _1e6.mul(1100)
-            await oracle.setTwapPrice(weth.address, oracleTwap)
+            await oracle.setUnderlyingTwapPrice(weth.address, oracleTwap)
             tx = await clearingHouse.settleFunding()
             const fundingTimestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp;
 
@@ -159,7 +159,7 @@ describe('Funding Tests', function() {
 
             // $1k margin, ~$5k in notional position, < $500 margin will put them underwater => $100 funding/unit
             const oracleTwap = _1e6.mul(3400)
-            await oracle.setTwapPrice(weth.address, oracleTwap)
+            await oracle.setUnderlyingTwapPrice(weth.address, oracleTwap)
             tx = await clearingHouse.settleFunding()
             const fundingTimestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp;
 
@@ -259,7 +259,7 @@ describe('Funding Tests', function() {
             await clearingHouse.connect(bob).openPosition(0, bobLong, ethers.constants.MaxUint256)
 
             // mark price is twap is ~999; set underlying such that to receive a -ve funding rate
-            await oracle.setTwapPrice(weth.address, _1e6.mul(twap))
+            await oracle.setUnderlyingTwapPrice(weth.address, _1e6.mul(twap))
             await gotoNextFundingTime(amm)
             await clearingHouse.settleFunding()
 
@@ -278,6 +278,35 @@ describe('Funding Tests', function() {
 
             return premiumFraction
         }
+    })
+
+    it('alice is in liquidation zone but saved by positive funding payment', async () => {
+        ;({ swap, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, oracle, weth, insuranceFund } = await setupContracts())
+        await oracle.setUnderlyingPrice(weth.address, 1e6 * 2000) // $2k
+        await marginAccount.addCollateral(weth.address, 0.7 * 1e6) // weight = 0.7
+        wethAmount = _1e18
+        await weth.mint(alice, wethAmount)
+        await weth.approve(marginAccount.address, wethAmount)
+        await marginAccount.addMargin(1, wethAmount);
+
+        const baseAssetQuantity = _1e18.mul(-5)
+        await clearingHouse.openPosition(0 , baseAssetQuantity, 0)
+        await gotoNextFundingTime(amm)
+
+        // alice margin falls below maintenance margin
+        const oracleTwap = _1e6.mul(700)
+        await oracle.setUnderlyingPrice(weth.address, oracleTwap) // reduces margin
+        await oracle.setUnderlyingTwapPrice(weth.address, oracleTwap) // +ve funding rate
+        expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
+
+        await clearingHouse.connect(liquidator1).callStatic.liquidate(alice) // doesn't throw exception
+
+        // funding settled
+        await clearingHouse.settleFunding()
+        expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.true
+        await expect(
+            clearingHouse.connect(liquidator1).liquidate(alice)
+        ).to.be.revertedWith('Above Maintenance Margin')
     })
 
     async function addMargin(trader, margin) {

@@ -120,7 +120,8 @@ contract ClearingHouse is Governable {
     @notice Wooosh, you are now liquidate
     */
     function liquidate(address trader) public {
-        require(!isAboveMaintenanceMargin(trader), "Above Maintenance Margin");
+        updatePositions(trader);
+        require(_calcMarginFraction(trader, false /* check funding payments again */) < maintenanceMargin, "Above Maintenance Margin");
         int realizedPnl;
         uint quoteAsset;
         int256 size;
@@ -173,9 +174,14 @@ contract ClearingHouse is Governable {
     }
 
     function getMarginFraction(address trader) public view returns(uint256) {
-        int256 margin = marginAccount.getNormalizedMargin(trader);
-        (uint256 notionalPosition, int256 unrealizedPnl) = getTotalNotionalPositionAndUnrealizedPnl(trader);
-        return _getMarginFraction(margin + unrealizedPnl, notionalPosition);
+        return _calcMarginFraction(trader, true /* includeFundingPayments */);
+    }
+
+    function getTotalFunding(address trader) public view returns(int256 totalFunding) {
+        for (uint i = 0; i < amms.length; i++) {
+            (int256 fundingPayment, ) = amms[i].getFundingPayment(trader);
+            totalFunding += fundingPayment;
+        }
     }
 
     function getTotalNotionalPositionAndUnrealizedPnl(address trader)
@@ -256,7 +262,12 @@ contract ClearingHouse is Governable {
 
         uint newCurrentMarketNotionalPosition = _abs(quoteAssetQuantitySigned + notionalPositionSigned).toUint256();
         notionalPosition = notionalPosition - currentMarketNotionalPosition + newCurrentMarketNotionalPosition;
-        marginFraction = _getMarginFraction(margin + unrealizedPnl - _calculateTradeFee(quoteAssetQuantity).toInt256(), notionalPosition);
+
+        int256 totalFunding = getTotalFunding(trader);
+        // -ve fundingPayment means trader should receive funds
+        margin += unrealizedPnl - totalFunding - _calculateTradeFee(quoteAssetQuantity).toInt256();
+        notionalPosition += totalFunding >= 0 ? totalFunding.toUint256() : (-totalFunding).toUint256();
+        marginFraction = _getMarginFraction(margin, notionalPosition);
     }
 
     // Internal View
@@ -267,6 +278,17 @@ contract ClearingHouse is Governable {
 
     function _calculateLiquidationPenalty(uint quoteAsset) internal view returns (uint) {
         return quoteAsset * liquidationPenalty / PRECISION;
+    }
+
+    function _calcMarginFraction(address trader, bool includeFundingPayments) internal view returns(uint256) {
+        int256 margin = marginAccount.getNormalizedMargin(trader);
+        (uint256 notionalPosition, int256 unrealizedPnl) = getTotalNotionalPositionAndUnrealizedPnl(trader);
+        margin += unrealizedPnl;
+        if (includeFundingPayments) {
+            // -ve fundingPayment means trader should receive funds
+            margin -= getTotalFunding(trader);
+        }
+        return _getMarginFraction(margin, notionalPosition);
     }
 
     // Pure

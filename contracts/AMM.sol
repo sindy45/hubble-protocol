@@ -137,20 +137,10 @@ contract AMM is Governable, Pausable {
         returns(int256 fundingPayment)
     {
         Position storage position = positions[trader];
-        if (position.size == 0) {
-            return 0;
-        }
+        int256 latestCumulativePremiumFraction;
 
         // @todo update position due to liquidity migration / vamm param updates etc.
-        int256 latestCumulativePremiumFraction = getLatestCumulativePremiumFraction();
-        if (latestCumulativePremiumFraction == position.lastUpdatedCumulativePremiumFraction) {
-            return 0;
-        }
-
-        // +: trader paid, -: trader received
-        fundingPayment = (latestCumulativePremiumFraction - position.lastUpdatedCumulativePremiumFraction)
-            * position.size
-            / 1e18;
+        (fundingPayment, latestCumulativePremiumFraction) = getFundingPayment(trader);
         position.lastUpdatedCumulativePremiumFraction = latestCumulativePremiumFraction;
         emit FundingPaid(trader, latestCumulativePremiumFraction, position.size, fundingPayment);
     }
@@ -486,6 +476,27 @@ contract AMM is Governable, Pausable {
             notionalPosition = vamm.get_dx(0 /* sell quote asset */, 2 /* purchase shorted asset */, (-position.size).toUint256() /* exact output */) / 1e12;
             unrealizedPnl = position.openNotional.toInt256() - notionalPosition.toInt256();
         }
+    }
+
+    function getFundingPayment(address trader)
+        public
+        view
+        returns(int256 fundingPayment, int256 latestCumulativePremiumFraction)
+    {
+        latestCumulativePremiumFraction = getLatestCumulativePremiumFraction();
+        Position memory position = positions[trader];
+        if (position.size == 0) {
+            return (0, latestCumulativePremiumFraction);
+        }
+
+        if (latestCumulativePremiumFraction == position.lastUpdatedCumulativePremiumFraction) {
+            return (0, latestCumulativePremiumFraction);
+        }
+
+        // +: trader paid, -: trader received
+        fundingPayment = (latestCumulativePremiumFraction - position.lastUpdatedCumulativePremiumFraction)
+            * position.size
+            / 1e18;
     }
 
     function getQuote(int256 baseAssetQuantity) external view returns(uint256 qouteAssetQuantity) {

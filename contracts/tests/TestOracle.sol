@@ -34,11 +34,11 @@ contract TestOracle is Oracle {
         return twapPrices[underlying];
     }
 
-    function setPrice(address underlying, int256 _price) external {
+    function setUnderlyingPrice(address underlying, int256 _price) external {
         prices[underlying] = _price;
     }
 
-    function setTwapPrice(address underlying, int256 _price) external {
+    function setUnderlyingTwapPrice(address underlying, int256 _price) external {
         twapPrices[underlying] = _price;
     }
 }

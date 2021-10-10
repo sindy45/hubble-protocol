@@ -30,7 +30,7 @@ describe('UI Helpers', async function() {
         await gotoNextFundingTime(amm)
 
         const oracleTwap = _1e6.mul(900)
-        await oracle.setTwapPrice(weth.address, oracleTwap)
+        await oracle.setUnderlyingTwapPrice(weth.address, oracleTwap)
         let tx = await clearingHouse.settleFunding()
         let fundingTimestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp;
         const twap1 = await getTwapPrice(amm, 3600, fundingTimestamp)

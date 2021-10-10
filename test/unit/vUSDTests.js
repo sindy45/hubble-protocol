@@ -149,7 +149,7 @@ describe('vUSD Unit Tests', function() {
             await expect(vusd.processWithdrawals()).to.be.revertedWith('Cannot process withdrawals at this time: Not enough balance')
         })
 
-        it('prcess oldest withdrawal request when enough balance is available', async function () {
+        it('process oldest withdrawal request when enough balance is available', async function () {
             await usdc.mint(vusd.address, _1e6.mul(800))
 
             // minimum required = 123*6 = 738

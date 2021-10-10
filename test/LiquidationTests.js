@@ -1,9 +1,14 @@
 const { expect } = require('chai');
 
-const { constants: { _1e6, _1e18, ZERO }, getTradeDetails, setupContracts } = require('./utils')
+const {
+    constants: { _1e6, _1e18, ZERO },
+    getTradeDetails,
+    setupContracts,
+    gotoNextFundingTime
+} = require('./utils')
 
 describe('Liquidation Tests', async function() {
-    before('factories', async function() {
+    before(async function() {
         signers = await ethers.getSigners()
         ;([ _, bob, liquidator1, liquidator2, admin ] = signers)
         alice = signers[0].address
@@ -11,7 +16,7 @@ describe('Liquidation Tests', async function() {
     })
 
     it('addCollateral', async () => {
-        await oracle.setPrice(weth.address, 1e6 * 2000) // $2k
+        await oracle.setUnderlyingPrice(weth.address, 1e6 * 2000) // $2k
         await marginAccount.addCollateral(weth.address, 0.7 * 1e6) // weight = 0.7
     })
 
@@ -99,7 +104,7 @@ describe('Liquidation Tests', async function() {
         // to fall in liquidation zone, where 0 < spot < |vUSD| * 1.05
         // 397 * 1.03 / .29 = $1410
         oraclePrice = 1e6 * 1390
-        await oracle.setPrice(weth.address, oraclePrice)
+        await oracle.setUnderlyingPrice(weth.address, oraclePrice)
 
         const repayAmount = aliceVusdMargin.abs().div(2) // 397 / 2 = 198
         await vusd.connect(admin).mint(liquidator2.address, repayAmount)
@@ -135,7 +140,7 @@ describe('Liquidation Tests', async function() {
         const ethMargin = await marginAccount.margin(1, alice)
 
         // drop collateral value, so that we get bad debt
-        await oracle.setPrice(weth.address, 1e6 * 1000)
+        await oracle.setUnderlyingPrice(weth.address, 1e6 * 1000)
 
         // console.log({
         //     aliceVusdMargin: aliceVusdMargin.toString(),

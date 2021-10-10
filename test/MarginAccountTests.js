@@ -29,7 +29,7 @@ describe('Margin Account Tests', function() {
 
     it('addCollateral', async () => {
         weth = await ERC20Mintable.deploy('weth', 'weth', 18)
-        await oracle.setPrice(weth.address, 1e6 * 2000) // $2k
+        await oracle.setUnderlyingPrice(weth.address, 1e6 * 2000) // $2k
 
         await marginAccount.addCollateral(weth.address, 1e6) // weight = 1
 
