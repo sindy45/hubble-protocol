@@ -61,7 +61,7 @@ contract AMM is Governable, Pausable {
     event PositionChanged(address indexed trader, int256 size, uint256 openNotional);
     event FundingRateUpdated(int256 premiumFraction, int256 rate, uint256 underlyingPrice, uint256 timestamp, uint256 blockNumber);
     event FundingPaid(address indexed trader, int256 latestCumulativePremiumFraction, int256 positionSize, int256 fundingPayment);
-    event Swap(int256 baseAssetQuantity, uint256 qouteAssetQuantity);
+    event Swap(int256 baseAssetQuantity, uint256 qouteAssetQuantity, uint256 lastPrice);
     event ReserveSnapshotted(uint256 quoteAssetReserve, uint256 baseAssetReserve, uint256 timestamp, uint256 blockNumber);
 
     modifier onlyClearingHouse() {
@@ -75,11 +75,11 @@ contract AMM is Governable, Pausable {
     }
 
     function initialize(
-        address _governance,
         address _registry,
         address _underlyingAsset,
         string memory _name,
-        address _vamm
+        address _vamm,
+        address _governance
     ) external initializer {
         _setGovernace(_governance);
 
@@ -257,7 +257,7 @@ contract AMM is Governable, Pausable {
             baseAssetQuantity.toUint256(), // long exactly
             max_dx
         ) / 1e12; // 6 decimals precision
-        emit Swap(baseAssetQuantity, qouteAssetQuantity);
+        emit Swap(baseAssetQuantity, qouteAssetQuantity, lastPrice());
     }
 
     /**
@@ -277,7 +277,7 @@ contract AMM is Governable, Pausable {
             (-baseAssetQuantity).toUint256(), // short exactly
             min_dy
         ) / 1e12;
-        emit Swap(baseAssetQuantity, qouteAssetQuantity);
+        emit Swap(baseAssetQuantity, qouteAssetQuantity, lastPrice());
     }
 
     function _emitPositionChanged(address trader) internal {
@@ -508,7 +508,7 @@ contract AMM is Governable, Pausable {
         return vamm.get_dy(2, 0, (-baseAssetQuantity).toUint256()) / 1e12;
     }
 
-    function lastPrice() external view returns(uint256) {
+    function lastPrice() public view returns(uint256) {
         return vamm.last_prices(1) / 1e12;
     }
 

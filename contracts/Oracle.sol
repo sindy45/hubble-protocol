@@ -29,6 +29,7 @@ contract Oracle is Governable {
             return stablePrice[underlying];
         }
         (,answer,,,) = AggregatorV3Interface(chainLinkAggregatorMap[underlying]).latestRoundData();
+        answer /= 100;
     }
 
     function getUnderlyingTwapPrice(address underlying, uint256 intervalInSeconds)

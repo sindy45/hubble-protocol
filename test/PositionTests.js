@@ -165,7 +165,7 @@ describe('Position Tests', async function() {
                 openNotional: ZERO,
                 notionalPosition: ZERO,
                 unrealizedPnl: ZERO,
-                marginFraction: ethers.constants.MaxUint256,
+                marginFraction: ethers.constants.MaxInt256,
             })
             expect(await amm.longOpenInterestNotional()).to.eq(ZERO)
             expect(await amm.shortOpenInterestNotional()).to.eq(ZERO)
@@ -186,7 +186,7 @@ describe('Position Tests', async function() {
                 openNotional: ZERO,
                 notionalPosition: ZERO,
                 unrealizedPnl: ZERO,
-                marginFraction: ethers.constants.MaxUint256,
+                marginFraction: ethers.constants.MaxInt256,
             })
             expect(await amm.longOpenInterestNotional()).to.eq(ZERO)
             expect(await amm.shortOpenInterestNotional()).to.eq(ZERO)
@@ -314,7 +314,7 @@ describe('Position Tests', async function() {
                 openNotional: ZERO,
                 notionalPosition: ZERO,
                 unrealizedPnl: ZERO,
-                marginFraction: ethers.constants.MaxUint256,
+                marginFraction: ethers.constants.MaxInt256,
             })
 
             // bob is profitable
@@ -349,7 +349,7 @@ describe('Position Tests', async function() {
                 openNotional: ZERO,
                 notionalPosition: ZERO,
                 unrealizedPnl: ZERO,
-                marginFraction: ethers.constants.MaxUint256,
+                marginFraction: ethers.constants.MaxInt256,
             })
 
             // bob is profitable
@@ -383,7 +383,7 @@ describe('Position Tests', async function() {
                 openNotional: ZERO,
                 notionalPosition: ZERO,
                 unrealizedPnl: ZERO,
-                marginFraction: ethers.constants.MaxUint256,
+                marginFraction: ethers.constants.MaxInt256,
             })
 
             // bob is profitable
@@ -422,11 +422,11 @@ describe('Position Tests', async function() {
             const ERC20Mintable = await ethers.getContractFactory('ERC20Mintable')
             const avax = await ERC20Mintable.deploy('avax', 'avax', 6)
             const secondAmm = await utils.setupAmm(
-                [ alice, registry.address, avax.address, 'AVAX-Perp' ],
+                alice,
+                [ registry.address, avax.address, 'AVAX-Perp' ],
                 65, // initialRate => avax = $65
                 10000 // initialLiquidity = 10k avax
             )
-
             const markets = await clearingHouse.markets()
             expect(markets[0].amm).to.eq(amm.address)
             expect(markets[0].underlying).to.eq(weth.address)

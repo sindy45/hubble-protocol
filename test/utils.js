@@ -76,11 +76,12 @@ async function setupContracts(tradeFee = DEFAULT_TRADE_FEE) {
 
     registry = await Registry.deploy(oracle.address, clearingHouse.address, insuranceFund.address, marginAccount.address, vusd.address)
 
-    const { amm, vamm } = await setupAmm(
-        [ governance, registry.address, weth.address, 'ETH-Perp' ],
+    ;({ amm, vamm } = await setupAmm(
+        governance,
+        [ registry.address, weth.address, 'ETH-Perp' ],
         1000, // initialRate,
         1000 // initialLiquidity
-    )
+    ))
     await Promise.all([
         marginAccount.syncDeps(registry.address, 5e4), // liquidationIncentive = 5% = .05 scaled 6 decimals
         insuranceFund.syncDeps(registry.address)
@@ -109,24 +110,20 @@ async function setupUpgradeableProxy(contract, admin, initArgs, deployArgs) {
     return ethers.getContractAt(contract, proxy.address)
 }
 
-async function setupAmm(args, initialRate, initialLiquidity, _pause = false) {
+async function setupAmm(governance, args, initialRate, initialLiquidity, _pause = false) {
     const vamm = await Swap.deploy(
-        "0xbabe61887f1de2713c6f97e567623453d3c79f67", // owner
-        "0xbabe61887f1de2713c6f97e567623453d3c79f67", // admin_fee_receiver
+        governance, // owner
         moonMath.address, // math
         views.address, // views
         54000, // A
-        "3500000000000000", // gamma
-        0,
-        0,
-        "0",
-        0,
-        "490000000000000", // adjustment_step
-        0,
+        '3500000000000000', // gamma
+        0, 0, 0, 0, // mid_fee, out_fee, allowed_extra_profit, fee_gamma
+        '490000000000000', // adjustment_step
+        0, // admin_fee
         600, // ma_half_time
         [_1e18.mul(40000) /* btc initial rate */, _1e18.mul(initialRate)]
     )
-    const amm = await setupUpgradeableProxy('AMM', proxyAdmin.address, args.concat([vamm.address]))
+    const amm = await setupUpgradeableProxy('AMM', proxyAdmin.address, args.concat([ vamm.address, governance ]))
     if (!_pause) {
         await amm.togglePause(_pause)
     }

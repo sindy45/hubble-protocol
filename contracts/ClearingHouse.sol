@@ -14,7 +14,7 @@ contract ClearingHouse is Governable {
 
     uint256 constant PRECISION = 1e6;
 
-    uint256 public maintenanceMargin;
+    int256 public maintenanceMargin;
     uint public tradeFee;
     uint public liquidationPenalty;
 
@@ -45,7 +45,7 @@ contract ClearingHouse is Governable {
         address _insuranceFund,
         address _marginAccount,
         address _vusd,
-        uint256 _maintenanceMargin,
+        int256 _maintenanceMargin,
         uint _tradeFee,
         uint _liquidationPenalty
     ) external initializer {
@@ -55,6 +55,7 @@ contract ClearingHouse is Governable {
         marginAccount = IMarginAccount(_marginAccount);
         vusd = VUSD(_vusd);
 
+        require(_maintenanceMargin > 0, "_maintenanceMargin < 0");
         maintenanceMargin = _maintenanceMargin;
         tradeFee = _tradeFee;
         liquidationPenalty = _liquidationPenalty;
@@ -173,7 +174,7 @@ contract ClearingHouse is Governable {
         return getMarginFraction(trader) >= maintenanceMargin;
     }
 
-    function getMarginFraction(address trader) public view returns(uint256) {
+    function getMarginFraction(address trader) public view returns(int256) {
         return _calcMarginFraction(trader, true /* includeFundingPayments */);
     }
 
@@ -242,7 +243,7 @@ contract ClearingHouse is Governable {
     function expectedMarginFraction(address trader, uint idx, int256 baseAssetQuantity)
         external
         view
-        returns (uint256 marginFraction, uint256 quoteAssetQuantity)
+        returns (int256 marginFraction, uint256 quoteAssetQuantity)
     {
         quoteAssetQuantity = amms[idx].getQuote(baseAssetQuantity);
         int256 quoteAssetQuantitySigned = quoteAssetQuantity.toInt256();
@@ -280,7 +281,7 @@ contract ClearingHouse is Governable {
         return quoteAsset * liquidationPenalty / PRECISION;
     }
 
-    function _calcMarginFraction(address trader, bool includeFundingPayments) internal view returns(uint256) {
+    function _calcMarginFraction(address trader, bool includeFundingPayments) internal view returns(int256) {
         int256 margin = marginAccount.getNormalizedMargin(trader);
         (uint256 notionalPosition, int256 unrealizedPnl) = getTotalNotionalPositionAndUnrealizedPnl(trader);
         margin += unrealizedPnl;
@@ -297,14 +298,11 @@ contract ClearingHouse is Governable {
         return x >= 0 ? x : -x;
     }
 
-    function _getMarginFraction(int256 accountValue, uint notionalPosition) private pure returns(uint256) {
-        if (accountValue <= 0) {
-            return 0;
+    function _getMarginFraction(int256 accountValue, uint notionalPosition) private pure returns(int256) {
+        if (notionalPosition == 0) {
+            return type(int256).max;
         }
-        if (accountValue > 0 && notionalPosition == 0) {
-            return type(uint256).max;
-        }
-        return accountValue.toUint256() * PRECISION / notionalPosition;
+        return accountValue * PRECISION.toInt256() / notionalPosition.toInt256();
     }
 
     // Governance

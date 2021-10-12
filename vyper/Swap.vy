@@ -170,8 +170,6 @@ kill_deadline: public(uint256)
 transfer_ownership_deadline: public(uint256)
 admin_actions_deadline: public(uint256)
 
-admin_fee_receiver: public(address)
-
 KILL_DEADLINE_DT: constant(uint256) = 2 * 30 * 86400
 ADMIN_ACTIONS_DELAY: constant(uint256) = 3 * 86400
 MIN_RAMP_TIME: constant(uint256) = 86400
@@ -205,7 +203,6 @@ INF_COINS: constant(uint256) = 15
 @external
 def __init__(
     owner: address,
-    admin_fee_receiver: address,
     math: address,
     views: address,
     A: uint256,
@@ -252,13 +249,8 @@ def __init__(
     self.last_prices_packed = packed_prices
     self.last_prices_timestamp = block.timestamp
     self.ma_half_time = ma_half_time
-
     self.xcp_profit_a = 10**18
-
     self.kill_deadline = block.timestamp + KILL_DEADLINE_DT
-
-    self.admin_fee_receiver = admin_fee_receiver
-
 
 @payable
 @external
@@ -795,6 +787,7 @@ def get_dx(i: uint256, j: uint256, dy: uint256) -> uint256:
 @nonreentrant('lock')
 def add_liquidity(amounts: uint256[N_COINS], min_mint_amount: uint256):
     assert not self.is_killed  # dev: the pool is killed
+    assert msg.sender == self.owner  # dev: only owner
 
     A_gamma: uint256[2] = self._A_gamma()
 
@@ -1232,9 +1225,3 @@ def add_liquidity(amounts: uint256[N_COINS], min_mint_amount: uint256):
 # def unkill_me():
 #     assert msg.sender == self.owner  # dev: only owner
 #     self.is_killed = False
-
-
-# @external
-# def set_admin_fee_receiver(_admin_fee_receiver: address):
-#     assert msg.sender == self.owner  # dev: only owner
-#     self.admin_fee_receiver = _admin_fee_receiver

@@ -56,7 +56,7 @@ contract InsuranceFund is VanillaGovernable, ERC20PresetMinterPauserUpgradeable 
         uint _pool = balance();
         uint _totalSupply = totalSupply();
         if (_totalSupply == 0 && _pool > 0) { // trading fee accumulated while there were no IF LPs
-            // vusd.safeTransfer(owner(), _pool);
+            vusd.safeTransfer(governance, _pool);
             _pool = 0;
         }
 

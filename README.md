@@ -28,3 +28,8 @@ npm t
 npx hardhat node
 npx hardhat run scripts/deploy-local.js --network local
 ```
+
+### Fuji Deployment
+```
+npx hardhat run scripts/deploy-fuji.js --network fuji
+```

@@ -18,6 +18,12 @@ module.exports = {
             url: 'http://localhost:8545',
             chainId: 1337
         },
+        // hardhat: {
+        //     forking: {
+        //         url: 'https://api.avax-test.network/ext/bc/C/rpc',
+        //         chainId: 43113
+        //     }
+        // },
         hardhat: {
             chainId: 1337
         },

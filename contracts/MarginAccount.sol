@@ -99,18 +99,23 @@ contract MarginAccount is Governable {
         emit PnLRealized(trader, realizedPnl);
     }
 
-    function liquidate(address trader, uint repayAmount, uint idx, uint minSeizeAmount) external {
-        require(repayAmount > 0, "repay something");
+    function isLiquidatable(address trader)
+        public
+        view
+        returns(bool _isLiquidatable, uint repayAmount, uint incentivePerDollar)
+    {
         int vusdBal = margin[VUSD_IDX][trader];
-        require(vusdBal < 0, "Nothing to repay");
-        require((-vusdBal).toUint256() >= repayAmount, "repaying too much"); // @todo partial liquidation?
+
+        if (vusdBal >= 0) { // nothing to liquidate
+            return (false, 0, 0);
+        }
 
         (int256 notionalPosition,) = clearingHouse.getTotalNotionalPositionAndUnrealizedPnl(trader);
-        require(notionalPosition == 0, "Liquidate positions before liquidating margin account");
+        if (notionalPosition != 0) { // Liquidate positions before liquidating margin account
+            return (false, 0, 0);
+        }
 
         (int256 weighted, int256 spot) = weightedAndSpotCollateral(trader);
-
-        uint incentivePerDollar;
         if (spot <= 0) {
             /**
                 Liquidation scenario C, where Cusd < |vUSD|
@@ -118,8 +123,10 @@ contract MarginAccount is Governable {
                 => Cusd + vUSD < 0; since vUSD < 0
                 Since the protocol is already in deficit we don't have any money to give out as liquidationIncentive
             */
-            incentivePerDollar = 0;
-        } else if (weighted < 0) {
+            return (true, (-vusdBal).toUint256(), 0);
+        }
+
+        if (weighted < 0) {
             /**
                 Liquidation scenario B, where Cw < |vUSD| <= Cusd
                 => Cw - |vUSD| < 0
@@ -130,9 +137,20 @@ contract MarginAccount is Governable {
             if (incentivePerDollar > liquidationIncentive) {
                 incentivePerDollar = liquidationIncentive;
             }
-        } else {
-            revert("trader is above liquidation threshold");
+            return (true, (-vusdBal).toUint256(), incentivePerDollar);
         }
+
+        return (false, 0, 0);
+    }
+
+    function liquidate(address trader, uint repayAmount, uint idx, uint minSeizeAmount) external {
+        (bool _isLiquidatable,,uint incentivePerDollar) = isLiquidatable(trader);
+        if (!_isLiquidatable) {
+            revert("trader is above liquidation threshold or has open positions");
+        }
+
+        int vusdBal = margin[VUSD_IDX][trader];
+        require((-vusdBal).toUint256() >= repayAmount, "repaying too much"); // @todo partial liquidation?
 
         Collateral memory coll = supportedCollateral[idx];
         int priceCollateral = oracle.getUnderlyingPrice(address(coll.token));

@@ -5,57 +5,46 @@ const utils = require('../test/utils')
 const { constants: { _1e18, _1e6 } } = utils
 const _1e8 = BigNumber.from(10).pow(8)
 
-const participants = [
-    '0x36E24b66Cb2a474D20B33eb9EA49c3c39f1b3A90' //  atvanguard
-]
-
 async function main() {
     signers = await ethers.getSigners()
-    alice = signers[0].address
-
-    const { marginAccount, clearingHouse, vusd, usdc, oracle } = await setupContracts(0.0005 * 1e6)
-
-    // provide some vusd to participants[0]
-    const initialVusdAmount = _1e6.mul(1e4)
-    await vusd.mint(participants[0], initialVusdAmount)
-    // await usdc.connect(participants[0]).approve(vusd.address, initialVusdAmount)
-    // await vusd.connect(participants[0]).mintWithReserve(participants[0], initialVusdAmount)
+    governance = signers[0].address
+    const { marginAccount, clearingHouse, vusd, oracle } = await setupContracts(0.0005 * 1e6)
 
     // whitelist avax as collateral
-    const ERC20Mintable = await ethers.getContractFactory('ERC20Mintable')
-    const avax = await ERC20Mintable.deploy('Avalanche', 'AVAX', 8)
-    await sleep(2)
-    await oracle.setAggregator(avax.address, '0x5498BB86BC934c8D34FDA08E81D444153d0D06aD')
-    await sleep(2)
+
+    // const ERC20Mintable = await ethers.getContractFactory('ERC20Mintable')
+    const avax = await ERC20Mintable.deploy('Hubble-Avax', 'hAVAX', 8)
+
+    // avax = await ethers.getContractAt('ERC20Mintable', '0x8e8cecF1Ee553D72A60227102397E5128FF9f61F')
+    await oracle.setAggregator(avax.address, '0x5498BB86BC934c8D34FDA08E81D444153d0D06aD') // AVAX / USD Feed
     await marginAccount.addCollateral(avax.address, 8e5) // weight = 0.8e6
-    await sleep(2)
-    await avax.mint(participants[0], _1e8.mul(2e3)) // 2000 avax
 
     // setup another market
-    const btc = await ERC20Mintable.deploy('Bitcoin', 'BTC', 8)
+    // const btc = await ERC20Mintable.deploy('Bitcoin', 'BTC', 8)
+    const btc = await ethers.getContractAt('ERC20Mintable', '0xFD7483C75c7C5eD7910c150A3FDf62cEa707E4dE')
     await sleep(2)
-    await utils.setupAmm(
-        [ alice, registry.address, btc.address, 'BTC-Perp' ],
-        55000, // initialRate => btc = $55000
-        4000 // initialLiquidity = 4000 btc
+    await setupAmm(
+        governance,
+        [ registry.address, btc.address, 'BTC-Perp' ],
+        57400, // initialRate => btc = $57400
+        3000 // initialLiquidity = 3000 btc
     )
 
     const HubbleViewer = await ethers.getContractFactory('HubbleViewer')
-    const hubbleViewer = await HubbleViewer.deploy(clearingHouse.address)
+    const hubbleViewer = await HubbleViewer.deploy(clearingHouse.address, marginAccount.address)
 
     const contracts = {
         marginAccount: marginAccount.address,
         clearingHouse: clearingHouse.address,
         hubbleViewer: hubbleViewer.address,
         vusd: vusd.address,
+        avax: avax.address,
         oracle: oracle.address
     }
     console.log(contracts)
 }
 
 async function setupContracts(tradeFee) {
-    governance = alice
-
     // Vyper
     let abiAndBytecode = fs.readFileSync('./vyper/MoonMath.txt').toString().split('\n').filter(Boolean)
     const MoonMath = new ethers.ContractFactory(JSON.parse(abiAndBytecode[0]), abiAndBytecode[1], signers[0])
@@ -79,15 +68,17 @@ async function setupContracts(tradeFee) {
         ethers.getContractFactory('ProxyAdmin')
     ]))
 
-    proxyAdmin = await ProxyAdmin.deploy()
-    await sleep(2)
-    usdc = await ERC20Mintable.deploy('USD Coin', 'USDC', 6)
-    await sleep(2)
-    weth = await ERC20Mintable.deploy('WETH', 'WETH', 18)
-    await sleep(2)
+    // proxyAdmin = await ProxyAdmin.deploy()
+    // weth = await ERC20Mintable.deploy('WETH', 'WETH', 18)
+    // usdc = await ERC20Mintable.deploy('USD Coin', 'USDC', 6)
+    // const vusd = await setupUpgradeableProxy('VUSD', proxyAdmin.address, [ governance ], [ usdc.address ])
+
+    proxyAdmin = await ethers.getContractAt('ProxyAdmin', '0x6009fBD1f1026f233b0BA1f7dEcc016c0bB3201F')
+    weth = await ethers.getContractAt('ERC20Mintable', '0xC1B33A334d34d72A503DfF50e97549503fFc760F')
+    usdc = await ethers.getContractAt('ERC20Mintable', '0x9e978e428757eE34b188817d5Dca2d83ED1048C4')
 
     const vusd = await setupUpgradeableProxy('VUSD', proxyAdmin.address, [ governance ], [ usdc.address ])
-    await sleep(2)
+    // vusd = await ethers.getContractAt('VUSD', '0x899BFb3479AA6d32D85E1Fd4dbba6E9A814cF60D')
 
     oracle = await setupUpgradeableProxy('Oracle', proxyAdmin.address, [ governance ])
     await sleep(2)
@@ -105,7 +96,7 @@ async function setupContracts(tradeFee) {
         'ClearingHouse',
         proxyAdmin.address,
         [
-            alice,
+            governance,
             insuranceFund.address,
             marginAccount.address,
             vusd.address,
@@ -122,9 +113,10 @@ async function setupContracts(tradeFee) {
     await sleep(2)
 
     const { amm, vamm } = await setupAmm(
-        [ governance, registry.address, weth.address, 'ETH-Perp' ],
-        3580, // initialRate,
-        60000 // initialLiquidity
+        governance,
+        [ registry.address, weth.address, 'ETH-Perp' ],
+        3500, // initialRate,
+        50000 // initialLiquidity
     )
 
     const liquidationIncentive = 5e4 // 5% = .05 scaled 6 decimals
@@ -146,7 +138,7 @@ async function setupUpgradeableProxy(contract, admin, initArgs, deployArgs) {
     } else {
         impl = await factory.deploy()
     }
-    await sleep(2)
+    await sleep(3)
     const proxy = await TransparentUpgradeableProxy.deploy(
         impl.address,
         admin,
@@ -161,28 +153,27 @@ async function setupUpgradeableProxy(contract, admin, initArgs, deployArgs) {
     return ethers.getContractAt(contract, proxy.address)
 }
 
-async function setupAmm(args, initialRate, initialLiquidity, _pause = false) {
+async function setupAmm(governance, args, initialRate, initialLiquidity, _pause = false) {
     const vamm = await Swap.deploy(
-        "0xbabe61887f1de2713c6f97e567623453d3c79f67", // owner
-        "0xbabe61887f1de2713c6f97e567623453d3c79f67", // admin_fee_receiver
+        governance, // owner
         moonMath.address, // math
         views.address, // views
         54000, // A
-        "3500000000000000", // gamma
-        0,
-        0,
-        "0",
-        0,
-        "490000000000000", // adjustment_step
-        0,
+        '3500000000000000', // gamma
+        0, 0, 0, 0, // mid_fee, out_fee, allowed_extra_profit, fee_gamma
+        '490000000000000', // adjustment_step
+        0, // admin_fee
         600, // ma_half_time
         [_1e18.mul(40000) /* btc initial rate */, _1e18.mul(initialRate)]
     )
-    const amm = await setupUpgradeableProxy('AMM', proxyAdmin.address, args.concat([vamm.address]))
+    await sleep(2)
+    const amm = await setupUpgradeableProxy('AMM', proxyAdmin.address, args.concat([ vamm.address, governance ]))
     if (!_pause) {
         await amm.togglePause(_pause)
+        await sleep(2)
     }
     await vamm.setAMM(amm.address)
+    await sleep(2)
 
     initialLiquidity = _1e18.mul(initialLiquidity)
     await vamm.add_liquidity([
@@ -198,7 +189,32 @@ function sleep(s) {
     return new Promise(resolve => setTimeout(resolve, s * 1000));
 }
 
+async function poke() {
+    let marginAccount = await ethers.getContractAt('MarginAccount', '0xaC4D33BA2c159C78152b249a8f78eAC32CC39737')
+    let clearingHouse = await ethers.getContractAt('ClearingHouse', '0x9aC7Ea5708E75BF6cA229558Be90cAE269975ECa')
+    let vusd = await ethers.getContractAt('VUSD', '0x899BFb3479AA6d32D85E1Fd4dbba6E9A814cF60D')
+    let oracle = await ethers.getContractAt('Oracle', '0xe1251b5a03890060E14AF6F1381e2F4d189c0Af0')
+}
+
+async function updateImpl(contract, tupAddy, deployArgs) {
+    const factory = await ethers.getContractFactory(contract)
+    let impl
+    if (deployArgs) {
+        impl = await factory.deploy(...deployArgs)
+    } else {
+        impl = await factory.deploy()
+    }
+    await sleep(2)
+    const proxyAdmin = await ethers.getContractAt('ProxyAdmin', '0x6009fBD1f1026f233b0BA1f7dEcc016c0bB3201F')
+    console.log(await proxyAdmin.getProxyImplementation(tupAddy))
+    // console.log(await proxyAdmin.getProxyAdmin(tupAddy))
+    await proxyAdmin.upgrade(tupAddy, impl.address)
+    console.log(await proxyAdmin.getProxyImplementation(tupAddy))
+}
+
 main()
+// updateImpl('MarginAccount', '0xaC4D33BA2c159C78152b249a8f78eAC32CC39737')
+// poke()
 .then(() => process.exit(0))
 .catch(error => {
     console.error(error);
