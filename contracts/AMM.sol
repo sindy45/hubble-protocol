@@ -539,4 +539,8 @@ contract AMM is Governable, Pausable {
         clearingHouse = registry.clearingHouse();
         oracle = IOracle(registry.oracle());
     }
+
+    function setFundingBufferPeriod(uint _fundingBufferPeriod) external onlyGovernance {
+        fundingBufferPeriod = _fundingBufferPeriod;
+    }
 }

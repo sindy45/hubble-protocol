@@ -5,6 +5,14 @@ const utils = require('../test/utils')
 const { constants: { _1e18, _1e6 } } = utils
 const _1e8 = BigNumber.from(10).pow(8)
 
+const config = {
+    marginAccount: '0x5977D567DD118D87062285a36a326A75dbdb3C6D',
+    clearingHouse: '0xfe2239288Ab37b8bCCFb4ebD156463fb14EFC1e9',
+    hubbleViewer: '0x5E8CF2Ab68DCED156378E714d81c2583869566dA',
+    vusd: '0x93dA071feA5C808a4794975D814fb9AF7a05509B',
+    oracle: '0x4c697464b051F46C7003c73071F7F52C39e6053c'
+}
+
 async function main() {
     signers = await ethers.getSigners()
     governance = signers[0].address
@@ -190,10 +198,12 @@ function sleep(s) {
 }
 
 async function poke() {
-    let marginAccount = await ethers.getContractAt('MarginAccount', '0xaC4D33BA2c159C78152b249a8f78eAC32CC39737')
-    let clearingHouse = await ethers.getContractAt('ClearingHouse', '0x9aC7Ea5708E75BF6cA229558Be90cAE269975ECa')
-    let vusd = await ethers.getContractAt('VUSD', '0x899BFb3479AA6d32D85E1Fd4dbba6E9A814cF60D')
-    let oracle = await ethers.getContractAt('Oracle', '0xe1251b5a03890060E14AF6F1381e2F4d189c0Af0')
+    let clearingHouse = await ethers.getContractAt('ClearingHouse', config.clearingHouse)
+    let marginAccount = await ethers.getContractAt('MarginAccount', config.marginAccount)
+    let vusd = await ethers.getContractAt('VUSD', config.vusd)
+    let oracle = await ethers.getContractAt('Oracle', config.oracle)
+    let ethAmm = await ethers.getContractAt('AMM', '0x74583fEbc73B8cfEAD50107C49F868301699641E')
+    let btcAmm = await ethers.getContractAt('AMM', '0xCF9541901625fd348eDe299309597cB36f4e4328')
 }
 
 async function updateImpl(contract, tupAddy, deployArgs) {
@@ -205,15 +215,17 @@ async function updateImpl(contract, tupAddy, deployArgs) {
         impl = await factory.deploy()
     }
     await sleep(2)
+
     const proxyAdmin = await ethers.getContractAt('ProxyAdmin', '0x6009fBD1f1026f233b0BA1f7dEcc016c0bB3201F')
-    console.log(await proxyAdmin.getProxyImplementation(tupAddy))
     // console.log(await proxyAdmin.getProxyAdmin(tupAddy))
+    console.log(await proxyAdmin.getProxyImplementation(tupAddy))
     await proxyAdmin.upgrade(tupAddy, impl.address)
+    await sleep(2)
     console.log(await proxyAdmin.getProxyImplementation(tupAddy))
 }
 
 main()
-// updateImpl('MarginAccount', '0xaC4D33BA2c159C78152b249a8f78eAC32CC39737')
+// updateImpl('AMM', '0x74583fEbc73B8cfEAD50107C49F868301699641E')
 // poke()
 .then(() => process.exit(0))
 .catch(error => {
