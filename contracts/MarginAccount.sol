@@ -167,7 +167,7 @@ contract MarginAccount is Governable {
         margin[idx][trader] -= seizeAmount.toInt256();
         supportedCollateral[VUSD_IDX].token.safeTransferFrom(msg.sender, address(this), repayAmount);
         supportedCollateral[idx].token.safeTransfer(msg.sender, seizeAmount);
-        emit MarginAccountLiquidated(trader, repayAmount, idx, seizeAmount);
+        emit MarginAccountLiquidated(trader, idx, seizeAmount, repayAmount);
     }
 
     function settleBadDebt(address trader) external {

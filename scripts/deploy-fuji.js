@@ -224,8 +224,8 @@ async function updateImpl(contract, tupAddy, deployArgs) {
     console.log(await proxyAdmin.getProxyImplementation(tupAddy))
 }
 
-main()
-// updateImpl('AMM', '0x74583fEbc73B8cfEAD50107C49F868301699641E')
+// main()
+updateImpl('MarginAccount', '0x5977D567DD118D87062285a36a326A75dbdb3C6D')
 // poke()
 .then(() => process.exit(0))
 .catch(error => {
