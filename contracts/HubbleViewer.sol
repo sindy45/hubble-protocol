@@ -23,15 +23,16 @@ contract HubbleViewer {
         }
     }
 
-    function isLiquidatable(address[] calldata traders)
+    function liquidatationStatus(address[] calldata traders)
         external
         view
-        returns(bool[] memory _isLiquidatable, uint[] memory debt)
+        returns(bool[] memory isLiquidatable, uint[] memory repayAmount, uint[] memory incentivePerDollar)
     {
-        _isLiquidatable = new bool[](traders.length);
-        debt = new uint[](traders.length);
+        isLiquidatable = new bool[](traders.length);
+        repayAmount = new uint[](traders.length);
+        incentivePerDollar = new uint[](traders.length);
         for (uint i = 0; i < traders.length; i++) {
-            (_isLiquidatable[i], debt[i],) = marginAccount.isLiquidatable(traders[i]);
+            (isLiquidatable[i], repayAmount[i], incentivePerDollar[i]) = marginAccount.isLiquidatable(traders[i]);
         }
     }
 }

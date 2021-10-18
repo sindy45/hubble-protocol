@@ -198,12 +198,15 @@ function sleep(s) {
 }
 
 async function poke() {
-    let clearingHouse = await ethers.getContractAt('ClearingHouse', config.clearingHouse)
-    let marginAccount = await ethers.getContractAt('MarginAccount', config.marginAccount)
-    let vusd = await ethers.getContractAt('VUSD', config.vusd)
-    let oracle = await ethers.getContractAt('Oracle', config.oracle)
-    let ethAmm = await ethers.getContractAt('AMM', '0x74583fEbc73B8cfEAD50107C49F868301699641E')
-    let btcAmm = await ethers.getContractAt('AMM', '0xCF9541901625fd348eDe299309597cB36f4e4328')
+    // let clearingHouse = await ethers.getContractAt('ClearingHouse', config.clearingHouse)
+    // let marginAccount = await ethers.getContractAt('MarginAccount', config.marginAccount)
+    // let vusd = await ethers.getContractAt('VUSD', config.vusd)
+    // let oracle = await ethers.getContractAt('Oracle', config.oracle)
+    // let ethAmm = await ethers.getContractAt('AMM', '0x74583fEbc73B8cfEAD50107C49F868301699641E')
+    // let btcAmm = await ethers.getContractAt('AMM', '0xCF9541901625fd348eDe299309597cB36f4e4328')
+    const HubbleViewer = await ethers.getContractFactory('HubbleViewer')
+    const hubbleViewer = await HubbleViewer.deploy(config.clearingHouse, config.marginAccount)
+    console.log(hubbleViewer.address)
 }
 
 async function updateImpl(contract, tupAddy, deployArgs) {
@@ -225,8 +228,8 @@ async function updateImpl(contract, tupAddy, deployArgs) {
 }
 
 // main()
-updateImpl('MarginAccount', '0x5977D567DD118D87062285a36a326A75dbdb3C6D')
-// poke()
+// updateImpl('MarginAccount', '0x5977D567DD118D87062285a36a326A75dbdb3C6D')
+poke()
 .then(() => process.exit(0))
 .catch(error => {
     console.error(error);
