@@ -4,7 +4,7 @@ const {
     gotoNextFundingTime,
     setupContracts,
     getTwapPrice,
-    constants: { _1e6, _1e18, ZERO }
+    constants: { _1e6, _1e18, _1e12, ZERO }
 } = require('./utils')
 
 describe('UI Helpers', async function() {
@@ -13,7 +13,7 @@ describe('UI Helpers', async function() {
         ;([ _, bob ] = signers)
         alice = signers[0].address
 
-        contracts = await setupContracts(ZERO /* tradeFee */)
+        contracts = await setupContracts()
         ;({ swap, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, oracle, weth } = contracts)
 
         // add margin
@@ -44,14 +44,28 @@ describe('UI Helpers', async function() {
         const twap2 = await getTwapPrice(amm, 3600, fundingTimestamp)
 
         const fundingInfo = await getFundingPaymentInfo(amm, alice)
+        const tradingInfoAlice = await getTradingInfo(clearingHouse, alice)
+        const tradingInfoBob = await getTradingInfo(clearingHouse, bob.address)
 
         expect(fundingInfo[0].fundingAmount).eq(twap1.sub(oracleTwap).div(24).mul(baseAssetQuantity.mul(2)).div(_1e18))
         expect(fundingInfo[1].fundingAmount).eq(twap2.sub(oracleTwap).div(24).mul(baseAssetQuantity).div(_1e18))
+        expect(tradingInfoAlice.length).to.eq(3)
+        expect(tradingInfoAlice[0].side).to.eq('Sell')
+        expect(tradingInfoAlice[0].size).to.eq(baseAssetQuantity.abs())
+        expect(tradingInfoAlice[1].side).to.eq('Sell')
+        expect(tradingInfoAlice[1].size).to.eq(baseAssetQuantity.abs())
+        expect(tradingInfoAlice[2].side).to.eq('Buy')
+        expect(tradingInfoAlice[2].size).to.eq(baseAssetQuantity.abs())
+        expect(tradingInfoBob.length).to.eq(2)
+        expect(tradingInfoBob[0].side).to.eq('Sell')
+        expect(tradingInfoBob[0].size).to.eq(baseAssetQuantity.div(2).abs())
+        expect(tradingInfoBob[1].side).to.eq('Buy')
+        expect(tradingInfoBob[1].size).to.eq(baseAssetQuantity.div(2).abs())
     })
 
-    async function getFundingPaymentInfo(amm, alice) {
+    async function getFundingPaymentInfo(amm, trader) {
         const [ positionChangedEvent, fundingRateEvent ] = await Promise.all([
-            amm.queryFilter(amm.filters.PositionChanged(alice)),
+            amm.queryFilter(amm.filters.PositionChanged(trader)),
             amm.queryFilter('FundingRateUpdated')
         ])
         const positionChangedEventLength = positionChangedEvent.length;
@@ -79,6 +93,26 @@ describe('UI Helpers', async function() {
             })
         }
         return fundingInfo
+    }
+
+    async function getTradingInfo (clearingHouse, trader) {
+        const positionModifiedEvent = await clearingHouse.queryFilter(clearingHouse.filters.PositionModified(trader))
+        const tradeFee = await clearingHouse.tradeFee();
+        const tradingInfo = []
+
+        for (let i = 0; i < positionModifiedEvent.length; i++) {
+            const { baseAssetQuantity, quoteAsset: quoteAssetQuantity } = positionModifiedEvent[i].args
+            tradingInfo.push({
+                timestamp : (await positionModifiedEvent[i].getBlock()).timestamp,
+                market: positionModifiedEvent[i].args.idx,
+                side: baseAssetQuantity.gt(ZERO) ? 'Buy' : 'Sell',
+                size: baseAssetQuantity.abs(),
+                price: quoteAssetQuantity.mul(_1e12).div(baseAssetQuantity.abs()),
+                total: quoteAssetQuantity,
+                fee: quoteAssetQuantity.mul(tradeFee).div(_1e6) // scaled by 6 decimals,
+            })
+        }
+        return tradingInfo
     }
 
     async function addMargin(trader, margin) {
