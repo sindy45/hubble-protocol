@@ -49,6 +49,10 @@ interface IAMM {
     function positions(address trader) external view returns (int256,uint256,int256);
     function getQuote(int256 baseAssetQuantity) external view returns(uint256 qouteAssetQuantity);
     function getFundingPayment(address trader) external view returns(int256 fundingPayment, int256 latestCumulativePremiumFraction);
+    function getOpenNotionalWhileReducingPosition(int256 positionSize, uint256 notionalPosition, int256 unrealizedPnl, int256 baseAssetQuantity, uint quoteAsset)
+        external
+        pure
+        returns(uint256 remainOpenNotional, int realizedPnl);
 }
 
 interface IMarginAccount {
