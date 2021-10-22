@@ -241,7 +241,7 @@ contract ClearingHouse is Governable {
     * @return quoteAssetQuantity USD rate for the trade
     * @return liquidationPrice Mark Price at which trader will be liquidated
     */
-    function getExpectedMFAndLiquidationPrice(address trader, uint idx, int256 baseAssetQuantity)
+    function expectedMarginFraction(address trader, uint idx, int256 baseAssetQuantity)
         external
         view
         returns (int256 marginFraction, uint256 quoteAssetQuantity, uint256 liquidationPrice)

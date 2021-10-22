@@ -62,7 +62,7 @@ describe('Position Tests', async function() {
             const {
                 marginFraction : expectedMarginFraction,
                 liquidationPrice
-            } = await clearingHouse.getExpectedMFAndLiquidationPrice(alice, 0, baseAssetQuantity)
+            } = await clearingHouse.expectedMarginFraction(alice, 0, baseAssetQuantity)
             expect(liquidationPrice).to.eq('978767988')
 
             const quote = await amm.getQuote(baseAssetQuantity)
@@ -127,7 +127,7 @@ describe('Position Tests', async function() {
                 marginFraction : expectedMarginFraction,
                 quoteAssetQuantity,
                 liquidationPrice
-            } = await clearingHouse.getExpectedMFAndLiquidationPrice(alice, 0, baseAssetQuantity)
+            } = await clearingHouse.expectedMarginFraction(alice, 0, baseAssetQuantity)
             expect(liquidationPrice).to.eq('1021832356')
 
             const quote = await amm.getQuote(baseAssetQuantity)
@@ -210,7 +210,7 @@ describe('Position Tests', async function() {
             var {
                 marginFraction : expectedMarginFraction,
                 quoteAssetQuantity
-            } = await clearingHouse.getExpectedMFAndLiquidationPrice(alice, 0, baseAssetQuantity)
+            } = await clearingHouse.expectedMarginFraction(alice, 0, baseAssetQuantity)
 
             // tx = await clearingHouse.openPosition(0, baseAssetQuantity, 0)
             tx = await clearingHouse.openPosition(0, baseAssetQuantity, await amm.getQuote(baseAssetQuantity))
@@ -230,7 +230,7 @@ describe('Position Tests', async function() {
 
             // Long
             baseAssetQuantity = _1e18.mul(10)
-            ;({ marginFraction : expectedMarginFraction } = await clearingHouse.getExpectedMFAndLiquidationPrice(alice, 0, baseAssetQuantity))
+            ;({ marginFraction : expectedMarginFraction } = await clearingHouse.expectedMarginFraction(alice, 0, baseAssetQuantity))
 
             const quote = await amm.getQuote(baseAssetQuantity)
             tx = await clearingHouse.openPosition(0 /* amm index */, _1e18.mul(10) /* long exactly */, quote)
