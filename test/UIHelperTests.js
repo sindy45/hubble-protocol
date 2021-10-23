@@ -70,7 +70,7 @@ describe('UI Helpers', async function() {
     async function getFundingPaymentInfo(amm, trader) {
         const [ positionChangedEvent, fundingRateEvent ] = await Promise.all([
             amm.queryFilter(amm.filters.PositionChanged(trader)),
-            amm.queryFilter('FundingRateUpdated')
+            amm.queryFilter('FundingRateUpdated') // or amm.queryFilter(amm.filters.FundingRateUpdated())
         ])
         const positionChangedEventLength = positionChangedEvent.length;
 
@@ -79,13 +79,14 @@ describe('UI Helpers', async function() {
             const blockNumber = fundingRateEvent[i].blockNumber
 
             // For every funding event, find the trader's position size
-            let positionSize
+            let positionSize = ZERO
             if (positionChangedEvent[positionChangedEventLength-1].blockNumber <= blockNumber) {
                 positionSize = positionChangedEvent[positionChangedEventLength-1].args.size;
             } else {
                 for (let j = 0; j < positionChangedEvent.length-1; j++) {
                     if (positionChangedEvent[j].blockNumber <= blockNumber && positionChangedEvent[j+1].blockNumber >= blockNumber) {
                         positionSize = positionChangedEvent[j].args.size
+                        break
                     }
                 }
             }

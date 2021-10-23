@@ -233,7 +233,9 @@ contract MarginAccount is Governable {
     function userInfo(address trader) external view returns(int256[] memory) {
         uint length = supportedCollateral.length;
         int256[] memory _margin = new int256[](length);
-        for (uint i = 0; i < length; i++) {
+        // -ve funding means user received funds
+        _margin[VUSD_IDX] = margin[VUSD_IDX][trader] - clearingHouse.getTotalFunding(trader);
+        for (uint i = 1; i < length; i++) {
             _margin[i] = margin[i][trader];
         }
         return _margin;

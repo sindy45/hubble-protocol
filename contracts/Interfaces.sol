@@ -23,6 +23,7 @@ interface IClearingHouse {
     function isAboveMaintenanceMargin(address trader) external view returns(bool);
     function updatePositions(address trader) external;
     function getMarginFraction(address trader) external view returns(uint256);
+    function getTotalFunding(address trader) external view returns(int256 totalFunding);
 }
 
 interface ERC20Detailed {
