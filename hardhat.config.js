@@ -14,16 +14,21 @@ module.exports = {
         version: "0.2.12",
     },
     networks: {
-        local: {
-            url: 'http://localhost:8545',
-            chainId: 1337
-        },
+        /*** When forking fuji locally ***/
+        // local: {
+        //     url: 'http://localhost:8545',
+        //     chainId: 31337
+        // },
         // hardhat: {
         //     forking: {
         //         url: 'https://api.avax-test.network/ext/bc/C/rpc',
         //         chainId: 43113
         //     }
         // },
+        local: {
+            url: 'http://localhost:8545',
+            chainId: 1337
+        },
         hardhat: {
             chainId: 1337
         },
