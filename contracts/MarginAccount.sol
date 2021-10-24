@@ -104,8 +104,18 @@ contract MarginAccount is Governable {
         view
         returns(bool _isLiquidatable, uint repayAmount, uint incentivePerDollar)
     {
-        int vusdBal = margin[VUSD_IDX][trader];
+        return isLiquidatable_(trader, true);
+    }
 
+    function isLiquidatable_(address trader, bool includeFunding)
+        internal
+        view
+        returns(bool _isLiquidatable, uint repayAmount, uint incentivePerDollar)
+    {
+        int vusdBal = margin[VUSD_IDX][trader];
+        if (includeFunding) {
+            vusdBal -= clearingHouse.getTotalFunding(trader);
+        }
         if (vusdBal >= 0) { // nothing to liquidate
             return (false, 0, 0);
         }
@@ -144,7 +154,9 @@ contract MarginAccount is Governable {
     }
 
     function liquidate(address trader, uint repayAmount, uint idx, uint minSeizeAmount) external {
-        (bool _isLiquidatable,,uint incentivePerDollar) = isLiquidatable(trader);
+        require(idx > VUSD_IDX && idx < supportedCollateral.length, "collateral not seizable");
+        clearingHouse.updatePositions(trader);
+        (bool _isLiquidatable,,uint incentivePerDollar) = isLiquidatable_(trader, false);
         if (!_isLiquidatable) {
             revert("trader is above liquidation threshold or has open positions");
         }
@@ -162,6 +174,46 @@ contract MarginAccount is Governable {
             seizeAmount = margin[idx][trader].toUint256();
         }
         require(seizeAmount >= minSeizeAmount, "Not seizing enough");
+
+        margin[VUSD_IDX][trader] += repayAmount.toInt256();
+        margin[idx][trader] -= seizeAmount.toInt256();
+        supportedCollateral[VUSD_IDX].token.safeTransferFrom(msg.sender, address(this), repayAmount);
+        supportedCollateral[idx].token.safeTransfer(msg.sender, seizeAmount);
+        emit MarginAccountLiquidated(trader, idx, seizeAmount, repayAmount);
+    }
+
+    function liquidate2(address trader, uint maxRepayAmount, uint idx, uint seizeAmount) external {
+        require(idx > VUSD_IDX && idx < supportedCollateral.length, "collateral not seizable");
+        clearingHouse.updatePositions(trader);
+        (bool _isLiquidatable,,uint incentivePerDollar) = isLiquidatable_(trader, false);
+        if (!_isLiquidatable) {
+            revert("trader is above liquidation threshold or has open positions");
+        }
+
+        int vusdBal = margin[VUSD_IDX][trader];
+        Collateral memory coll = supportedCollateral[idx];
+        int priceCollateral = oracle.getUnderlyingPrice(address(coll.token));
+
+        uint maxSeizable = (-vusdBal).toUint256() * (PRECISION + incentivePerDollar) / priceCollateral.toUint256(); // scaled 6 decimals
+        if (coll.decimals > 6) {
+            maxSeizable *= (10 ** (coll.decimals - 6));
+        }
+        uint _margin = margin[idx][trader].toUint256();
+        if (maxSeizable > _margin) {
+            maxSeizable = _margin;
+        }
+        if (maxSeizable < seizeAmount) {
+            // maxRepayAmount = maxRepayAmount * maxSeizable / seizeAmount; // ratio LOL
+            seizeAmount = maxSeizable;
+        }
+
+        uint repayAmount = seizeAmount * priceCollateral.toUint256() / (10 ** coll.decimals);
+        if (incentivePerDollar > 0) {
+            repayAmount = repayAmount * 1e6 / (PRECISION + incentivePerDollar);
+        }
+        // int vusdBal = margin[VUSD_IDX][trader];
+        require((-vusdBal).toUint256() >= repayAmount, "repaying too much");
+        require(repayAmount <= maxRepayAmount, "seizing more than maxRepayAmount");
 
         margin[VUSD_IDX][trader] += repayAmount.toInt256();
         margin[idx][trader] -= seizeAmount.toInt256();

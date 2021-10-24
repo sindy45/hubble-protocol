@@ -201,18 +201,19 @@ function sleep(s) {
 async function poke() {
     // let clearingHouse = await ethers.getContractAt('ClearingHouse', config.clearingHouse)
     // let marginAccount = await ethers.getContractAt('MarginAccount', config.marginAccount)
-    let registry = await ethers.getContractAt('Registry', '0x7a7ec21c6941088c280391d1c5e475a01f2a591e')
-    // let vusd = await ethers.getContractAt('VUSD', config.vusd)
+    // let registry = await ethers.getContractAt('Registry', '0x7a7ec21c6941088c280391d1c5e475a01f2a591e')
+    let vusd = await ethers.getContractAt('VUSD', config.vusd)
     // let oracle = await ethers.getContractAt('Oracle', config.oracle)
     // let ethAmm = await ethers.getContractAt('AMM', '0x74583fEbc73B8cfEAD50107C49F868301699641E')
     // let btcAmm = await ethers.getContractAt('AMM', '0xCF9541901625fd348eDe299309597cB36f4e4328')
     // const HubbleViewer = await ethers.getContractFactory('HubbleViewer')
     // const hubbleViewer = await HubbleViewer.deploy(config.clearingHouse, config.marginAccount)
-    console.log(await registry.oracle())
-    console.log(await registry.clearingHouse())
-    console.log(await registry.insuranceFund())
-    console.log(await registry.marginAccount())
-    console.log(await registry.vusd())
+    // console.log(await registry.oracle())
+    // console.log(await registry.clearingHouse())
+    // console.log(await registry.insuranceFund())
+    // console.log(await registry.marginAccount())
+    // console.log(await registry.vusd())
+    await vusd.mint('0xc3b2CB4d9500ef85C3104645fed19B1DfFF471bc', _1e6.mul(_1e6).mul(10))
 }
 
 async function updateImpl(contract, tupAddy, deployArgs) {
@@ -281,9 +282,9 @@ async function deployMilkyWay2Updates() {
 }
 
 // main()
-// updateImpl('MarginAccount', '0x5977D567DD118D87062285a36a326A75dbdb3C6D')
+updateImpl('MarginAccount', '0x5977D567DD118D87062285a36a326A75dbdb3C6D')
 // poke()
-deployMilkyWay2Updates()
+// deployMilkyWay2Updates()
 .then(() => process.exit(0))
 .catch(error => {
     console.error(error);
