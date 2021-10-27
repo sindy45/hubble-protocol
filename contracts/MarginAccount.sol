@@ -3,16 +3,15 @@
 pragma solidity 0.8.4;
 
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import { Initializable } from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
-import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
-import { Governable } from "./Governable.sol";
+import { ERC2771ContextUpgradeable } from "@openzeppelin/contracts-upgradeable/metatx/ERC2771ContextUpgradeable.sol";
+import { VanillaGovernable } from "./Governable.sol";
 import { ERC20Detailed, IClearingHouse, IInsuranceFund, IOracle, IRegistry } from "./Interfaces.sol";
 import { VUSD } from "./VUSD.sol";
 
-contract MarginAccount is Governable {
+contract MarginAccount is VanillaGovernable, ERC2771ContextUpgradeable {
     using SafeERC20 for IERC20;
     using SafeCast for uint256;
     using SafeCast for int256;
@@ -50,7 +49,8 @@ contract MarginAccount is Governable {
         _;
     }
 
-    function initialize(address _governance, address _vusd) external initializer {
+    function initialize(address _trustedForwarder, address _governance, address _vusd) external {
+        __ERC2771Context_init(_trustedForwarder); // has the initializer modifier
         _setGovernace(_governance);
         _addCollateral(_vusd, PRECISION); // weight = 1 * PRECISION
         vusd = VUSD(_vusd);
@@ -59,19 +59,19 @@ contract MarginAccount is Governable {
     // Add Margin functions
 
     function addMargin(uint idx, uint amount) external {
-        addMarginFor(idx, amount, msg.sender);
+        addMarginFor(idx, amount, _msgSender());
     }
 
     function addMarginFor(uint idx, uint amount, address to) public {
         require(amount > 0, "Add non-zero margin");
         // will revert for idx >= supportedCollateral.length
-        supportedCollateral[idx].token.safeTransferFrom(msg.sender, address(this), amount);
+        supportedCollateral[idx].token.safeTransferFrom(_msgSender(), address(this), amount);
         margin[idx][to] += amount.toInt256();
         emit MarginAdded(to, idx, amount);
     }
 
     function removeMargin(uint idx, uint256 amount) external {
-        address trader = msg.sender;
+        address trader = _msgSender();
         clearingHouse.updatePositions(trader);
         require(margin[VUSD_IDX][trader] >= 0, "Cannot remove margin when vusd balance is negative");
         require(margin[idx][trader] >= amount.toInt256(), "Insufficient balance");
@@ -165,8 +165,8 @@ contract MarginAccount is Governable {
 
         margin[VUSD_IDX][trader] += repayAmount.toInt256();
         margin[idx][trader] -= seizeAmount.toInt256();
-        supportedCollateral[VUSD_IDX].token.safeTransferFrom(msg.sender, address(this), repayAmount);
-        supportedCollateral[idx].token.safeTransfer(msg.sender, seizeAmount);
+        supportedCollateral[VUSD_IDX].token.safeTransferFrom(_msgSender(), address(this), repayAmount);
+        supportedCollateral[idx].token.safeTransfer(_msgSender(), seizeAmount);
         emit MarginAccountLiquidated(trader, idx, seizeAmount, repayAmount);
     }
 

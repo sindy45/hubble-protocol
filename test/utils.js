@@ -36,10 +36,11 @@ async function setupContracts(tradeFee = DEFAULT_TRADE_FEE) {
     views = await Views.deploy(moonMath.address)
 
     // vyper deployment complete
-    ;([ MarginAccountHelper, Registry, ERC20Mintable, TransparentUpgradeableProxy, ProxyAdmin ] = await Promise.all([
+    ;([ MarginAccountHelper, Registry, ERC20Mintable, MinimalForwarder, TransparentUpgradeableProxy, ProxyAdmin ] = await Promise.all([
         ethers.getContractFactory('MarginAccountHelper'),
         ethers.getContractFactory('Registry'),
         ethers.getContractFactory('ERC20Mintable'),
+        ethers.getContractFactory('MinimalForwarder'),
         ethers.getContractFactory('TransparentUpgradeableProxy'),
         ethers.getContractFactory('ProxyAdmin')
     ]))
@@ -55,7 +56,10 @@ async function setupContracts(tradeFee = DEFAULT_TRADE_FEE) {
     oracle = await setupUpgradeableProxy('TestOracle', proxyAdmin.address, [ governance ])
     await oracle.setStablePrice(vusd.address, 1e6) // $1
 
-    marginAccount = await setupUpgradeableProxy('MarginAccount', proxyAdmin.address, [ governance, vusd.address ])
+    forwarder = await MinimalForwarder.deploy()
+    await forwarder.intialize()
+
+    marginAccount = await setupUpgradeableProxy('MarginAccount', proxyAdmin.address, [ forwarder.address, governance, vusd.address ])
     marginAccountHelper = await MarginAccountHelper.deploy(marginAccount.address, vusd.address)
     insuranceFund = await setupUpgradeableProxy('InsuranceFund', proxyAdmin.address, [ governance ])
 
@@ -63,7 +67,8 @@ async function setupContracts(tradeFee = DEFAULT_TRADE_FEE) {
         'ClearingHouse',
         proxyAdmin.address,
         [
-            alice,
+            forwarder.address,
+            governance,
             insuranceFund.address,
             marginAccount.address,
             vusd.address,
@@ -86,7 +91,21 @@ async function setupContracts(tradeFee = DEFAULT_TRADE_FEE) {
         marginAccount.syncDeps(registry.address, 5e4), // liquidationIncentive = 5% = .05 scaled 6 decimals
         insuranceFund.syncDeps(registry.address)
     ])
-    return { swap: vamm, registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, weth, oracle, insuranceFund }
+    return {
+        swap: vamm,
+        amm,
+        registry,
+        marginAccount,
+        marginAccountHelper,
+        clearingHouse,
+        vusd,
+        usdc,
+        weth,
+        oracle,
+        insuranceFund,
+        forwarder,
+        tradeFee
+    }
 }
 
 async function setupUpgradeableProxy(contract, admin, initArgs, deployArgs) {
@@ -145,11 +164,22 @@ async function filterEvent(tx, name) {
 }
 
 async function getTradeDetails(tx, tradeFee = DEFAULT_TRADE_FEE) {
-    const PositionModifiedEvent = await filterEvent(tx, 'PositionModified')
+    const positionModifiedEvent = await filterEvent(tx, 'PositionModified')
     return {
-        quoteAsset: PositionModifiedEvent.args.quoteAsset,
-        fee: PositionModifiedEvent.args.quoteAsset.mul(tradeFee).div(_1e6)
+        quoteAsset: positionModifiedEvent.args.quoteAsset,
+        fee: positionModifiedEvent.args.quoteAsset.mul(tradeFee).div(_1e6)
     }
+}
+
+async function parseRawEvent(tx, emitter, name) {
+    const { events } = await tx.wait()
+    const event = events.find(e => {
+        if (e.address == emitter.address) {
+            return emitter.interface.parseLog(e).name == name
+        }
+        return false
+    })
+    return emitter.interface.parseLog(event)
 }
 
 async function assertions(contracts, trader, vals, shouldLog) {
@@ -253,6 +283,37 @@ function forkNetwork(_network, blockNumber) {
     })
 }
 
+async function signTransaction(signer, to, data, forwarder, value = 0, gas = 1000000) {
+    const types = {
+        ForwardRequest: [
+            { name: 'from', type: 'address' },
+            { name: 'to', type: 'address' },
+            { name: 'value', type: 'uint256' },
+            { name: 'gas', type: 'uint256' },
+            { name: 'nonce', type: 'uint256' },
+            { name: 'data', type: 'bytes' },
+        ],
+    }
+
+    const domain = {
+        name: 'MinimalForwarder',
+        version: '0.0.1',
+        chainId: await web3.eth.getChainId(),
+        verifyingContract: forwarder.address,
+    }
+
+    const req = {
+        from: signer.address,
+        to: to.address,
+        value,
+        gas,
+        nonce: (await forwarder.getNonce(signer.address)).toString(),
+        data
+    };
+    const sign = await signer._signTypedData(domain, types, req)
+    return { sign, req }
+}
+
 module.exports = {
     constants: { _1e6, _1e12, _1e18, ZERO },
     log,
@@ -266,5 +327,7 @@ module.exports = {
     stopImpersonateAcccount,
     gotoNextFundingTime,
     forkNetwork,
-    setupAmm
+    setupAmm,
+    signTransaction,
+    parseRawEvent
 }

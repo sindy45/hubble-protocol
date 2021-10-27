@@ -2,13 +2,14 @@
 
 pragma solidity 0.8.4;
 
+import { ERC2771ContextUpgradeable } from "@openzeppelin/contracts-upgradeable/metatx/ERC2771ContextUpgradeable.sol";
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
-import { Governable } from "./Governable.sol";
+import { VanillaGovernable } from "./Governable.sol";
 import { IAMM, IInsuranceFund, IMarginAccount } from "./Interfaces.sol";
 import { VUSD } from "./VUSD.sol";
 
-contract ClearingHouse is Governable {
+contract ClearingHouse is VanillaGovernable, ERC2771ContextUpgradeable {
     using SafeCast for uint256;
     using SafeCast for int256;
 
@@ -41,6 +42,7 @@ contract ClearingHouse is Governable {
     event MarketAdded(address indexed amm);
 
     function initialize(
+        address _trustedForwarder,
         address _governance,
         address _insuranceFund,
         address _marginAccount,
@@ -48,7 +50,8 @@ contract ClearingHouse is Governable {
         int256 _maintenanceMargin,
         uint _tradeFee,
         uint _liquidationPenalty
-    ) external initializer {
+    ) external {
+        __ERC2771Context_init(_trustedForwarder); // has the initializer modifier
         _setGovernace(_governance);
 
         insuranceFund = IInsuranceFund(_insuranceFund);
@@ -68,12 +71,12 @@ contract ClearingHouse is Governable {
     * @param quoteAssetLimit Rate at which the trade is executed in the AMM. Used to cap slippage.
     */
     function openPosition(uint idx, int256 baseAssetQuantity, uint quoteAssetLimit) external {
-        _openPosition(msg.sender, idx, baseAssetQuantity, quoteAssetLimit);
+        _openPosition(_msgSender(), idx, baseAssetQuantity, quoteAssetLimit);
     }
 
     function closePosition(uint idx, uint quoteAssetLimit) external {
-        (int256 size,,) = amms[idx].positions(msg.sender);
-        _openPosition(msg.sender, idx, -size, quoteAssetLimit);
+        (int256 size,,) = amms[idx].positions(_msgSender());
+        _openPosition(_msgSender(), idx, -size, quoteAssetLimit);
     }
 
     function _openPosition(address trader, uint idx, int256 baseAssetQuantity, uint quoteAssetLimit) internal {
@@ -142,7 +145,7 @@ contract ClearingHouse is Governable {
         if (_liquidationFee > 0) {
             uint _toInsurance = _liquidationFee / 2;
             vusd.mint(address(insuranceFund), _toInsurance);
-            vusd.mint(msg.sender, _liquidationFee - _toInsurance);
+            vusd.mint(_msgSender(), _liquidationFee - _toInsurance);
         }
     }
 
