@@ -163,6 +163,7 @@ describe('Position Tests', async function() {
             quote = await amm.getQuote(baseAssetQuantity)
             await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity, quote /* min_dy */)
 
+            const swapEvents = await amm.queryFilter('Swap')
             await assertions(contracts, alice, {
                 size: ZERO,
                 openNotional: ZERO,
@@ -172,6 +173,8 @@ describe('Position Tests', async function() {
             })
             expect(await amm.longOpenInterestNotional()).to.eq(ZERO)
             expect(await amm.shortOpenInterestNotional()).to.eq(ZERO)
+            expect(swapEvents[0].args.openInterestNotional).to.eq(baseAssetQuantity.abs())
+            expect(swapEvents[1].args.openInterestNotional).to.eq(ZERO)
         })
 
         it('short + long', async () => {

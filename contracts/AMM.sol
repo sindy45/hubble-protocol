@@ -61,7 +61,7 @@ contract AMM is Governable, Pausable {
     event PositionChanged(address indexed trader, int256 size, uint256 openNotional);
     event FundingRateUpdated(int256 premiumFraction, int256 rate, uint256 underlyingPrice, uint256 timestamp, uint256 blockNumber);
     event FundingPaid(address indexed trader, int256 latestCumulativePremiumFraction, int256 positionSize, int256 fundingPayment);
-    event Swap(int256 baseAssetQuantity, uint256 qouteAssetQuantity, uint256 lastPrice);
+    event Swap(int256 baseAssetQuantity, uint256 qouteAssetQuantity, uint256 lastPrice, uint256 openInterestNotional);
     event ReserveSnapshotted(uint256 quoteAssetReserve, uint256 baseAssetReserve, uint256 timestamp, uint256 blockNumber);
 
     modifier onlyClearingHouse() {
@@ -150,11 +150,11 @@ contract AMM is Governable, Pausable {
         returns(uint quoteAsset)
     {
         if (baseAssetQuantity > 0) { // Long - purchase baseAssetQuantity
-            quoteAsset = _long(baseAssetQuantity, quoteAssetLimit);
             longOpenInterestNotional += baseAssetQuantity.toUint256();
+            quoteAsset = _long(baseAssetQuantity, quoteAssetLimit);
         } else { // Short - sell baseAssetQuantity
-            quoteAsset = _short(baseAssetQuantity, quoteAssetLimit);
             shortOpenInterestNotional += (-baseAssetQuantity).toUint256();
+            quoteAsset = _short(baseAssetQuantity, quoteAssetLimit);
         }
         positions[trader].size += baseAssetQuantity; // -ve baseAssetQuantity will increase short position
         positions[trader].openNotional += quoteAsset;
@@ -193,11 +193,11 @@ contract AMM is Governable, Pausable {
         bool isLongPosition = position.size > 0 ? true : false;
 
         if (isLongPosition) {
-            quoteAsset = _short(baseAssetQuantity, quoteAssetLimit);
             longOpenInterestNotional -= (-baseAssetQuantity).toUint256();
+            quoteAsset = _short(baseAssetQuantity, quoteAssetLimit);
         } else {
-            quoteAsset = _long(baseAssetQuantity, quoteAssetLimit);
             shortOpenInterestNotional -= baseAssetQuantity.toUint256();
+            quoteAsset = _long(baseAssetQuantity, quoteAssetLimit);
         }
         (position.openNotional, realizedPnl) = getOpenNotionalWhileReducingPosition(position.size, notionalPosition, unrealizedPnl, baseAssetQuantity, quoteAsset);
         position.size += baseAssetQuantity;
@@ -274,7 +274,7 @@ contract AMM is Governable, Pausable {
             baseAssetQuantity.toUint256(), // long exactly. Note that statement asserts that baseAssetQuantity >= 0
             max_dx
         ) / 1e12; // 6 decimals precision
-        emit Swap(baseAssetQuantity, qouteAssetQuantity, lastPrice());
+        emit Swap(baseAssetQuantity, qouteAssetQuantity, lastPrice(), openInterestNotional());
     }
 
     /**
@@ -295,7 +295,7 @@ contract AMM is Governable, Pausable {
             (-baseAssetQuantity).toUint256(), // short exactly. Note that statement asserts that baseAssetQuantity <= 0
             min_dy
         ) / 1e12;
-        emit Swap(baseAssetQuantity, qouteAssetQuantity, lastPrice());
+        emit Swap(baseAssetQuantity, qouteAssetQuantity, lastPrice(), openInterestNotional());
     }
 
     function _emitPositionChanged(address trader) internal {
@@ -530,7 +530,7 @@ contract AMM is Governable, Pausable {
         return vamm.last_prices(1) / 1e12;
     }
 
-    function openInterestNotional() external view returns (uint256) {
+    function openInterestNotional() public view returns (uint256) {
         return longOpenInterestNotional + shortOpenInterestNotional;
     }
 
