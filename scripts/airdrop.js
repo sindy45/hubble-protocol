@@ -9,7 +9,7 @@ const csv = require('csv-parser')
 
 const BATCH_SIZE = 150
 
-let friends = [
+const friends = [
     '0x36E24b66Cb2a474D20B33eb9EA49c3c39f1b3A90', // atvanguard
     '0x831706473e5bFE54987f4D09eB1D8252742aAE6e', // manthan
     '0x8C0637a96bAcE1b755c79dd9b3A317f8B2585F69', // sam
@@ -19,8 +19,8 @@ let friends = [
 ]
 
 async function airdrop() {
-    const signers = await ethers.getSigners()
-    const governance = signers[0].address
+    const [ signer ] = await ethers.getSigners()
+    const governance = signer.address
 
     // const vusd = await ethers.getContractAt('VUSD', '0x93dA071feA5C808a4794975D814fb9AF7a05509B')
     avax = await ethers.getContractAt('ERC20Mintable', '0xd589b48c806Fa417baAa45Ebe5fa3c3D582a39aa')
@@ -64,15 +64,14 @@ async function airdrop() {
     const btcAmount = _1e8.mul(1)
     const linkAmount = _1e8.mul(175)
 
-    while (participants.length) {
-        await disperse.disperseTokenEqual(avax.address, participants.slice(0, BATCH_SIZE), avaxAmount)
-        await sleep(2)
-        await disperse.disperseTokenEqual(weth.address, participants.slice(0, BATCH_SIZE), ethAmount)
-        await sleep(2)
-        await disperse.disperseTokenEqual(btc.address, participants.slice(0, BATCH_SIZE), btcAmount)
-        await sleep(2)
-        await disperse.disperseTokenEqual(link.address, participants.slice(0, BATCH_SIZE), linkAmount)
-        await sleep(2)
+    let nonce = await signer.getTransactionCount()
+    while(participants.length) {
+        await Promise.all([
+            disperse.disperseTokenEqual(avax.address, participants.slice(0, BATCH_SIZE), avaxAmount.mul(5), { nonce: nonce++ }),
+            disperse.disperseTokenEqual(weth.address, participants.slice(0, BATCH_SIZE), ethAmount.mul(5), { nonce: nonce++ }),
+            disperse.disperseTokenEqual(btc.address, participants.slice(0, BATCH_SIZE), btcAmount.mul(5), { nonce: nonce++ }),
+            disperse.disperseTokenEqual(link.address, participants.slice(0, BATCH_SIZE), linkAmount.mul(5), { nonce: nonce++ })
+        ])
         participants = participants.slice(BATCH_SIZE)
     }
 }
