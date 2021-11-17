@@ -27,11 +27,11 @@ describe('Oracle Unit Tests', function() {
     })
 
     it('get underlying Twap Price', async function () {
-        // blocktimestamp = 1632948141
-        // twap for last 7200 seconds = ((1632948141-1632946674)*279755792457 + (1632946674-1632945322)*281283735224 + (1632945322-1632941715)*282303299782 + (7200 - (1632948141-1632941715))*282107330840) / 7200 = 281571726936
+        // blocktimestamp = 1632948142
+        // twap for last 7200 seconds = ((1632948142-1632946674)*279755792457 + (1632946674-1632945322)*281283735224 + (1632945322-1632941715)*282303299782 + (7200 - (1632948142-1632941715))*282107330840) / 7200 = 281571400333
         // 281571726936 / 100 (6 decimals)
-        expect(await oracle.getUnderlyingTwapPrice(weth, 7200)).to.eq('2815714003');
-        expect(await oracle.getUnderlyingTwapPrice(weth, 3600)).to.eq('2808815797');
+        expect((await oracle.getUnderlyingTwapPrice(weth, 7200)).div(1e4)).to.eq('281571');
+        expect((await oracle.getUnderlyingTwapPrice(weth, 3601)).div(1e4)).to.eq('280881');
     })
 
     it('asking interval less than latest snapshot, return latest price directly', async () => {
