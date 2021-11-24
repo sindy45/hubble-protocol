@@ -160,7 +160,12 @@ describe('Position Tests', async function() {
             await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* long exactly */, quote /* max_dx */)
 
             baseAssetQuantity = baseAssetQuantity.mul(-1)
-            quote = await amm.getQuote(baseAssetQuantity)
+            ;({ marginFraction, quoteAssetQuantity: quote, liquidationPrice } = await clearingHouse.expectedMarginFraction(alice, 0, baseAssetQuantity))
+
+            // since all positions will be closed
+            expect(marginFraction).to.eq(ethers.constants.MaxInt256)
+            expect(liquidationPrice).to.eq(ZERO)
+
             await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity, quote /* min_dy */)
 
             const swapEvents = await amm.queryFilter('Swap')
@@ -184,7 +189,12 @@ describe('Position Tests', async function() {
             await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* exact base asset */, quote /* min_dy */)
 
             baseAssetQuantity = baseAssetQuantity.mul(-1)
-            quote = await amm.getQuote(baseAssetQuantity)
+            ;({ marginFraction, quoteAssetQuantity: quote, liquidationPrice } = await clearingHouse.expectedMarginFraction(alice, 0, baseAssetQuantity))
+
+            // since all positions will be closed
+            expect(marginFraction).to.eq(ethers.constants.MaxInt256)
+            expect(liquidationPrice).to.eq(ZERO)
+
             await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* long exactly */, quote /* max_dx */)
 
             await assertions(contracts, alice, {
@@ -192,7 +202,7 @@ describe('Position Tests', async function() {
                 openNotional: ZERO,
                 notionalPosition: ZERO,
                 unrealizedPnl: ZERO,
-                marginFraction: ethers.constants.MaxInt256,
+                marginFraction,
             })
             expect(await amm.longOpenInterestNotional()).to.eq(ZERO)
             expect(await amm.shortOpenInterestNotional()).to.eq(ZERO)

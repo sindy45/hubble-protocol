@@ -262,7 +262,25 @@ contract ClearingHouse is Governable {
         } else { // open reverse position
             (uint256 nowNotional, int256 unrealizedPnl) = amms[idx].getNotionalPositionAndUnrealizedPnl(trader);
             if (_abs(positionSize) >= _abs(baseAssetQuantity)) { // position side remains same after the trade
-                (openNotional,) = amms[idx].getOpenNotionalWhileReducingPosition(positionSize, nowNotional, unrealizedPnl, baseAssetQuantity, quoteAssetQuantity);
+                if (baseAssetQuantity > 0) { // using a ternary operator here causes a CompilerError: Stack too deep
+                    (openNotional,) = amms[idx].getOpenNotionalWhileReducingPosition(
+                        positionSize,
+                        nowNotional,
+                        unrealizedPnl,
+                        baseAssetQuantity,
+                        // since we are using get_dx() for calculating notional position whereas getQuote (which is get_dx()+1) for calculating quoteAssetQuantity.
+                        // This makes remainingOpenNotional = -1 when a trader opens a short position and tries to open a long position of the same size afterwards and hence throws an error when converted using toUint().
+                        quoteAssetQuantity - 1
+                    );
+                } else {
+                    (openNotional,) = amms[idx].getOpenNotionalWhileReducingPosition(
+                        positionSize,
+                        nowNotional,
+                        unrealizedPnl,
+                        baseAssetQuantity,
+                        quoteAssetQuantity
+                    );
+                }
             } else { // position side changes after the trade
                 openNotional = quoteAssetQuantity - nowNotional;
             }
