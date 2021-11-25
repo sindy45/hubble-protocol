@@ -60,8 +60,9 @@ describe('Position Tests', async function() {
 
             const {
                 marginFraction : expectedMarginFraction,
-                quoteAssetQuantity
+                liquidationPrice
             } = await clearingHouse.expectedMarginFraction(alice, 0, baseAssetQuantity)
+            expect(liquidationPrice).to.eq('978767988')
 
             const quote = await amm.getQuote(baseAssetQuantity)
             tx = await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* long exactly */, quote /* max_dx */)
@@ -123,8 +124,10 @@ describe('Position Tests', async function() {
 
             const {
                 marginFraction : expectedMarginFraction,
-                quoteAssetQuantity
+                quoteAssetQuantity,
+                liquidationPrice
             } = await clearingHouse.expectedMarginFraction(alice, 0, baseAssetQuantity)
+            expect(liquidationPrice).to.eq('1021832356')
 
             const quote = await amm.getQuote(baseAssetQuantity)
             tx = await clearingHouse.openPosition(0, baseAssetQuantity, quote)
@@ -156,9 +159,15 @@ describe('Position Tests', async function() {
             await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* long exactly */, quote /* max_dx */)
 
             baseAssetQuantity = baseAssetQuantity.mul(-1)
-            quote = await amm.getQuote(baseAssetQuantity)
+            ;({ marginFraction, quoteAssetQuantity: quote, liquidationPrice } = await clearingHouse.expectedMarginFraction(alice, 0, baseAssetQuantity))
+
+            // since all positions will be closed
+            expect(marginFraction).to.eq(ethers.constants.MaxInt256)
+            expect(liquidationPrice).to.eq(ZERO)
+
             await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity, quote /* min_dy */)
 
+            const swapEvents = await amm.queryFilter('Swap')
             await assertions(contracts, alice, {
                 size: ZERO,
                 openNotional: ZERO,
@@ -168,6 +177,8 @@ describe('Position Tests', async function() {
             })
             expect(await amm.longOpenInterestNotional()).to.eq(ZERO)
             expect(await amm.shortOpenInterestNotional()).to.eq(ZERO)
+            expect(swapEvents[0].args.openInterestNotional).to.eq(baseAssetQuantity.abs())
+            expect(swapEvents[1].args.openInterestNotional).to.eq(ZERO)
         })
 
         it('short + long', async () => {
@@ -177,7 +188,12 @@ describe('Position Tests', async function() {
             await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* exact base asset */, quote /* min_dy */)
 
             baseAssetQuantity = baseAssetQuantity.mul(-1)
-            quote = await amm.getQuote(baseAssetQuantity)
+            ;({ marginFraction, quoteAssetQuantity: quote, liquidationPrice } = await clearingHouse.expectedMarginFraction(alice, 0, baseAssetQuantity))
+
+            // since all positions will be closed
+            expect(marginFraction).to.eq(ethers.constants.MaxInt256)
+            expect(liquidationPrice).to.eq(ZERO)
+
             await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* long exactly */, quote /* max_dx */)
 
             await assertions(contracts, alice, {
@@ -185,7 +201,7 @@ describe('Position Tests', async function() {
                 openNotional: ZERO,
                 notionalPosition: ZERO,
                 unrealizedPnl: ZERO,
-                marginFraction: ethers.constants.MaxInt256,
+                marginFraction,
             })
             expect(await amm.longOpenInterestNotional()).to.eq(ZERO)
             expect(await amm.shortOpenInterestNotional()).to.eq(ZERO)
@@ -226,7 +242,7 @@ describe('Position Tests', async function() {
 
             // Long
             baseAssetQuantity = _1e18.mul(10)
-            ;({marginFraction : expectedMarginFraction, } = await clearingHouse.expectedMarginFraction(alice, 0, baseAssetQuantity))
+            ;({ marginFraction : expectedMarginFraction } = await clearingHouse.expectedMarginFraction(alice, 0, baseAssetQuantity))
 
             const quote = await amm.getQuote(baseAssetQuantity)
             tx = await clearingHouse.openPosition(0 /* amm index */, _1e18.mul(10) /* long exactly */, quote)

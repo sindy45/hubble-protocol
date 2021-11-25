@@ -244,41 +244,94 @@ contract ClearingHouse is VanillaGovernable, ERC2771ContextUpgradeable {
     }
 
     /**
-    * Get final margin fraction if user longs/shorts baseAssetQuantity
+    * Get final margin fraction and liquidation price if user longs/shorts baseAssetQuantity
     * @param idx AMM Index
     * @param baseAssetQuantity Positive if long, negative if short, scaled 18 decimals
     * @return marginFraction Resultant Margin fraction when the trade is executed
     * @return quoteAssetQuantity USD rate for the trade
+    * @return liquidationPrice Mark Price at which trader will be liquidated
     */
     function expectedMarginFraction(address trader, uint idx, int256 baseAssetQuantity)
         external
         view
-        returns (int256 marginFraction, uint256 quoteAssetQuantity)
+        returns (int256 marginFraction, uint256 quoteAssetQuantity, uint256 liquidationPrice)
     {
+        // get quoteAsset required to swap baseAssetQuantity
         quoteAssetQuantity = amms[idx].getQuote(baseAssetQuantity);
-        int256 quoteAssetQuantitySigned = quoteAssetQuantity.toInt256();
-        if (baseAssetQuantity < 0) {
-            quoteAssetQuantitySigned *= -1;
+
+        // get total notionalPosition and margin (including unrealizedPnL and funding)
+        (uint256 notionalPosition, int256 margin) = _getNotionalPositionAndMargin(trader, true /* includeFundingPayments */);
+
+        // get market specific position info
+        (int256 positionSize, uint256 openNotional,) = amms[idx].positions(trader);
+
+        // Calculate the effective openNotional and total notionalPosition
+        if (baseAssetQuantity * positionSize >= 0) { // increasingPosition i.e. same direction trade
+            openNotional += quoteAssetQuantity;
+            notionalPosition += quoteAssetQuantity;
+        } else { // open reverse position
+            (uint256 nowNotional, int256 unrealizedPnl,,) = amms[idx].getNotionalPositionAndUnrealizedPnl(trader);
+            if (_abs(positionSize) >= _abs(baseAssetQuantity)) { // position side remains same after the trade
+                if (baseAssetQuantity > 0) { // using a ternary operator here causes a CompilerError: Stack too deep
+                    (openNotional,) = amms[idx].getOpenNotionalWhileReducingPosition(
+                        positionSize,
+                        nowNotional,
+                        unrealizedPnl,
+                        baseAssetQuantity,
+                        // since we are using get_dx() for calculating notional position whereas getQuote (which is get_dx()+1) for calculating quoteAssetQuantity.
+                        // This makes remainingOpenNotional = -1 when a trader opens a short position and tries to open a long position of the same size afterwards and hence throws an error when converted using toUint().
+                        quoteAssetQuantity - 1
+                    );
+                } else {
+                    (openNotional,) = amms[idx].getOpenNotionalWhileReducingPosition(
+                        positionSize,
+                        nowNotional,
+                        unrealizedPnl,
+                        baseAssetQuantity,
+                        quoteAssetQuantity
+                    );
+                }
+            } else { // position side changes after the trade
+                openNotional = quoteAssetQuantity - nowNotional;
+            }
+            notionalPosition = notionalPosition + openNotional - nowNotional;
         }
-
-        int256 margin = marginAccount.getNormalizedMargin(trader);
-        (uint256 notionalPosition, int256 unrealizedPnl) = getTotalNotionalPositionAndUnrealizedPnl(trader);
-        (uint256 currentMarketNotionalPosition,,,) = amms[idx].getNotionalPositionAndUnrealizedPnl(trader);
-        (int256 currentPositionSize,,) = amms[idx].positions(trader);
-
-        int256 notionalPositionSigned = currentMarketNotionalPosition.toInt256();
-        if (currentPositionSize < 0) {
-            notionalPositionSigned *= -1;
-        }
-
-        uint newCurrentMarketNotionalPosition = _abs(quoteAssetQuantitySigned + notionalPositionSigned).toUint256();
-        notionalPosition = notionalPosition - currentMarketNotionalPosition + newCurrentMarketNotionalPosition;
-
-        int256 totalFunding = getTotalFunding(trader);
-        // -ve fundingPayment means trader should receive funds
-        margin += unrealizedPnl - totalFunding - _calculateTradeFee(quoteAssetQuantity).toInt256();
-        notionalPosition += totalFunding >= 0 ? totalFunding.toUint256() : (-totalFunding).toUint256();
+        margin -= _calculateTradeFee(quoteAssetQuantity).toInt256();
         marginFraction = _getMarginFraction(margin, notionalPosition);
+        liquidationPrice = _getLiquidationPrice(notionalPosition, openNotional, margin, positionSize + baseAssetQuantity);
+    }
+
+    /**
+    * @dev At liquidation,
+    * (margin + pnl) / notionalPosition = maintenanceMargin (MM)
+    * => pnl = MM * notionalPosition - margin
+    *
+    * for long, pnl = liquidationPrice * size - openNotional
+    * => liquidationPrice = (pnl + openNotional) / size
+    *
+    * for short, pnl = openNotional - liquidationPrice * size
+    * => liquidationPrice = (openNotional - pnl) / size
+    */
+    function _getLiquidationPrice(uint256 notionalPosition, uint openNotional, int256 margin, int256 positionSize)
+        internal
+        view
+        returns(uint256 liquidationPrice)
+    {
+        if (positionSize == 0) {
+            return 0;
+        }
+
+        int256 pnlForLiquidation = maintenanceMargin * notionalPosition.toInt256() / 1e6 - margin;
+        int256 _liquidationPrice;
+        if (positionSize > 0) {
+            _liquidationPrice = (openNotional.toInt256() + pnlForLiquidation) * 1e18 / positionSize;
+        } else {
+            _liquidationPrice = (openNotional.toInt256() - pnlForLiquidation) * 1e18 / (-positionSize);
+        }
+        if (_liquidationPrice < 0) { // is this possible?
+            _liquidationPrice = 0;
+        }
+        return _liquidationPrice.toUint256();
     }
 
     // Internal View
@@ -292,27 +345,35 @@ contract ClearingHouse is VanillaGovernable, ERC2771ContextUpgradeable {
     }
 
     function _calcMarginFraction(address trader, bool includeFundingPayments) internal view returns(int256) {
-        int256 margin = marginAccount.getNormalizedMargin(trader);
-        (uint256 notionalPosition, int256 unrealizedPnl) = getTotalNotionalPositionAndUnrealizedPnl(trader);
-        margin += unrealizedPnl;
-        if (includeFundingPayments) {
-            // -ve fundingPayment means trader should receive funds
-            margin -= getTotalFunding(trader);
-        }
+        (uint256 notionalPosition, int256 margin) = _getNotionalPositionAndMargin(trader, includeFundingPayments);
         return _getMarginFraction(margin, notionalPosition);
     }
 
-    // Pure
-
-    function _abs(int x) private pure returns (int) {
-        return x >= 0 ? x : -x;
+    function _getNotionalPositionAndMargin(address trader, bool includeFundingPayments)
+        internal
+        view
+        returns(uint256 notionalPosition, int256 margin)
+    {
+        int256 unrealizedPnl;
+        (notionalPosition, unrealizedPnl) = getTotalNotionalPositionAndUnrealizedPnl(trader);
+        margin = marginAccount.getNormalizedMargin(trader);
+        margin += unrealizedPnl;
+        if (includeFundingPayments) {
+            margin -= getTotalFunding(trader); // -ve fundingPayment means trader should receive funds
+        }
     }
+
+    // Pure
 
     function _getMarginFraction(int256 accountValue, uint notionalPosition) private pure returns(int256) {
         if (notionalPosition == 0) {
             return type(int256).max;
         }
         return accountValue * PRECISION.toInt256() / notionalPosition.toInt256();
+    }
+
+    function _abs(int x) private pure returns (int) {
+        return x >= 0 ? x : -x;
     }
 
     // Governance
