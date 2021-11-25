@@ -37,6 +37,11 @@ contract AMM is Governable, Pausable {
         int256 size;
         uint256 openNotional;
         int256 lastUpdatedCumulativePremiumFraction;
+
+        // maker
+        uint vUSD;
+        uint vAsset;
+        uint dToken;
     }
     mapping(address => Position) public positions;
 
@@ -145,6 +150,33 @@ contract AMM is Governable, Pausable {
         emit FundingPaid(trader, latestCumulativePremiumFraction, position.size, fundingPayment);
     }
 
+    function addLiquidity(address trader, uint baseAssetQuantity, uint quoteAssetLimit)
+        external
+        whenNotPaused
+        onlyClearingHouse
+    {
+        uint quoteAsset;
+        uint bal1;
+        uint bal2 = vamm.balances(2);
+        if (bal2 == 0) {
+            quoteAsset = baseAssetQuantity * vamm.price_scale(1) / 1e18;
+            bal1 = quoteAsset * 1e8 / vamm.price_scale(0);
+        } else {
+            quoteAsset = baseAssetQuantity * vamm.balances(0) / bal2;
+            bal1 = baseAssetQuantity * vamm.balances(1) / bal2;
+        }
+        require(quoteAsset <= quoteAssetLimit, "amm.addLiquidity.slippage");
+
+        uint _dToken = vamm.add_liquidity([quoteAsset, bal1 /* to be added in same ratio as other coins */, baseAssetQuantity], 0);
+
+        Position storage position = positions[trader];
+        position.vUSD += quoteAsset;
+        position.vAsset += baseAssetQuantity;
+        position.dToken += _dToken;
+    }
+
+    function removeLiquidity(uint quoteAsset) external {}
+
     function _increasePosition(address trader, int256 baseAssetQuantity, uint quoteAssetLimit)
         internal
         returns(uint quoteAsset)
@@ -189,7 +221,7 @@ contract AMM is Governable, Pausable {
     {
         Position storage position = positions[trader];
 
-        (uint256 notionalPosition, int256 unrealizedPnl) = getNotionalPositionAndUnrealizedPnl(trader);
+        (uint256 notionalPosition, int256 unrealizedPnl,,) = getNotionalPositionAndUnrealizedPnl(trader);
         realizedPnl = unrealizedPnl * abs(baseAssetQuantity) / abs(position.size);
         int256 unrealizedPnlAfter = unrealizedPnl - realizedPnl;
 
@@ -461,20 +493,24 @@ contract AMM is Governable, Pausable {
     function getNotionalPositionAndUnrealizedPnl(address trader)
         public
         view
-        returns(uint256 notionalPosition, int256 unrealizedPnl)
+        returns(uint256 notionalPosition, int256 unrealizedPnl, int256 size, uint256 openNotional)
     {
         Position memory position = positions[trader];
-        if (position.size == 0) {
-            return (0, 0);
-        }
-        bool isLongPosition = position.size > 0 ? true : false;
-        // The following considers the spot price. Should we also look at TWAP price?
-        if (isLongPosition) {
-            notionalPosition = vamm.get_dy(2 /* sell base asset */, 0 /* get quote asset */, position.size.toUint256() /* exact input */) / 1e12;
-            unrealizedPnl = notionalPosition.toInt256() - position.openNotional.toInt256();
-        } else {
-            notionalPosition = vamm.get_dx(0 /* sell quote asset */, 2 /* purchase shorted asset */, (-position.size).toUint256() /* exact output */) / 1e12;
-            unrealizedPnl = position.openNotional.toInt256() - notionalPosition.toInt256();
+        int256 makerPosSize;
+        int256 makerOpenNotional;
+        (notionalPosition, makerPosSize, unrealizedPnl, makerOpenNotional) = vamm.get_notional(
+            position.dToken,
+            position.vUSD,
+            position.vAsset,
+            position.size,
+            position.openNotional
+        );
+        size = makerPosSize + position.size;
+        openNotional = makerOpenNotional.toUint256() + position.openNotional;
+        // All the liquidity that maker added counts as their notionalPosition
+        if (position.vUSD > 0) {
+            // @todo should we move accounting to 18 decimals? - seem to be dividing by 1e12 at too many places
+            notionalPosition += position.vUSD * 2 / 1e12;
         }
     }
 

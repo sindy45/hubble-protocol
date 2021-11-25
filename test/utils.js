@@ -9,17 +9,19 @@ const ZERO = BigNumber.from(0)
 
 const DEFAULT_TRADE_FEE = 0.0005 * 1e6 /* 0.05% */
 
-function log(position, notionalPosition, unrealizedPnl, marginFraction) {
+function log(position, notionalPosition, unrealizedPnl, marginFraction, size, openNotional) {
     console.log({
         size: position.size.toString(),
         openNotional: position.openNotional.toString(),
         notionalPosition: notionalPosition.toString(),
         unrealizedPnl: unrealizedPnl.toString(),
-        marginFraction: marginFraction.toString()
+        marginFraction: marginFraction.toString(),
+        totalSize: size.toString(),
+        totalOpenNotional: openNotional.toString()
     })
 }
 
-async function setupContracts(tradeFee = DEFAULT_TRADE_FEE) {
+async function setupContracts(tradeFee = DEFAULT_TRADE_FEE, options = { addLiquidity: true }) {
     governance = alice
 
     // Vyper
@@ -34,7 +36,6 @@ async function setupContracts(tradeFee = DEFAULT_TRADE_FEE) {
 
     moonMath = await MoonMath.deploy()
     views = await Views.deploy(moonMath.address)
-
     // vyper deployment complete
     ;([ MarginAccountHelper, Registry, ERC20Mintable, MinimalForwarder, TransparentUpgradeableProxy, ProxyAdmin ] = await Promise.all([
         ethers.getContractFactory('MarginAccountHelper'),
@@ -80,17 +81,17 @@ async function setupContracts(tradeFee = DEFAULT_TRADE_FEE) {
     await vusd.grantRole(await vusd.MINTER_ROLE(), clearingHouse.address)
 
     registry = await Registry.deploy(oracle.address, clearingHouse.address, insuranceFund.address, marginAccount.address, vusd.address)
+    await Promise.all([
+        marginAccount.syncDeps(registry.address, 5e4), // liquidationIncentive = 5% = .05 scaled 6 decimals
+        insuranceFund.syncDeps(registry.address)
+    ])
 
     ;({ amm, vamm } = await setupAmm(
         governance,
         [ registry.address, weth.address, 'ETH-Perp' ],
         1000, // initialRate,
-        1000 // initialLiquidity
+        options.addLiquidity ? 1000 : 0 // initialLiquidity
     ))
-    await Promise.all([
-        marginAccount.syncDeps(registry.address, 5e4), // liquidationIncentive = 5% = .05 scaled 6 decimals
-        insuranceFund.syncDeps(registry.address)
-    ])
     return {
         swap: vamm,
         amm,
@@ -129,7 +130,7 @@ async function setupUpgradeableProxy(contract, admin, initArgs, deployArgs) {
     return ethers.getContractAt(contract, proxy.address)
 }
 
-async function setupAmm(governance, args, initialRate, initialLiquidity, _pause = false) {
+async function setupAmm(governance, args, initialRate, initialLiquidity, _pause = false, index = 0) {
     const vamm = await Swap.deploy(
         governance, // owner
         moonMath.address, // math
@@ -148,14 +149,20 @@ async function setupAmm(governance, args, initialRate, initialLiquidity, _pause 
     }
     await vamm.setAMM(amm.address)
 
-    initialLiquidity = _1e18.mul(initialLiquidity)
-    await vamm.add_liquidity([
-        initialLiquidity.mul(initialRate), // USD
-        _1e6.mul(100).mul(25), // 25 btc - value not used
-        initialLiquidity
-    ], 0)
     await clearingHouse.whitelistAmm(amm.address)
+
+    if (initialLiquidity) {
+        maker = (await ethers.getSigners())[9]
+        await addMargin(maker, _1e6.mul(initialLiquidity * initialRate * 2))
+        await clearingHouse.connect(maker).addLiquidity(index, _1e18.mul(initialLiquidity), ethers.constants.MaxUint256)
+    }
     return { amm, vamm }
+}
+
+async function addMargin(trader, margin) {
+    await usdc.mint(trader.address, margin)
+    await usdc.connect(trader).approve(marginAccountHelper.address, margin)
+    await marginAccountHelper.connect(trader).addVUSDMarginWithReserve(margin)
 }
 
 async function filterEvent(tx, name) {
@@ -184,7 +191,7 @@ async function parseRawEvent(tx, emitter, name) {
 
 async function assertions(contracts, trader, vals, shouldLog) {
     const { amm, clearingHouse, marginAccount } = contracts
-    const [ position, { notionalPosition, unrealizedPnl }, marginFraction, margin ] = await Promise.all([
+    const [ position, { notionalPosition, unrealizedPnl, size, openNotional }, marginFraction, margin ] = await Promise.all([
         amm.positions(trader),
         amm.getNotionalPositionAndUnrealizedPnl(trader),
         clearingHouse.getMarginFraction(trader),
@@ -192,14 +199,14 @@ async function assertions(contracts, trader, vals, shouldLog) {
     ])
 
     if (shouldLog) {
-        log(position, notionalPosition, unrealizedPnl, marginFraction)
+        log(position, notionalPosition, unrealizedPnl, marginFraction, size, openNotional)
     }
 
     if (vals.size != null) {
-        expect(position.size).to.eq(vals.size)
+        expect(size).to.eq(vals.size)
     }
     if (vals.openNotional != null) {
-        expect(position.openNotional).to.eq(vals.openNotional)
+        expect(openNotional).to.eq(vals.openNotional)
     }
     if (vals.notionalPosition != null) {
         expect(notionalPosition).to.eq(vals.notionalPosition)
@@ -329,5 +336,6 @@ module.exports = {
     forkNetwork,
     setupAmm,
     signTransaction,
+    addMargin,
     parseRawEvent
 }

@@ -75,8 +75,9 @@ contract ClearingHouse is VanillaGovernable, ERC2771ContextUpgradeable {
     }
 
     function closePosition(uint idx, uint quoteAssetLimit) external {
-        (int256 size,,) = amms[idx].positions(_msgSender());
-        _openPosition(_msgSender(), idx, -size, quoteAssetLimit);
+        address trader = _msgSender();
+        (int256 size,,) = amms[idx].positions(trader);
+        _openPosition(trader, idx, -size, quoteAssetLimit);
     }
 
     function _openPosition(address trader, uint idx, int256 baseAssetQuantity, uint quoteAssetLimit) internal {
@@ -92,6 +93,12 @@ contract ClearingHouse is VanillaGovernable, ERC2771ContextUpgradeable {
             require(isAboveMaintenanceMargin(trader), "CH: Below Maintenance Margin");
         }
         emit PositionModified(trader, idx, baseAssetQuantity, quoteAsset);
+    }
+
+    function addLiquidity(uint idx, uint256 baseAssetQuantity, uint quoteAssetLimit) external {
+        address trader = _msgSender();
+        amms[idx].addLiquidity(trader, baseAssetQuantity, quoteAssetLimit);
+        require(isAboveMaintenanceMargin(trader), "CH: Below Maintenance Margin");
     }
 
     function updatePositions(address trader) public {
@@ -196,7 +203,7 @@ contract ClearingHouse is VanillaGovernable, ERC2771ContextUpgradeable {
         uint256 _notionalPosition;
         int256 _unrealizedPnl;
         for (uint i = 0; i < amms.length; i++) {
-            (_notionalPosition, _unrealizedPnl) = amms[i].getNotionalPositionAndUnrealizedPnl(trader);
+            (_notionalPosition, _unrealizedPnl,,) = amms[i].getNotionalPositionAndUnrealizedPnl(trader);
             notionalPosition += _notionalPosition;
             unrealizedPnl += _unrealizedPnl;
         }
@@ -222,7 +229,7 @@ contract ClearingHouse is VanillaGovernable, ERC2771ContextUpgradeable {
                 positions[i].unrealizedPnl = 0;
                 positions[i].avgOpen = 0;
             } else {
-                (,positions[i].unrealizedPnl) = amms[i].getNotionalPositionAndUnrealizedPnl(trader);
+                (,positions[i].unrealizedPnl,,) = amms[i].getNotionalPositionAndUnrealizedPnl(trader);
                 positions[i].avgOpen = positions[i].openNotional * 1e18 / _abs(positions[i].size).toUint256();
             }
         }
@@ -256,8 +263,8 @@ contract ClearingHouse is VanillaGovernable, ERC2771ContextUpgradeable {
 
         int256 margin = marginAccount.getNormalizedMargin(trader);
         (uint256 notionalPosition, int256 unrealizedPnl) = getTotalNotionalPositionAndUnrealizedPnl(trader);
-        (uint256 currentMarketNotionalPosition, ) = amms[idx].getNotionalPositionAndUnrealizedPnl(trader);
-        (int256 currentPositionSize, , ) = amms[idx].positions(trader);
+        (uint256 currentMarketNotionalPosition,,,) = amms[idx].getNotionalPositionAndUnrealizedPnl(trader);
+        (int256 currentPositionSize,,) = amms[idx].positions(trader);
 
         int256 notionalPositionSigned = currentMarketNotionalPosition.toInt256();
         if (currentPositionSize < 0) {

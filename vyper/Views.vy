@@ -35,21 +35,18 @@ math: address
 def __init__(math: address):
     self.math = math
 
-
 @external
 @view
-def get_dy(i: uint256, j: uint256, dx: uint256) -> uint256:
+def get_dy(i: uint256, j: uint256, dx: uint256, balances: uint256[N_COINS], D: uint256) -> uint256:
     assert i != j and i < N_COINS and j < N_COINS, "coin index out of range"
     assert dx > 0, "do not exchange 0 coins"
 
     precisions: uint256[N_COINS] = PRECISIONS
+    xp: uint256[N_COINS] = balances
 
     price_scale: uint256[N_COINS-1] = empty(uint256[N_COINS-1])
     for k in range(N_COINS-1):
         price_scale[k] = Curve(msg.sender).price_scale(k)
-    xp: uint256[N_COINS] = empty(uint256[N_COINS])
-    for k in range(N_COINS):
-        xp[k] = Curve(msg.sender).balances(k)
     xp[i] += dx
     xp[0] *= precisions[0]
     for k in range(N_COINS-1):
@@ -58,30 +55,27 @@ def get_dy(i: uint256, j: uint256, dx: uint256) -> uint256:
     A: uint256 = Curve(msg.sender).A()
     gamma: uint256 = Curve(msg.sender).gamma()
 
-    y: uint256 = Math(self.math).newton_y(A, gamma, xp, Curve(msg.sender).D(), j)
+    y: uint256 = Math(self.math).newton_y(A, gamma, xp, D, j)
     dy: uint256 = xp[j] - y - 1
     xp[j] = y
     if j > 0:
         dy = dy * PRECISION / price_scale[j-1]
     dy /= precisions[j]
     # dy -= Curve(msg.sender).fee_calc(xp) * dy / 10**10
-
     return dy
 
 @external
 @view
-def get_dx(i: uint256, j: uint256, dy: uint256) -> uint256:
+def get_dx(i: uint256, j: uint256, dy: uint256, balances: uint256[N_COINS], D: uint256) -> uint256:
     assert i != j and i < N_COINS and j < N_COINS, "coin index out of range"
     assert dy > 0, "do not exchange 0 coins"
 
     precisions: uint256[N_COINS] = PRECISIONS
+    xp: uint256[N_COINS] = balances
 
     price_scale: uint256[N_COINS-1] = empty(uint256[N_COINS-1])
     for k in range(N_COINS-1):
         price_scale[k] = Curve(msg.sender).price_scale(k)
-    xp: uint256[N_COINS] = empty(uint256[N_COINS])
-    for k in range(N_COINS):
-        xp[k] = Curve(msg.sender).balances(k)
     xp[j] -= dy
     xp[0] *= precisions[0]
     for k in range(N_COINS-1):
@@ -90,14 +84,13 @@ def get_dx(i: uint256, j: uint256, dy: uint256) -> uint256:
     A: uint256 = Curve(msg.sender).A()
     gamma: uint256 = Curve(msg.sender).gamma()
 
-    x: uint256 = Math(self.math).newton_y(A, gamma, xp, Curve(msg.sender).D(), i)
+    x: uint256 = Math(self.math).newton_y(A, gamma, xp, D, i)
     dx: uint256 = x - xp[i] + 1
     xp[i] = x
     if i > 0:
         dx = dx * PRECISION / price_scale[i-1]
     dx /= precisions[i]
     # dy -= Curve(msg.sender).fee_calc(xp) * dy / 10**10
-
     return dx
 
 @view

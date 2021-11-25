@@ -37,11 +37,12 @@ interface IAMM {
     function openPosition(address trader, int256 baseAssetQuantity, uint quoteAssetLimit)
         external
         returns (int realizedPnl, uint quoteAsset, bool isPositionIncreased);
+    function addLiquidity(address trader, uint baseAssetQuantity, uint quoteAssetLimit) external;
     function getUnrealizedPnL(address trade) external returns(int256);
     function getNotionalPositionAndUnrealizedPnl(address trader)
         external
         view
-        returns(uint256 notionalPosition, int256 unrealizedPnl);
+        returns(uint256 notionalPosition, int256 unrealizedPnl, int256 size, uint256 openNotional);
     function updatePosition(address trader) external returns(int256 fundingPayment);
     function liquidatePosition(address trader) external returns (int realizedPnl, uint quoteAsset);
     function settleFunding() external returns (int256, int256);
@@ -86,8 +87,12 @@ interface IVAMM {
         uint256 max_dx
     ) external returns (uint256 dx);
 
+    function get_notional(uint256 amount, uint256 vUSD, uint256 vAsset, int256 dx, uint256 openNotional) external view returns (uint256, int256, int256, int256);
     function last_prices(uint256 k) external view returns(uint256);
     function price_oracle(uint256 k) external view returns(uint256);
+    function price_scale(uint256 k) external view returns(uint256);
+    function add_liquidity(uint256[3] calldata amounts, uint256 min_mint_amount) external returns (uint256);
+    function get_maker_position(uint256 amount, uint256 vUSD, uint256 vAsset) external view returns (uint256, int256);
 }
 
 interface AggregatorV3Interface {
