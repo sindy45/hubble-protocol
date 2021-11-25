@@ -2,13 +2,14 @@
 
 pragma solidity 0.8.4;
 
+import { ERC2771ContextUpgradeable } from "@openzeppelin/contracts-upgradeable/metatx/ERC2771ContextUpgradeable.sol";
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
-import { Governable } from "./Governable.sol";
+import { VanillaGovernable } from "./Governable.sol";
 import { IAMM, IInsuranceFund, IMarginAccount } from "./Interfaces.sol";
 import { VUSD } from "./VUSD.sol";
 
-contract ClearingHouse is Governable {
+contract ClearingHouse is VanillaGovernable, ERC2771ContextUpgradeable {
     using SafeCast for uint256;
     using SafeCast for int256;
 
@@ -41,6 +42,7 @@ contract ClearingHouse is Governable {
     event MarketAdded(address indexed amm);
 
     function initialize(
+        address _trustedForwarder,
         address _governance,
         address _insuranceFund,
         address _marginAccount,
@@ -48,7 +50,8 @@ contract ClearingHouse is Governable {
         int256 _maintenanceMargin,
         uint _tradeFee,
         uint _liquidationPenalty
-    ) external initializer {
+    ) external {
+        __ERC2771Context_init(_trustedForwarder); // has the initializer modifier
         _setGovernace(_governance);
 
         insuranceFund = IInsuranceFund(_insuranceFund);
@@ -68,12 +71,13 @@ contract ClearingHouse is Governable {
     * @param quoteAssetLimit Rate at which the trade is executed in the AMM. Used to cap slippage.
     */
     function openPosition(uint idx, int256 baseAssetQuantity, uint quoteAssetLimit) external {
-        _openPosition(msg.sender, idx, baseAssetQuantity, quoteAssetLimit);
+        _openPosition(_msgSender(), idx, baseAssetQuantity, quoteAssetLimit);
     }
 
     function closePosition(uint idx, uint quoteAssetLimit) external {
-        (int256 size,,) = amms[idx].positions(msg.sender);
-        _openPosition(msg.sender, idx, -size, quoteAssetLimit);
+        address trader = _msgSender();
+        (int256 size,,) = amms[idx].positions(trader);
+        _openPosition(trader, idx, -size, quoteAssetLimit);
     }
 
     function _openPosition(address trader, uint idx, int256 baseAssetQuantity, uint quoteAssetLimit) internal {
@@ -89,6 +93,12 @@ contract ClearingHouse is Governable {
             require(isAboveMaintenanceMargin(trader), "CH: Below Maintenance Margin");
         }
         emit PositionModified(trader, idx, baseAssetQuantity, quoteAsset);
+    }
+
+    function addLiquidity(uint idx, uint256 baseAssetQuantity, uint quoteAssetLimit) external {
+        address trader = _msgSender();
+        amms[idx].addLiquidity(trader, baseAssetQuantity, quoteAssetLimit);
+        require(isAboveMaintenanceMargin(trader), "CH: Below Maintenance Margin");
     }
 
     function updatePositions(address trader) public {
@@ -142,7 +152,7 @@ contract ClearingHouse is Governable {
         if (_liquidationFee > 0) {
             uint _toInsurance = _liquidationFee / 2;
             vusd.mint(address(insuranceFund), _toInsurance);
-            vusd.mint(msg.sender, _liquidationFee - _toInsurance);
+            vusd.mint(_msgSender(), _liquidationFee - _toInsurance);
         }
     }
 
@@ -193,7 +203,7 @@ contract ClearingHouse is Governable {
         uint256 _notionalPosition;
         int256 _unrealizedPnl;
         for (uint i = 0; i < amms.length; i++) {
-            (_notionalPosition, _unrealizedPnl) = amms[i].getNotionalPositionAndUnrealizedPnl(trader);
+            (_notionalPosition, _unrealizedPnl,,) = amms[i].getNotionalPositionAndUnrealizedPnl(trader);
             notionalPosition += _notionalPosition;
             unrealizedPnl += _unrealizedPnl;
         }
@@ -219,7 +229,7 @@ contract ClearingHouse is Governable {
                 positions[i].unrealizedPnl = 0;
                 positions[i].avgOpen = 0;
             } else {
-                (,positions[i].unrealizedPnl) = amms[i].getNotionalPositionAndUnrealizedPnl(trader);
+                (,positions[i].unrealizedPnl,,) = amms[i].getNotionalPositionAndUnrealizedPnl(trader);
                 positions[i].avgOpen = positions[i].openNotional * 1e18 / _abs(positions[i].size).toUint256();
             }
         }
@@ -260,7 +270,7 @@ contract ClearingHouse is Governable {
             openNotional += quoteAssetQuantity;
             notionalPosition += quoteAssetQuantity;
         } else { // open reverse position
-            (uint256 nowNotional, int256 unrealizedPnl) = amms[idx].getNotionalPositionAndUnrealizedPnl(trader);
+            (uint256 nowNotional, int256 unrealizedPnl,,) = amms[idx].getNotionalPositionAndUnrealizedPnl(trader);
             if (_abs(positionSize) >= _abs(baseAssetQuantity)) { // position side remains same after the trade
                 if (baseAssetQuantity > 0) { // using a ternary operator here causes a CompilerError: Stack too deep
                     (openNotional,) = amms[idx].getOpenNotionalWhileReducingPosition(

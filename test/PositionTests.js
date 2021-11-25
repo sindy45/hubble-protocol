@@ -16,7 +16,7 @@ describe('Position Tests', async function() {
         ;([ alice ] = signers.map(s => s.address))
 
         contracts = await setupContracts(TRADE_FEE)
-        ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc } = contracts)
+        ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, swap } = contracts)
 
         // add margin
         margin = _1e6.mul(1000)
@@ -30,7 +30,6 @@ describe('Position Tests', async function() {
 
             const tx = await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* long exactly */, amount /* max_dx */)
             ;({ quoteAsset, fee } = await getTradeDetails(tx, TRADE_FEE))
-
             // this asserts that long was executed at a price <= amount
             expect(quoteAsset.lte(amount)).to.be.true
 
@@ -441,7 +440,9 @@ describe('Position Tests', async function() {
                 alice,
                 [ registry.address, avax.address, 'AVAX-Perp' ],
                 65, // initialRate => avax = $65
-                10000 // initialLiquidity = 10k avax
+                10000, // initialLiquidity = 10k avax
+                false,
+                1 // amm index
             )
             const markets = await clearingHouse.markets()
             expect(markets[0].amm).to.eq(amm.address)

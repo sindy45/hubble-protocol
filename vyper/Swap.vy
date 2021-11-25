@@ -24,8 +24,8 @@ interface Math:
 
 
 interface Views:
-    def get_dy(i: uint256, j: uint256, dx: uint256) -> uint256: view
-    def get_dx(i: uint256, j: uint256, dy: uint256) -> uint256: view
+    def get_dy(i: uint256, j: uint256, dx: uint256, balances: uint256[N_COINS], D: uint256) -> uint256: view
+    def get_dx(i: uint256, j: uint256, dy: uint256, balances: uint256[N_COINS], D: uint256) -> uint256: view
     def calc_token_amount(amounts: uint256[N_COINS], deposit: bool) -> uint256: view
 
 
@@ -776,18 +776,18 @@ def exchangeExactOut(i: uint256, j: uint256, dy: uint256, max_dx: uint256) -> ui
 @external
 @view
 def get_dy(i: uint256, j: uint256, dx: uint256) -> uint256:
-    return Views(self.views).get_dy(i, j, dx)
+    return Views(self.views).get_dy(i, j, dx, self.balances, self.D)
 
 @external
 @view
 def get_dx(i: uint256, j: uint256, dy: uint256) -> uint256:
-    return Views(self.views).get_dx(i, j, dy)
+    return Views(self.views).get_dx(i, j, dy, self.balances, self.D)
 
 @external
 @nonreentrant('lock')
-def add_liquidity(amounts: uint256[N_COINS], min_mint_amount: uint256):
+def add_liquidity(amounts: uint256[N_COINS], min_mint_amount: uint256) -> uint256:
     assert not self.is_killed  # dev: the pool is killed
-    assert msg.sender == self.owner  # dev: only owner
+    assert msg.sender == self.amm
 
     A_gamma: uint256[2] = self._A_gamma()
 
@@ -891,32 +891,101 @@ def add_liquidity(amounts: uint256[N_COINS], min_mint_amount: uint256):
     IAMM(self.amm).addReserveSnapshot(self.balances[0], self.balances[2])
     log AddLiquidity(msg.sender, amounts, d_token_fee, self.totalSupply)
 
+    return d_token
 
-# @external
-# @nonreentrant('lock')
-# def remove_liquidity(_amount: uint256, min_amounts: uint256[N_COINS]):
-#     """
-#     This withdrawal method is very safe, does no complex math
-#     """
-#     _coins: address[N_COINS] = coins
-#     total_supply: uint256 = self.totalSupply
-#     CurveToken(token).burnFrom(msg.sender, _amount)
-#     balances: uint256[N_COINS] = self.balances
-#     amount: uint256 = _amount - 1  # Make rounding errors favoring other LPs a tiny bit
+@external
+@nonreentrant('lock')
+def remove_liquidity(_amount: uint256, min_amounts: uint256[N_COINS]):
+    """
+    This withdrawal method is very safe, does no complex math
+    """
+    total_supply: uint256 = self.totalSupply
+    balances: uint256[N_COINS] = self.balances
+    amount: uint256 = _amount - 1  # Make rounding errors favoring other LPs a tiny bit
 
-#     for i in range(N_COINS):
-#         d_balance: uint256 = balances[i] * amount / total_supply
-#         assert d_balance >= min_amounts[i]
-#         self.balances[i] = balances[i] - d_balance
-#         balances[i] = d_balance  # now it's the amounts going out
-#         # assert might be needed for some tokens - removed one to save bytespace
-#         ERC20(_coins[i]).transfer(msg.sender, d_balance)
+    for i in range(N_COINS):
+        d_balance: uint256 = balances[i] * amount / total_supply
+        assert d_balance >= min_amounts[i]
+        self.balances[i] = balances[i] - d_balance
+        balances[i] = d_balance  # now it's the amounts going out
 
-#     D: uint256 = self.D
-#     self.D = D - D * amount / total_supply
+    D: uint256 = self.D
+    self.D = D - D * amount / total_supply
 
-#     log RemoveLiquidity(msg.sender, balances, total_supply - _amount)
+    log RemoveLiquidity(msg.sender, balances, total_supply - _amount)
 
+@internal
+@view
+def _get_maker_position(_amount: uint256, vUSD: uint256, vAsset: uint256) -> (int256, int256, uint256, uint256[N_COINS]):
+    total_supply: uint256 = self.totalSupply
+    balances: uint256[N_COINS] = self.balances
+
+    position: int256 = 0
+    openNotional: int256 = 0
+    D: uint256 = self.D
+
+    if _amount > 0:
+        # the following leads to makers taking a slightly bigger position, hence commented out from original code
+        # amount: uint256 = _amount - 1  # Make rounding errors favoring other LPs a tiny bit
+        amount: uint256 = _amount
+        d_balances: uint256[N_COINS] = empty(uint256[N_COINS])
+        for x in range(N_COINS):
+            d_balances[x] = balances[x] * amount / total_supply
+            balances[x] -= d_balances[x]
+        D = D - D * amount / total_supply
+
+        position = convert(d_balances[N_COINS-1], int256) - convert(vAsset, int256)
+        if position > 0:
+            openNotional = convert(vUSD, int256) - convert(d_balances[0], int256)
+        elif position < 0:
+            openNotional = convert(d_balances[0], int256) - convert(vUSD, int256)
+        openNotional /= convert(1e12, int256)
+    return position, openNotional, D, balances
+
+@external
+@view
+def get_maker_position(_amount: uint256, vUSD: uint256, vAsset: uint256) -> (int256, int256):
+    makerPosSize: int256 = 0
+    openNotional: int256 = 0
+    D: uint256 = 0
+    balances: uint256[N_COINS] = empty(uint256[N_COINS])
+
+    makerPosSize, openNotional, D, balances = self._get_maker_position(_amount, vUSD, vAsset)
+    return makerPosSize, openNotional
+
+@external
+@view
+def get_notional(_amount: uint256, vUSD: uint256, vAsset: uint256, dx: int256, _openNotional: uint256) -> (uint256, int256, int256, int256):
+    makerPosSize: int256 = 0
+    makerOpenNotional: int256 = 0
+    D: uint256 = 0
+    balances: uint256[N_COINS] = empty(uint256[N_COINS])
+
+    # rug the maker liquidity, if any
+    makerPosSize, makerOpenNotional, D, balances = self._get_maker_position(_amount, vUSD, vAsset)
+
+    # aggregate rest of the position
+    position: int256 = makerPosSize + dx
+    openNotional: int256 = makerOpenNotional + convert(_openNotional, int256)
+
+    notionalPosition: uint256 = 0
+    unrealizedPnl: int256 = 0
+
+    if D > 10**17 - 1:
+        if position > 0:
+            notionalPosition = Views(self.views).get_dy(2, 0, convert(position, uint256), balances, D) / convert(1e12, uint256)
+            unrealizedPnl = convert(notionalPosition, int256) - openNotional
+        elif position < 0:
+            _pos: uint256 = convert(-position, uint256)
+            if _pos > balances[N_COINS-1]: # vamm doesn't have enough to sell _pos quantity of base asset
+                # @atul to think more deeply about this
+                notionalPosition = 0
+                unrealizedPnl = 0
+            else:
+                notionalPosition = Views(self.views).get_dx(0, 2, _pos, balances, D) / convert(1e12, uint256)
+                unrealizedPnl =  openNotional - convert(notionalPosition, int256)
+    # if position == 0, already intialized to 0
+    return notionalPosition, makerPosSize, unrealizedPnl, makerOpenNotional
 
 # @view
 # @external
