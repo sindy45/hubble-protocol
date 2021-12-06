@@ -137,7 +137,7 @@ async function setupAmm(governance, args, initialRate, initialLiquidity, _pause 
         views.address, // views
         54000, // A
         '3500000000000000', // gamma
-        0, 0, 0, 0, // mid_fee, out_fee, allowed_extra_profit, fee_gamma
+        11000000, 0, 0, 0, // mid_fee = 0.11%, out_fee, allowed_extra_profit, fee_gamma
         '490000000000000', // adjustment_step
         0, // admin_fee
         600, // ma_half_time

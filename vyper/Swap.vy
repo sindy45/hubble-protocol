@@ -24,8 +24,8 @@ interface Math:
 
 
 interface Views:
-    def get_dy(i: uint256, j: uint256, dx: uint256, balances: uint256[N_COINS], D: uint256) -> uint256: view
-    def get_dx(i: uint256, j: uint256, dy: uint256, balances: uint256[N_COINS], D: uint256) -> uint256: view
+    def get_dy(i: uint256, j: uint256, dx: uint256, balances: uint256[N_COINS], D: uint256) -> (uint256, uint256): view
+    def get_dx(i: uint256, j: uint256, dy: uint256, balances: uint256[N_COINS], D: uint256) -> (uint256, uint256): view
     def calc_token_amount(amounts: uint256[N_COINS], deposit: bool) -> uint256: view
 
 
@@ -43,6 +43,7 @@ event TokenExchange:
     tokens_sold: uint256
     bought_id: uint256
     tokens_bought: uint256
+    trade_fee: uint256
 
 event AddLiquidity:
     provider: indexed(address)
@@ -361,8 +362,9 @@ def gamma() -> uint256:
 @internal
 @view
 def _fee(xp: uint256[N_COINS]) -> uint256:
-    f: uint256 = Math(self.math).reduction_coefficient(xp, self.fee_gamma)
-    return (self.mid_fee * f + self.out_fee * (10**18 - f)) / 10**18
+    # f: uint256 = Math(self.math).reduction_coefficient(xp, self.fee_gamma)
+    # return (self.mid_fee * f + self.out_fee * (10**18 - f)) / 10**18
+    return self.mid_fee
 
 
 @external
@@ -574,6 +576,7 @@ def exchange(i: uint256, j: uint256, dx: uint256, min_dy: uint256) -> uint256:
     ix: uint256 = j
     p: uint256 = 0
     dy: uint256 = 0
+    trade_fee: uint256 = 0
 
     if True:  # scope to reduce size of memory when making internal calls later
         _coins: address[N_COINS] = coins
@@ -628,7 +631,8 @@ def exchange(i: uint256, j: uint256, dx: uint256, min_dy: uint256) -> uint256:
             dy = dy * PRECISION / price_scale[j-1]
         dy /= prec_j
 
-        # dy -= self._fee(xp) * dy / 10**10
+        trade_fee = self._fee(xp) * dy / 10**10
+        dy -= trade_fee
         assert dy >= min_dy, "Slippage"
         y -= dy
 
@@ -663,7 +667,7 @@ def exchange(i: uint256, j: uint256, dx: uint256, min_dy: uint256) -> uint256:
     self.tweak_price(A_gamma, xp, ix, p, 0)
     IAMM(self.amm).addReserveSnapshot(self.balances[0], self.balances[2])
 
-    log TokenExchange(msg.sender, i, dx, j, dy)
+    log TokenExchange(msg.sender, i, dx, j, dy, trade_fee)
     return dy
 
 # @payable
@@ -681,6 +685,7 @@ def exchangeExactOut(i: uint256, j: uint256, dy: uint256, max_dx: uint256) -> ui
     ix: uint256 = j
     p: uint256 = 0
     dx: uint256 = 0
+    trade_fee: uint256 = 0
 
     if True:  # scope to reduce size of memory when making internal calls later
         _coins: address[N_COINS] = coins
@@ -735,7 +740,8 @@ def exchangeExactOut(i: uint256, j: uint256, dy: uint256, max_dx: uint256) -> ui
             dx = dx * PRECISION / price_scale[i-1]
         dx /= prec_i
 
-        # dy -= self._fee(xp) * dy / 10**10
+        trade_fee = self._fee(xp) * dx / 10**10
+        dx += trade_fee
         assert dx <= max_dx, "Slippage"
         x += dx
 
@@ -770,18 +776,50 @@ def exchangeExactOut(i: uint256, j: uint256, dy: uint256, max_dx: uint256) -> ui
     self.tweak_price(A_gamma, xp, ix, p, 0)
     IAMM(self.amm).addReserveSnapshot(self.balances[0], self.balances[2])
 
-    log TokenExchange(msg.sender, i, dx, j, dy)
+    log TokenExchange(msg.sender, i, dx, j, dy, trade_fee)
     return dx
 
 @external
 @view
 def get_dy(i: uint256, j: uint256, dx: uint256) -> uint256:
-    return Views(self.views).get_dy(i, j, dx, self.balances, self.D)
+    return Views(self.views).get_dy(i, j, dx, self.balances, self.D)[0]
 
 @external
 @view
 def get_dx(i: uint256, j: uint256, dy: uint256) -> uint256:
-    return Views(self.views).get_dx(i, j, dy, self.balances, self.D)
+    return Views(self.views).get_dx(i, j, dy, self.balances, self.D)[0]
+
+@external
+@view
+def get_dy_fee(i: uint256, j: uint256, dx: uint256) -> uint256:
+    return Views(self.views).get_dy(i, j, dx, self.balances, self.D)[1]
+
+@external
+@view
+def get_dx_fee(i: uint256, j: uint256, dy: uint256) -> uint256:
+    return Views(self.views).get_dx(i, j, dy, self.balances, self.D)[1]
+
+@view
+@internal
+def _calc_token_fee(amounts: uint256[N_COINS], xp: uint256[N_COINS]) -> uint256:
+    # fee = sum(amounts_i - avg(amounts)) * fee' / sum(amounts)
+    fee: uint256 = self._fee(xp) * N_COINS / (4 * (N_COINS-1))
+    S: uint256 = 0
+    for _x in amounts:
+        S += _x
+    avg: uint256 = S / N_COINS
+    Sdiff: uint256 = 0
+    for _x in amounts:
+        if _x > avg:
+            Sdiff += _x - avg
+        else:
+            Sdiff += avg - _x
+    return fee * Sdiff / S + NOISE_FEE
+
+@external
+@view
+def calc_token_fee(amounts: uint256[N_COINS], xp: uint256[N_COINS]) -> uint256:
+    return self._calc_token_fee(amounts, xp)
 
 @external
 @nonreentrant('lock')
@@ -849,8 +887,8 @@ def add_liquidity(amounts: uint256[N_COINS], min_mint_amount: uint256) -> uint25
     assert d_token > 0  # dev: nothing minted
 
     if old_D > 0:
-        # d_token_fee = self._calc_token_fee(amountsp, xp) * d_token / 10**10 + 1
-        # d_token -= d_token_fee
+        d_token_fee = self._calc_token_fee(amountsp, xp) * d_token / 10**10 + 1
+        d_token -= d_token_fee
         token_supply += d_token
         self.totalSupply = token_supply
         # CurveToken(token).mint(msg.sender, d_token)
@@ -937,7 +975,7 @@ def _get_maker_position(_amount: uint256, vUSD: uint256, vAsset: uint256) -> (in
         position = convert(d_balances[N_COINS-1], int256) - convert(vAsset, int256)
         if position > 0:
             openNotional = convert(vUSD, int256) - convert(d_balances[0], int256)
-        elif position < 0:
+        elif position <= 0: # =0 when no position open but positive openNotional due to fee accumulation
             openNotional = convert(d_balances[0], int256) - convert(vUSD, int256)
         openNotional /= convert(1e12, int256)
     return position, openNotional, D, balances
@@ -960,31 +998,37 @@ def get_notional(_amount: uint256, vUSD: uint256, vAsset: uint256, dx: int256, _
     makerOpenNotional: int256 = 0
     D: uint256 = 0
     balances: uint256[N_COINS] = empty(uint256[N_COINS])
+    notionalPosition: uint256 = 0
+    unrealizedPnl: int256 = 0
 
     # rug the maker liquidity, if any
     makerPosSize, makerOpenNotional, D, balances = self._get_maker_position(_amount, vUSD, vAsset)
+    if makerOpenNotional < 0:
+        if makerPosSize > 0: # profit while removing liquidity
+            unrealizedPnl = -makerOpenNotional
+        elif makerPosSize < 0: # loss while removing liquidity
+            unrealizedPnl = makerOpenNotional
+        makerOpenNotional = 0
+    elif makerOpenNotional > 0 and makerPosSize == 0: # when all positions are balanced but profit due to fee accumulation
+        unrealizedPnl = makerOpenNotional
+        makerOpenNotional = 0
 
     # aggregate rest of the position
     position: int256 = makerPosSize + dx
     openNotional: int256 = makerOpenNotional + convert(_openNotional, int256)
 
-    notionalPosition: uint256 = 0
-    unrealizedPnl: int256 = 0
-
     if D > 10**17 - 1:
         if position > 0:
-            notionalPosition = Views(self.views).get_dy(2, 0, convert(position, uint256), balances, D) / convert(1e12, uint256)
-            unrealizedPnl = convert(notionalPosition, int256) - openNotional
+            notionalPosition = Views(self.views).get_dy(2, 0, convert(position, uint256), balances, D)[0] / convert(1e12, uint256)
+            unrealizedPnl += convert(notionalPosition, int256) - openNotional
         elif position < 0:
             _pos: uint256 = convert(-position, uint256)
             if _pos > balances[N_COINS-1]: # vamm doesn't have enough to sell _pos quantity of base asset
                 # @atul to think more deeply about this
                 notionalPosition = 0
-                unrealizedPnl = 0
             else:
-                notionalPosition = Views(self.views).get_dx(0, 2, _pos, balances, D) / convert(1e12, uint256)
-                unrealizedPnl =  openNotional - convert(notionalPosition, int256)
-    # if position == 0, already intialized to 0
+                notionalPosition = Views(self.views).get_dx(0, 2, _pos, balances, D)[0] / convert(1e12, uint256)
+                unrealizedPnl +=  openNotional - convert(notionalPosition, int256)
     return notionalPosition, makerPosSize, unrealizedPnl, makerOpenNotional
 
 # @view

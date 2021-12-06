@@ -2,11 +2,12 @@ const { expect } = require('chai');
 const utils = require('./utils')
 
 const {
-    constants: { _1e6, _1e18, ZERO },
+    constants: { _1e6, _1e12, _1e18, ZERO },
     getTradeDetails,
     setupContracts,
     addMargin,
-    assertions
+    assertions,
+    parseRawEvent
 } = utils
 
 const DEFAULT_TRADE_FEE = 0.0005 * 1e6 /* 0.05% */
@@ -42,6 +43,7 @@ describe('Maker Tests', async function() {
                 openNotional: ZERO,
                 unrealizedPnl: ZERO
             })
+            initialVusdBalance = await swap.balances(0)
         })
 
         it('maker takes a short counter-position', async () => {
@@ -54,19 +56,21 @@ describe('Maker Tests', async function() {
             // after fee is enabled openNotional for short should increase (i.e. higher pnl)
             await assertions(contracts, maker.address, {
                 size: baseAssetQuantity.mul(-1),
+                openNotional: quoteAsset,
                 // @todo These are hardcoded values for now. Might change after "insufficient liquidity" fix
                 notionalPosition: _1e6.mul(2e6),
-                openNotional: quoteAsset,
                 unrealizedPnl: ZERO
             })
 
             await clearingHouse.closePosition(0, 0)
 
+            feeAccumulated = (await swap.balances(0)).sub(initialVusdBalance)
+            expect(feeAccumulated).gt(ZERO)
             await assertions(contracts, maker.address, {
                 size: ZERO,
                 notionalPosition: _1e6.mul(2e6),
                 openNotional: ZERO,
-                unrealizedPnl: ZERO // should fail when fee is enabled, +ve pnl, but position size will be 0??
+                unrealizedPnl: feeAccumulated.div(_1e12) // positive pnl because of vamm fee
             })
         })
 
@@ -79,18 +83,20 @@ describe('Maker Tests', async function() {
 
             await assertions(contracts, maker.address, {
                 size: baseAssetQuantity.mul(-1),
+                openNotional: quoteAsset.sub(feeAccumulated.div(_1e12)), // openNotional decreases, hence higher pnl
                 notionalPosition: _1e6.mul(2e6),
-                openNotional: quoteAsset,
                 unrealizedPnl: ZERO
             })
 
             await clearingHouse.closePosition(0, ethers.constants.MaxUint256)
 
+            feeAccumulated = (await swap.balances(0)).sub(initialVusdBalance)
+            expect(feeAccumulated).gt(ZERO)
             await assertions(contracts, maker.address, {
                 size: ZERO,
                 notionalPosition: _1e6.mul(2e6),
                 openNotional: ZERO,
-                unrealizedPnl: ZERO
+                unrealizedPnl: feeAccumulated.div(_1e12)
             })
         })
     })
@@ -104,7 +110,7 @@ describe('Maker Tests', async function() {
             ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, swap } = contracts)
 
             // add margin
-            margin = _1e6.mul(1000)
+            margin = _1e6.mul(10000)
             await addMargin(signers[0], margin)
         })
 
@@ -116,102 +122,96 @@ describe('Maker Tests', async function() {
             await addMargin(maker1, _1e6.mul(2e5))
             await clearingHouse.connect(maker1).addLiquidity(0, initialLiquidity, ethers.constants.MaxUint256)
 
-            await addMargin(maker2, _1e6.mul(2e5))
-            await clearingHouse.connect(maker2).addLiquidity(0, initialLiquidity, ethers.constants.MaxUint256)
+            await addMargin(maker2, _1e6.mul(2.1e5))
+            const tx = await clearingHouse.connect(maker2).addLiquidity(0, initialLiquidity, ethers.constants.MaxUint256)
 
-            await assertions(contracts, maker1.address, {
-                size: ZERO,
-                notionalPosition: _1e6.mul(2e6),
-                openNotional: ZERO,
-                unrealizedPnl: ZERO
-            })
+            const addLiquidityEvent = (await parseRawEvent(tx, swap, 'AddLiquidity')).args
+            const totalSupply = addLiquidityEvent.token_supply
+            const tokenFee = addLiquidityEvent.fee
+            initialPositionSize = initialLiquidity.mul(tokenFee).div(totalSupply) // 0.005 due to small fee paid during addLiquidity
 
-            await assertions(contracts, maker2.address, {
-                size: ZERO,
-                notionalPosition: _1e6.mul(2e6),
-                openNotional: ZERO,
-                unrealizedPnl: ZERO
-            })
+            let { notionalPosition, unrealizedPnl, size, openNotional } = await amm.getNotionalPositionAndUnrealizedPnl(maker1.address)
+            expect(size).to.eq(initialPositionSize)
+            expect(openNotional).to.eq(ZERO)
+            expect(notionalPosition).gt(_1e6.mul(2e6))
+            expect(unrealizedPnl).gt(ZERO) // part of fee goes to maker1
+
+            ;({ notionalPosition, unrealizedPnl, size, openNotional } = await amm.getNotionalPositionAndUnrealizedPnl(maker2.address))
+            expect(size).to.eq(initialPositionSize.mul(-1).sub(1)) // round off error
+            expect(openNotional).to.eq(ZERO)
+            expect(notionalPosition).gt(_1e6.mul(2e6))
+            expect(unrealizedPnl).lt(ZERO) // fee paid
         })
 
         it('makers take a short counter-position', async () => {
-            const baseAssetQuantity = _1e18.mul(5)
-            amount = _1e6.mul(5025) // ~5x leverage
+            const baseAssetQuantity = _1e18.mul(50) // increased to check significant effect of vamm fee
+            amount = _1e6.mul(55000)
 
             const tx = await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* long exactly */, amount /* max_dx */)
             let { quoteAsset } = await getTradeDetails(tx, DEFAULT_TRADE_FEE)
 
-            await assertions(contracts, maker1.address, {
-                size: baseAssetQuantity.div(-2),
-                openNotional: quoteAsset.div(2)
-            })
-            let { notionalPosition, unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(maker1.address)
+            let { notionalPosition, unrealizedPnl, size, openNotional } = await amm.getNotionalPositionAndUnrealizedPnl(maker1.address)
             expect(notionalPosition).gt(_1e6.mul(2e6))
+            expect(size).lt(ZERO)
+            expect(size).gt(baseAssetQuantity.div(-2))
+            expect(openNotional).gt(quoteAsset.div(2)) // higher openNotional, increase pnl
             expect(unrealizedPnl).lt(ZERO)
 
-            await assertions(contracts, maker2.address, {
-                size: baseAssetQuantity.div(-2),
-                openNotional: quoteAsset.div(2)
-            })
-            ;({ notionalPosition, unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(maker2.address))
+            ;({ notionalPosition, unrealizedPnl, size, openNotional } = await amm.getNotionalPositionAndUnrealizedPnl(maker2.address))
             expect(notionalPosition).gt(_1e6.mul(2e6))
+            expect(size).lt(baseAssetQuantity.div(-2))
+            expect(openNotional).lt(quoteAsset.div(2)) // higher openNotional, increase pnl
             expect(unrealizedPnl).lt(ZERO)
 
             await clearingHouse.closePosition(0, 0)
 
-            await assertions(contracts, maker1.address, {
-                size: ZERO,
-                notionalPosition: _1e6.mul(2e6),
-                openNotional: ZERO,
-                unrealizedPnl: ZERO
-            })
+            ;({ notionalPosition, unrealizedPnl, size, openNotional } = await amm.getNotionalPositionAndUnrealizedPnl(maker1.address))
+            expect(notionalPosition).gt(_1e6.mul(2e6))
+            expect(size).to.eq(initialPositionSize)
+            expect(openNotional).to.eq(ZERO)
+            expect(unrealizedPnl).gt(ZERO) // +112.6
 
-            await assertions(contracts, maker2.address, {
-                size: ZERO,
-                notionalPosition: _1e6.mul(2e6),
-                openNotional: ZERO,
-                unrealizedPnl: ZERO
-            })
+            ;({ notionalPosition, unrealizedPnl, size, openNotional } = await amm.getNotionalPositionAndUnrealizedPnl(maker2.address))
+            expect(notionalPosition).gt(_1e6.mul(2e6))
+            expect(size).to.eq(initialPositionSize.mul(-1).sub(1))
+            expect(openNotional).gt(ZERO) // 97.6 positive openNotional for short position because of fee accumulation, increase pnl
+            expect(unrealizedPnl).gt(ZERO) // 92.6
         })
 
         it('makers take a long counter-position', async () => {
-            const baseAssetQuantity = _1e18.mul(-5)
-            amount = _1e6.mul(4975)
+            const baseAssetQuantity = _1e18.mul(-50)
+            amount = _1e6.mul(49000)
 
             const tx = await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* short exactly */, amount /* min_dy */)
             let { quoteAsset } = await getTradeDetails(tx, DEFAULT_TRADE_FEE)
 
-            await assertions(contracts, maker1.address, {
-                size: baseAssetQuantity.div(-2),
-                openNotional: quoteAsset.div(2)
-            })
-            let { notionalPosition, unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(maker1.address)
+            let { notionalPosition, unrealizedPnl, size, openNotional } = await amm.getNotionalPositionAndUnrealizedPnl(maker1.address)
             expect(notionalPosition).gt(_1e6.mul(2e6))
+            expect(size).gt(baseAssetQuantity.div(-2))
+            expect(openNotional).gt(ZERO)
+            expect(openNotional).lt(quoteAsset.div(2)) // lower openNotional becaue of vamm fee, increase pnl
             expect(unrealizedPnl).lt(ZERO)
 
-            await assertions(contracts, maker2.address, {
-                size: baseAssetQuantity.div(-2),
-                openNotional: quoteAsset.div(2)
-            })
-            ;({ notionalPosition, unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(maker2.address))
+            ;({ notionalPosition, unrealizedPnl, size, openNotional } = await amm.getNotionalPositionAndUnrealizedPnl(maker2.address))
             expect(notionalPosition).gt(_1e6.mul(2e6))
+            expect(size).gt(ZERO)
+            expect(size).lt(baseAssetQuantity.div(-2))
+            expect(openNotional).lt(quoteAsset.div(2)) // lower openNotional becaue of vamm fee, increase pnl
             expect(unrealizedPnl).lt(ZERO)
 
             await clearingHouse.closePosition(0, ethers.constants.MaxUint256)
 
-            await assertions(contracts, maker1.address, {
-                size: ZERO,
-                notionalPosition: _1e6.mul(2e6),
-                openNotional: ZERO,
-                unrealizedPnl: ZERO
-            })
+            ;({ notionalPosition, unrealizedPnl, size, openNotional } = await amm.getNotionalPositionAndUnrealizedPnl(maker1.address))
+            expect(notionalPosition).gt(_1e6.mul(2e6))
+            expect(size).to.eq(initialPositionSize)
+            expect(openNotional).to.eq(ZERO)
+            expect(unrealizedPnl).gt(ZERO) // 214.37
 
-            await assertions(contracts, maker2.address, {
-                size: ZERO,
-                notionalPosition: _1e6.mul(2e6),
-                openNotional: ZERO,
-                unrealizedPnl: ZERO
-            })
+            ;({ notionalPosition, unrealizedPnl, size, openNotional } = await amm.getNotionalPositionAndUnrealizedPnl(maker2.address))
+            expect(notionalPosition).gt(_1e6.mul(2e6))
+            expect(size).to.eq(initialPositionSize.mul(-1).sub(1))
+            expect(openNotional).gt(ZERO) // 199.37 positive openNotional for short position because of fee accumulation, increase pnl
+            expect(unrealizedPnl).gt(ZERO) // 194.37
         })
     })
 
@@ -224,7 +224,7 @@ describe('Maker Tests', async function() {
             ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, swap } = contracts)
 
             // add margin
-            margin = _1e6.mul(1000)
+            margin = _1e6.mul(10000)
             await addMargin(signers[0], margin)
         })
 
@@ -237,103 +237,98 @@ describe('Maker Tests', async function() {
             await clearingHouse.connect(maker1).addLiquidity(0, initialLiquidity, ethers.constants.MaxUint256)
 
             // maker2 adds $1m liquidity, adding $100k margin
-            await addMargin(maker2, _1e6.mul(1e5))
-            await clearingHouse.connect(maker2).addLiquidity(0, initialLiquidity.div(2), ethers.constants.MaxUint256)
+            await addMargin(maker2, _1e6.mul(1.1e5))
+            const tx = await clearingHouse.connect(maker2).addLiquidity(0, initialLiquidity.div(2), ethers.constants.MaxUint256)
 
-            await assertions(contracts, maker1.address, {
-                size: ZERO,
-                notionalPosition: _1e6.mul(2e6),
-                openNotional: ZERO,
-                unrealizedPnl: ZERO
-            })
+            const addLiquidityEvent = (await parseRawEvent(tx, swap, 'AddLiquidity')).args
+            const totalSupply = addLiquidityEvent.token_supply
+            const tokenFee = addLiquidityEvent.fee
+            initialPositionSize = initialLiquidity.mul(tokenFee).div(totalSupply)
 
-            await assertions(contracts, maker2.address, {
-                size: ZERO,
-                notionalPosition: _1e6.mul(1e6),
-                openNotional: ZERO,
-                unrealizedPnl: ZERO
-            })
-        })
-
-        it('makers take a long counter-position', async () => {
-            const baseAssetQuantity = _1e18.mul(-5)
-            amount = _1e6.mul(4975)
-
-            const tx = await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* short exactly */, amount /* min_dy */)
-            let { quoteAsset } = await getTradeDetails(tx, DEFAULT_TRADE_FEE)
-
-            await assertions(contracts, maker1.address, {
-                size: baseAssetQuantity.mul(-2).div(3),
-                openNotional: quoteAsset.mul(2).div(3)
-            })
-            let { notionalPosition, unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(maker1.address)
+            let { notionalPosition, unrealizedPnl, size, openNotional } = await amm.getNotionalPositionAndUnrealizedPnl(maker1.address)
+            expect(size).to.eq(initialPositionSize)
+            expect(openNotional).to.eq(ZERO)
             expect(notionalPosition).gt(_1e6.mul(2e6))
-            expect(unrealizedPnl).lt(ZERO)
+            expect(unrealizedPnl).gt(ZERO) // part of fee goes to maker1
 
-            await assertions(contracts, maker2.address, {
-                size: baseAssetQuantity.div(-3),
-                openNotional: quoteAsset.div(3)
-            })
-            ;({ notionalPosition, unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(maker2.address))
+            ;({ notionalPosition, unrealizedPnl, size, openNotional } = await amm.getNotionalPositionAndUnrealizedPnl(maker2.address))
+            expect(size).to.eq(initialPositionSize.mul(-1).sub(1)) // round off error
+            expect(openNotional).to.eq(ZERO)
             expect(notionalPosition).gt(_1e6.mul(1e6))
-            expect(unrealizedPnl).lt(ZERO)
-
-            await clearingHouse.closePosition(0, ethers.constants.MaxUint256)
-
-            await assertions(contracts, maker1.address, {
-                size: ZERO,
-                notionalPosition: _1e6.mul(2e6),
-                openNotional: ZERO,
-                unrealizedPnl: ZERO
-            })
-
-            await assertions(contracts, maker2.address, {
-                size: ZERO,
-                notionalPosition: _1e6.mul(1e6),
-                openNotional: ZERO,
-                unrealizedPnl: ZERO
-            })
+            expect(unrealizedPnl).lt(ZERO) // fee paid
         })
 
         it('makers take a short counter-position', async () => {
-            const baseAssetQuantity = _1e18.mul(5)
-            amount = _1e6.mul(5025) // ~5x leverage
+            const baseAssetQuantity = _1e18.mul(50)
+            amount = _1e6.mul(55000)
 
             const tx = await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* long exactly */, amount /* max_dx */)
             let { quoteAsset } = await getTradeDetails(tx, DEFAULT_TRADE_FEE)
 
-            await assertions(contracts, maker1.address, {
-                size: baseAssetQuantity.mul(-2).div(3).sub(1), // one due to roud-off error during division
-                openNotional: quoteAsset.mul(2).div(3).add(1) // one due to roud-off error during division
-            })
-            let { notionalPosition, unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(maker1.address)
+            let { notionalPosition, unrealizedPnl, size, openNotional } = await amm.getNotionalPositionAndUnrealizedPnl(maker1.address)
             expect(notionalPosition).gt(_1e6.mul(2e6))
+            expect(size).lt(ZERO)
+            expect(size).gt(baseAssetQuantity.mul(-2).div(3))
+            expect(openNotional).gt(quoteAsset.mul(2).div(3)) // higher openNotional, increase pnl
             expect(unrealizedPnl).lt(ZERO)
 
-            await assertions(contracts, maker2.address, {
-                size: baseAssetQuantity.div(-3).sub(1), // one due to roud-off error during division
-                openNotional: quoteAsset.div(3)
-            })
-            ;({ notionalPosition, unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(maker2.address))
+            ;({ notionalPosition, unrealizedPnl, size, openNotional } = await amm.getNotionalPositionAndUnrealizedPnl(maker2.address))
             expect(notionalPosition).gt(_1e6.mul(1e6))
+            expect(size).lt(baseAssetQuantity.div(-3))
+            expect(openNotional).lt(quoteAsset.div(3)) // higher openNotional, increase pnl
             expect(unrealizedPnl).lt(ZERO)
 
             await clearingHouse.closePosition(0, 0)
 
-            await assertions(contracts, maker1.address, {
-                size: ZERO,
-                notionalPosition: _1e6.mul(2e6),
-                openNotional: ZERO,
-                unrealizedPnl: ZERO
-            })
+            ;({ notionalPosition, unrealizedPnl, size, openNotional } = await amm.getNotionalPositionAndUnrealizedPnl(maker1.address))
+            expect(notionalPosition).gt(_1e6.mul(2e6))
+            expect(size).to.eq(initialPositionSize)
+            expect(openNotional).to.eq(ZERO)
+            expect(unrealizedPnl).gt(ZERO)
 
-            await assertions(contracts, maker2.address, {
-                size: ZERO,
-                notionalPosition: _1e6.mul(1e6),
-                openNotional: ZERO,
-                unrealizedPnl: ZERO
-            })
+            ;({ notionalPosition, unrealizedPnl, size, openNotional } = await amm.getNotionalPositionAndUnrealizedPnl(maker2.address))
+            expect(notionalPosition).gt(_1e6.mul(1e6))
+            expect(size).to.eq(initialPositionSize.mul(-1).sub(1))
+            expect(openNotional).gt(ZERO)
+            expect(unrealizedPnl).gt(ZERO)
         })
+
+        it('makers take a long counter-position', async () => {
+            const baseAssetQuantity = _1e18.mul(-50)
+            amount = _1e6.mul(49000)
+
+            const tx = await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* short exactly */, amount /* min_dy */)
+            let { quoteAsset } = await getTradeDetails(tx, DEFAULT_TRADE_FEE)
+
+            let { notionalPosition, unrealizedPnl, size, openNotional } = await amm.getNotionalPositionAndUnrealizedPnl(maker1.address)
+            expect(notionalPosition).gt(_1e6.mul(2e6))
+            expect(size).gt(baseAssetQuantity.mul(-2).div(3))
+            expect(openNotional).gt(ZERO)
+            expect(openNotional).lt(quoteAsset.mul(2).div(3)) // lower openNotional becaue of vamm fee, increase pnl
+            expect(unrealizedPnl).lt(ZERO)
+
+            ;({ notionalPosition, unrealizedPnl, size, openNotional } = await amm.getNotionalPositionAndUnrealizedPnl(maker2.address))
+            expect(notionalPosition).gt(_1e6.mul(1e6))
+            expect(size).gt(ZERO)
+            expect(size).lt(baseAssetQuantity.div(-3))
+            expect(openNotional).lt(quoteAsset.div(3)) // lower openNotional becaue of vamm fee, increase pnl
+            expect(unrealizedPnl).lt(ZERO)
+
+            await clearingHouse.closePosition(0, ethers.constants.MaxUint256)
+
+            ;({ notionalPosition, unrealizedPnl, size, openNotional } = await amm.getNotionalPositionAndUnrealizedPnl(maker1.address))
+            expect(notionalPosition).gt(_1e6.mul(2e6))
+            expect(size).to.eq(initialPositionSize)
+            expect(openNotional).to.eq(ZERO)
+            expect(unrealizedPnl).gt(ZERO)
+
+            ;({ notionalPosition, unrealizedPnl, size, openNotional } = await amm.getNotionalPositionAndUnrealizedPnl(maker2.address))
+            expect(notionalPosition).gt(_1e6.mul(1e6))
+            expect(size).to.eq(initialPositionSize.mul(-1).sub(1))
+            expect(openNotional).gt(ZERO) // positive openNotional for short position because of fee accumulation, increase pnl
+            expect(unrealizedPnl).gt(ZERO)
+        })
+
     })
 
     describe('Maker Liquidation', async function() {

@@ -38,11 +38,13 @@ describe('Clearing House Meta Txs', async function() {
         const quoteAsset = positionModifiedEvent.args.quoteAsset
         const fee = quoteAsset.mul(tradeFee).div(_1e6)
 
+        const { notionalPosition, unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(alice)
+        expect(notionalPosition).gt(ZERO)
+        expect(notionalPosition).lt(quoteAsset)
+        expect(unrealizedPnl).lt(ZERO)
         await assertions(contracts, alice, {
             size: baseAssetQuantity,
             openNotional: quoteAsset,
-            notionalPosition: quoteAsset,
-            unrealizedPnl: 0,
             margin: margin.sub(fee)
         })
         expect(await amm.longOpenInterestNotional()).to.eq(baseAssetQuantity)
@@ -52,7 +54,7 @@ describe('Clearing House Meta Txs', async function() {
         const [ pos ] = await clearingHouse.userPositions(alice)
         expect(pos.size).to.eq(baseAssetQuantity)
         expect(pos.openNotional).to.eq(quoteAsset)
-        expect(pos.unrealizedPnl).to.eq(0)
+        expect(pos.unrealizedPnl).to.lt(ZERO)
         expect(pos.avgOpen).to.eq(quoteAsset.mul(_1e18).div(baseAssetQuantity))
     })
 
@@ -72,11 +74,12 @@ describe('Clearing House Meta Txs', async function() {
         // this asserts that short was executed at a price >= amount
         expect(quoteAsset.gte(amount)).to.be.true
 
+        const { notionalPosition, unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(alice)
+        expect(notionalPosition).gt(quoteAsset)
+        expect(unrealizedPnl).lt(ZERO)
         await assertions(contracts, alice, {
             size: baseAssetQuantity,
             openNotional: quoteAsset,
-            notionalPosition: quoteAsset,
-            unrealizedPnl: 0,
             margin: margin.sub(fee)
         })
         expect(await amm.longOpenInterestNotional()).to.eq(ZERO)
@@ -86,7 +89,7 @@ describe('Clearing House Meta Txs', async function() {
         const [ pos ] = await clearingHouse.userPositions(alice)
         expect(pos.size).to.eq(baseAssetQuantity)
         expect(pos.openNotional).to.eq(quoteAsset)
-        expect(pos.unrealizedPnl).to.eq(0)
+        expect(pos.unrealizedPnl).to.lt(ZERO)
         expect(pos.avgOpen).to.eq(quoteAsset.mul(_1e18).div(baseAssetQuantity.mul(-1)))
     })
 

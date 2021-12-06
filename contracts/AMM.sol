@@ -219,7 +219,7 @@ contract AMM is Governable, Pausable {
         internal
         returns (int realizedPnl, uint256 quoteAsset)
     {
-        (uint256 notionalPosition, int256 unrealizedPnl,,) = getNotionalPositionAndUnrealizedPnl(trader);
+        (, int256 unrealizedPnl,,) = getNotionalPositionAndUnrealizedPnl(trader);
 
         Position storage position = positions[trader]; // storage because there are updates at the end
         bool isLongPosition = position.size > 0 ? true : false;
@@ -231,7 +231,8 @@ contract AMM is Governable, Pausable {
             shortOpenInterestNotional -= baseAssetQuantity.toUint256();
             quoteAsset = _long(baseAssetQuantity, quoteAssetLimit);
         }
-        (position.openNotional, realizedPnl) = getOpenNotionalWhileReducingPosition(position.size, notionalPosition, unrealizedPnl, baseAssetQuantity, quoteAsset);
+        uint256 notionalPosition = getNotionalPosition(position.size + baseAssetQuantity);
+        (position.openNotional, realizedPnl) = getOpenNotionalWhileReducingPosition(position.size, notionalPosition, unrealizedPnl, baseAssetQuantity);
         position.size += baseAssetQuantity;
     }
 
@@ -239,8 +240,7 @@ contract AMM is Governable, Pausable {
         int256 positionSize,
         uint256 notionalPosition,
         int256 unrealizedPnl,
-        int256 baseAssetQuantity,
-        uint quoteAsset
+        int256 baseAssetQuantity
     )
         public
         pure
@@ -271,7 +271,7 @@ contract AMM is Governable, Pausable {
             * Since notionalPosition includes the PnL component, notionalPosition >= unrealizedPnl and size >= Q
             * Hence remainOpenNotional >= 0
             */
-            remainOpenNotional = (notionalPosition.toInt256() - quoteAsset.toInt256() - unrealizedPnlAfter).toUint256();  // will assert that remainOpenNotional >= 0
+            remainOpenNotional = (notionalPosition.toInt256() - unrealizedPnlAfter).toUint256();  // will assert that remainOpenNotional >= 0
         } else {
             /**
             * Let baseAssetQuantity = Q, position.size = size, by definition of _reducePosition, abs(size) >= abs(Q)
@@ -284,7 +284,7 @@ contract AMM is Governable, Pausable {
             * => notionalPosition + unrealizedPnl >= 0
             * Hence remainOpenNotional >= 0
             */
-            remainOpenNotional = (notionalPosition.toInt256() - quoteAsset.toInt256() + unrealizedPnlAfter).toUint256();  // will assert that remainOpenNotional >= 0
+            remainOpenNotional = (notionalPosition.toInt256() + unrealizedPnlAfter).toUint256();  // will assert that remainOpenNotional >= 0
         }
     }
 
@@ -560,6 +560,15 @@ contract AMM is Governable, Pausable {
         // rounding-down while shorting is not a problem
         // because lower the min_dy, more permissible it is
         return vamm.get_dy(2, 0, (-baseAssetQuantity).toUint256()) / 1e12;
+    }
+
+    function getNotionalPosition(int256 baseAssetQuantity) public view returns(uint256 quoteAssetQuantity) {
+        if (baseAssetQuantity > 0) {
+            return vamm.get_dy(2, 0, baseAssetQuantity.toUint256()) / 1e12;
+        } else if (baseAssetQuantity < 0) {
+            return vamm.get_dx(0, 2, (-baseAssetQuantity).toUint256()) / 1e12;
+        }
+        return 0;
     }
 
     function lastPrice() public view returns(uint256) {

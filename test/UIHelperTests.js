@@ -34,7 +34,7 @@ describe('UI Helpers', async function() {
         let tx = await clearingHouse.settleFunding() // alice receives funding payment 31.47
         let fundingTimestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp;
         const twap1 = await getTwapPrice(amm, 3600, fundingTimestamp)
-        expect((await getLiquidationPrice(alice, clearingHouse, marginAccount, 0)).div(_1e6)).to.eq('1101')
+        expect((await getLiquidationPrice(alice, clearingHouse, marginAccount, 0)).div(_1e6)).to.eq('1098')
 
         await clearingHouse.openPosition(0, baseAssetQuantity.mul(-3), _1e6.mul(15500)) // alice has net long position now
         await clearingHouse.connect(bob).openPosition(0, baseAssetQuantity.div(-2), ethers.constants.MaxUint256)
@@ -43,7 +43,7 @@ describe('UI Helpers', async function() {
         tx = await clearingHouse.settleFunding() // alice pays funding payment 22.92
         fundingTimestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp;
         const twap2 = await getTwapPrice(amm, 3600, fundingTimestamp)
-        expect((await getLiquidationPrice(alice, clearingHouse, marginAccount, 0)).div(_1e6)).to.eq('695')
+        expect((await getLiquidationPrice(alice, clearingHouse, marginAccount, 0)).div(_1e6)).to.eq('703')
 
         const fundingInfo = await getFundingPaymentInfo(amm, alice)
         const tradingInfoAlice = await getTradingInfo(clearingHouse, alice)

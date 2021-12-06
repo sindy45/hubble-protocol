@@ -59,8 +59,6 @@ def _geometric_mean(unsorted_x: uint256[N_COINS], sort: bool = True) -> uint256:
         else:
             diff = D_prev - D
         if diff <= 1 or diff * 10**18 < D:
-            D /= 10**12
-            D *= 10**12
             return D
     raise "Did not converge"
 

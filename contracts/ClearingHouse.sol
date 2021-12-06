@@ -275,20 +275,18 @@ contract ClearingHouse is VanillaGovernable, ERC2771ContextUpgradeable {
                 if (baseAssetQuantity > 0) { // using a ternary operator here causes a CompilerError: Stack too deep
                     (openNotional,) = amms[idx].getOpenNotionalWhileReducingPosition(
                         positionSize,
-                        nowNotional,
-                        unrealizedPnl,
-                        baseAssetQuantity,
                         // since we are using get_dx() for calculating notional position whereas getQuote (which is get_dx()+1) for calculating quoteAssetQuantity.
                         // This makes remainingOpenNotional = -1 when a trader opens a short position and tries to open a long position of the same size afterwards and hence throws an error when converted using toUint().
-                        quoteAssetQuantity - 1
+                        nowNotional - (quoteAssetQuantity - 1), // notionalPosition after the trade
+                        unrealizedPnl,
+                        baseAssetQuantity
                     );
                 } else {
                     (openNotional,) = amms[idx].getOpenNotionalWhileReducingPosition(
                         positionSize,
-                        nowNotional,
+                        nowNotional - quoteAssetQuantity,
                         unrealizedPnl,
-                        baseAssetQuantity,
-                        quoteAssetQuantity
+                        baseAssetQuantity
                     );
                 }
             } else { // position side changes after the trade

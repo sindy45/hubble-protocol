@@ -33,11 +33,14 @@ describe('Position Tests', async function() {
             // this asserts that long was executed at a price <= amount
             expect(quoteAsset.lte(amount)).to.be.true
 
+            const { notionalPosition, unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(alice)
+            expect(notionalPosition).gt(ZERO)
+            expect(notionalPosition).lt(quoteAsset) // less vUSD will be received when closing a long position
+            expect(unrealizedPnl).lt(ZERO)
+
             await assertions(contracts, alice, {
                 size: baseAssetQuantity,
                 openNotional: quoteAsset,
-                notionalPosition: quoteAsset,
-                unrealizedPnl: 0,
                 margin: margin.sub(fee)
             })
             expect(await amm.longOpenInterestNotional()).to.eq(baseAssetQuantity)
@@ -47,7 +50,7 @@ describe('Position Tests', async function() {
             const [ pos ] = await clearingHouse.userPositions(alice)
             expect(pos.size).to.eq(baseAssetQuantity)
             expect(pos.openNotional).to.eq(quoteAsset)
-            expect(pos.unrealizedPnl).to.eq(0)
+            expect(pos.unrealizedPnl).lt(ZERO)
             expect(pos.avgOpen).to.eq(quoteAsset.mul(_1e18).div(baseAssetQuantity))
         })
 
@@ -62,7 +65,7 @@ describe('Position Tests', async function() {
                 marginFraction : expectedMarginFraction,
                 liquidationPrice
             } = await clearingHouse.expectedMarginFraction(alice, 0, baseAssetQuantity)
-            expect(liquidationPrice).to.eq('978767988')
+            expect(liquidationPrice).to.eq('980973753')
 
             const quote = await amm.getQuote(baseAssetQuantity)
             tx = await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* long exactly */, quote /* max_dx */)
@@ -74,13 +77,15 @@ describe('Position Tests', async function() {
 
             // this asserts that long was executed at a price <= amount
             expect(quoteAsset.lte(amount.mul(2))).to.be.true
-            expect(await clearingHouse.getMarginFraction(alice)).to.eq(expectedMarginFraction)
+            expect((await clearingHouse.getMarginFraction(alice)).div(1e4)).to.eq(expectedMarginFraction.div(1e4)) // slightly different because of vamm fee
 
+            const { notionalPosition, unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(alice)
+            expect(notionalPosition).gt(ZERO)
+            expect(notionalPosition).lt(quoteAsset)
+            expect(unrealizedPnl).lt(ZERO)
             await assertions(contracts, alice, {
                 size: baseAssetQuantity.mul(2),
                 openNotional: quoteAsset,
-                notionalPosition: quoteAsset.add(1), // due to rounding off error
-                unrealizedPnl: 1, // due to rounding off error
                 margin: margin.sub(fee)
             })
             expect(await amm.longOpenInterestNotional()).to.eq(baseAssetQuantity.mul(2))
@@ -97,11 +102,13 @@ describe('Position Tests', async function() {
             // this asserts that short was executed at a price >= amount
             expect(quoteAsset.gte(amount)).to.be.true
 
+            const { notionalPosition, unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(alice)
+            expect(notionalPosition).gt(quoteAsset) // more vUSD required to close a short position
+            expect(unrealizedPnl).lt(ZERO)
+
             await assertions(contracts, alice, {
                 size: baseAssetQuantity,
                 openNotional: quoteAsset,
-                notionalPosition: quoteAsset,
-                unrealizedPnl: 0,
                 margin: margin.sub(fee)
             })
             expect(await amm.longOpenInterestNotional()).to.eq(ZERO)
@@ -111,7 +118,7 @@ describe('Position Tests', async function() {
             const [ pos ] = await clearingHouse.userPositions(alice)
             expect(pos.size).to.eq(baseAssetQuantity)
             expect(pos.openNotional).to.eq(quoteAsset)
-            expect(pos.unrealizedPnl).to.eq(0)
+            expect(pos.unrealizedPnl).lt(ZERO)
             expect(pos.avgOpen).to.eq(quoteAsset.mul(_1e18).div(baseAssetQuantity.mul(-1)))
         })
 
@@ -127,7 +134,7 @@ describe('Position Tests', async function() {
                 quoteAssetQuantity,
                 liquidationPrice
             } = await clearingHouse.expectedMarginFraction(alice, 0, baseAssetQuantity)
-            expect(liquidationPrice).to.eq('1021832356')
+            expect(liquidationPrice).to.eq('1019637444')
 
             const quote = await amm.getQuote(baseAssetQuantity)
             tx = await clearingHouse.openPosition(0, baseAssetQuantity, quote)
@@ -139,13 +146,15 @@ describe('Position Tests', async function() {
             // this asserts that short was executed at a price >= amount
             expect(quoteAsset.gte(amount.mul(2))).to.be.true
             expect(trade2.quoteAsset).to.eq(quoteAssetQuantity)
-            expect(await clearingHouse.getMarginFraction(alice)).to.eq(expectedMarginFraction)
+            expect((await clearingHouse.getMarginFraction(alice)).div(1e4)).to.eq(expectedMarginFraction.div(1e4)) // slightly different because of vamm fee
+
+            const { notionalPosition, unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(alice)
+            expect(notionalPosition).gt(quoteAsset)
+            expect(unrealizedPnl).lt(ZERO)
 
             await assertions(contracts, alice, {
                 size: baseAssetQuantity.mul(2),
                 openNotional: quoteAsset,
-                notionalPosition: quoteAsset,
-                unrealizedPnl: 0,
                 margin: margin.sub(fee)
             })
             expect(await amm.longOpenInterestNotional()).to.eq(ZERO)
@@ -216,48 +225,51 @@ describe('Position Tests', async function() {
             expect(await amm.longOpenInterestNotional()).to.eq(_1e18.mul(5))
             expect(await amm.shortOpenInterestNotional()).to.eq(ZERO)
 
+            const { unrealizedPnl: unrealizedPnl1 } = await amm.getNotionalPositionAndUnrealizedPnl(alice)
+            expect(unrealizedPnl1).lt(ZERO)
             // Short
             baseAssetQuantity = _1e18.mul(-7)
 
-            var {
+            let {
                 marginFraction : expectedMarginFraction,
                 quoteAssetQuantity
             } = await clearingHouse.expectedMarginFraction(alice, 0, baseAssetQuantity)
 
-            // tx = await clearingHouse.openPosition(0, baseAssetQuantity, 0)
             tx = await clearingHouse.openPosition(0, baseAssetQuantity, await amm.getQuote(baseAssetQuantity))
 
             const trade2 = await getTradeDetails(tx, TRADE_FEE)
             expect(await amm.longOpenInterestNotional()).to.eq(ZERO)
             expect(await amm.shortOpenInterestNotional()).to.eq(_1e18.mul(2))
-            expect(await clearingHouse.getMarginFraction(alice)).to.eq(expectedMarginFraction)
-            expect(trade2.quoteAsset).to.eq(quoteAssetQuantity)
+            expect((await clearingHouse.getMarginFraction(alice)).div(1e4)).to.eq(expectedMarginFraction.div(1e4).sub(1)) // slightly different because of vamm fee
+            expect(trade2.quoteAsset).gt(quoteAssetQuantity) // slightly higher because less fee is paid while closing initial position
 
             let fee = trade1.fee.add(trade2.fee)
             await assertions(contracts, alice, {
                 size: _1e18.mul(-2), // 5 - 7
-                unrealizedPnl: ZERO,
-                margin: margin.sub(fee)
+                margin: margin.sub(fee).add(unrealizedPnl1) // now realized
             })
+
+            const { unrealizedPnl: unrealizedPnl2 } = await amm.getNotionalPositionAndUnrealizedPnl(alice)
+            expect(unrealizedPnl2).lt(ZERO)
 
             // Long
             baseAssetQuantity = _1e18.mul(10)
             ;({ marginFraction : expectedMarginFraction } = await clearingHouse.expectedMarginFraction(alice, 0, baseAssetQuantity))
 
             const quote = await amm.getQuote(baseAssetQuantity)
-            tx = await clearingHouse.openPosition(0 /* amm index */, _1e18.mul(10) /* long exactly */, quote)
-            // tx = await clearingHouse.openPosition(0 /* amm index */, _1e18.mul(10) /* long exactly */, _1e6.mul(10100))
+            tx = await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* long exactly */, quote.add(7000)) // slightly higher quote value because of vamm fee while closing short position and then opening a long position of 8
             const trade3 = await getTradeDetails(tx, TRADE_FEE)
             fee = fee.add(trade3.fee)
 
             await assertions(contracts, alice, {
                 size: _1e18.mul(8), // 5 - 7 + 10
-                unrealizedPnl: 0,
-                margin: margin.sub(fee)
+                margin: margin.sub(fee).add(unrealizedPnl1).add(unrealizedPnl2)
             })
+            const { unrealizedPnl: unrealizedPnl3 } = await amm.getNotionalPositionAndUnrealizedPnl(alice)
+            expect(unrealizedPnl3).lt(ZERO)
             expect(await amm.longOpenInterestNotional()).to.eq(_1e18.mul(8))
             expect(await amm.shortOpenInterestNotional()).to.eq(ZERO)
-            expect(await clearingHouse.getMarginFraction(alice)).to.eq(expectedMarginFraction)
+            expect((await clearingHouse.getMarginFraction(alice)).div(1e4)).to.eq(expectedMarginFraction.div(1e4).sub(1)) // slightly different because of vamm fee
         })
 
         it('short + bigger long + bigger short', async () => {
@@ -266,6 +278,8 @@ describe('Position Tests', async function() {
             const trade1 = await getTradeDetails(tx, TRADE_FEE)
             expect(await amm.longOpenInterestNotional()).to.eq(ZERO)
             expect(await amm.shortOpenInterestNotional()).to.eq(_1e18.mul(5))
+            const { unrealizedPnl: unrealizedPnl1 } = await amm.getNotionalPositionAndUnrealizedPnl(alice)
+            expect(unrealizedPnl1).lt(ZERO)
 
             // Long
             tx = await clearingHouse.openPosition(0 /* amm index */, _1e18.mul(7) /* exact base asset */, _1e6.mul(7100))
@@ -277,9 +291,10 @@ describe('Position Tests', async function() {
 
             await assertions(contracts, alice, {
                 size: _1e18.mul(2), // -5 + 7
-                unrealizedPnl: 0,
-                margin: margin.sub(fee)
+                margin: margin.sub(fee).add(unrealizedPnl1) // pnl realized
             })
+            const { unrealizedPnl: unrealizedPnl2 } = await amm.getNotionalPositionAndUnrealizedPnl(alice)
+            expect(unrealizedPnl2).lt(ZERO)
 
             // Short
             tx = await clearingHouse.openPosition(0 /* amm index */, _1e18.mul(-10) /* long exactly */, 0)
@@ -288,9 +303,10 @@ describe('Position Tests', async function() {
 
             await assertions(contracts, alice, {
                 size: _1e18.mul(-8), // -5 + 7 - 10
-                unrealizedPnl: 0,
-                margin: margin.sub(fee)
+                margin: margin.sub(fee).add(unrealizedPnl1).add(unrealizedPnl2)
             })
+            const { unrealizedPnl: unrealizedPnl3 } = await amm.getNotionalPositionAndUnrealizedPnl(alice)
+            expect(unrealizedPnl3).lt(ZERO)
             expect(await amm.longOpenInterestNotional()).to.eq(ZERO)
             expect(await amm.shortOpenInterestNotional()).to.eq(_1e18.mul(8))
         })
@@ -299,6 +315,72 @@ describe('Position Tests', async function() {
             await expect(clearingHouse.openPosition(0, 0, 0)).to.be.revertedWith('CH: baseAssetQuantity == 0')
             expect(await amm.longOpenInterestNotional()).to.eq(ZERO)
             expect(await amm.shortOpenInterestNotional()).to.eq(ZERO)
+        })
+
+        it('long + smaller short', async () => {
+            const longBaseAssetQuantity = _1e18.mul(5)
+
+            let quote = await amm.getQuote(longBaseAssetQuantity)
+            let tx = await clearingHouse.openPosition(0 /* amm index */, longBaseAssetQuantity /* long exactly */, quote /* max_dx */)
+            let { unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(alice)
+            let trade = await getTradeDetails(tx, TRADE_FEE)
+            let fee = trade.fee
+
+            const shortBaseAssetQuantity = _1e18.mul(-1)
+
+            quote = await amm.getQuote(shortBaseAssetQuantity)
+            tx = await clearingHouse.openPosition(0 /* amm index */, shortBaseAssetQuantity, quote /* min_dy */)
+            trade = await getTradeDetails(tx, TRADE_FEE)
+            fee = fee.add(trade.fee)
+
+            const swapEvents = await amm.queryFilter('Swap')
+            const realizedPnl = unrealizedPnl.mul(shortBaseAssetQuantity.abs()).div(longBaseAssetQuantity)
+            unrealizedPnl = unrealizedPnl.sub(realizedPnl)
+            const notionalPosition = await amm.getNotionalPosition(_1e18.mul(4))
+
+            await assertions(contracts, alice, {
+                size: longBaseAssetQuantity.add(shortBaseAssetQuantity),
+                openNotional: notionalPosition.sub(unrealizedPnl),
+                unrealizedPnl,
+                margin: margin.sub(fee).add(realizedPnl)
+            })
+            expect(await amm.longOpenInterestNotional()).to.eq(longBaseAssetQuantity.add(shortBaseAssetQuantity))
+            expect(await amm.shortOpenInterestNotional()).to.eq(ZERO)
+            expect(swapEvents[0].args.openInterestNotional).to.eq(longBaseAssetQuantity.abs())
+            expect(swapEvents[1].args.openInterestNotional).to.eq(longBaseAssetQuantity.add(shortBaseAssetQuantity))
+        })
+
+        it('short + smaller long', async () => {
+            const shortBaseAssetQuantity = _1e18.mul(-5)
+
+            let quote = await amm.getQuote(shortBaseAssetQuantity)
+            let tx = await clearingHouse.openPosition(0, shortBaseAssetQuantity, quote)
+            let { unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(alice)
+            let trade = await getTradeDetails(tx, TRADE_FEE)
+            let fee = trade.fee
+
+            const longBaseAssetQuantity = _1e18.mul(1)
+
+            quote = await amm.getQuote(longBaseAssetQuantity)
+            tx = await clearingHouse.openPosition(0 /* amm index */, longBaseAssetQuantity, quote /* min_dy */)
+            trade = await getTradeDetails(tx, TRADE_FEE)
+            fee = fee.add(trade.fee)
+
+            const swapEvents = await amm.queryFilter('Swap')
+            const realizedPnl = unrealizedPnl.mul(longBaseAssetQuantity).div(shortBaseAssetQuantity.abs())
+            unrealizedPnl = unrealizedPnl.sub(realizedPnl)
+            const notionalPosition = await amm.getNotionalPosition(_1e18.mul(-4))
+
+            await assertions(contracts, alice, {
+                size: longBaseAssetQuantity.add(shortBaseAssetQuantity),
+                openNotional: notionalPosition.add(unrealizedPnl),
+                unrealizedPnl,
+                margin: margin.sub(fee).add(realizedPnl)
+            })
+            expect(await amm.longOpenInterestNotional()).to.eq(ZERO)
+            expect(await amm.shortOpenInterestNotional()).to.eq(longBaseAssetQuantity.add(shortBaseAssetQuantity).abs())
+            expect(swapEvents[0].args.openInterestNotional).to.eq(shortBaseAssetQuantity.abs())
+            expect(swapEvents[1].args.openInterestNotional).to.eq(longBaseAssetQuantity.add(shortBaseAssetQuantity).abs())
         })
     })
 
@@ -465,11 +547,13 @@ describe('Position Tests', async function() {
             const tx = await clearingHouse.openPosition(1 /* amm index */, baseAssetQuantity, quote /* max_dx */)
             ;({ quoteAsset, fee } = await getTradeDetails(tx, TRADE_FEE))
 
+            const { notionalPosition, unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(alice)
+            expect(notionalPosition).gt(ZERO)
+            expect(notionalPosition).lt(quoteAsset)
+            expect(unrealizedPnl).lt(ZERO)
             await assertions(contracts, alice, {
                 size: baseAssetQuantity,
                 openNotional: quoteAsset,
-                notionalPosition: quoteAsset,
-                unrealizedPnl: 0,
                 margin: margin.sub(fee)
             })
             expect(await amm.longOpenInterestNotional()).to.eq(baseAssetQuantity)
@@ -479,7 +563,7 @@ describe('Position Tests', async function() {
             const [ _, pos ] = await clearingHouse.userPositions(alice)
             expect(pos.size).to.eq(baseAssetQuantity)
             expect(pos.openNotional).to.eq(quoteAsset)
-            expect(pos.unrealizedPnl).to.eq(0)
+            expect(pos.unrealizedPnl).to.lt(ZERO)
             expect(pos.avgOpen).to.eq(quoteAsset.mul(_1e18).div(baseAssetQuantity))
         })
     })

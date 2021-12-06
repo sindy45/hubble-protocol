@@ -37,7 +37,7 @@ def __init__(math: address):
 
 @external
 @view
-def get_dy(i: uint256, j: uint256, dx: uint256, balances: uint256[N_COINS], D: uint256) -> uint256:
+def get_dy(i: uint256, j: uint256, dx: uint256, balances: uint256[N_COINS], D: uint256) -> (uint256, uint256):
     assert i != j and i < N_COINS and j < N_COINS, "coin index out of range"
     assert dx > 0, "do not exchange 0 coins"
 
@@ -61,12 +61,13 @@ def get_dy(i: uint256, j: uint256, dx: uint256, balances: uint256[N_COINS], D: u
     if j > 0:
         dy = dy * PRECISION / price_scale[j-1]
     dy /= precisions[j]
-    # dy -= Curve(msg.sender).fee_calc(xp) * dy / 10**10
-    return dy
+    fee: uint256 = Curve(msg.sender).fee_calc(xp) * dy / 10**10
+    dy -= fee
+    return dy, fee
 
 @external
 @view
-def get_dx(i: uint256, j: uint256, dy: uint256, balances: uint256[N_COINS], D: uint256) -> uint256:
+def get_dx(i: uint256, j: uint256, dy: uint256, balances: uint256[N_COINS], D: uint256) -> (uint256, uint256):
     assert i != j and i < N_COINS and j < N_COINS, "coin index out of range"
     assert dy > 0, "do not exchange 0 coins"
 
@@ -90,8 +91,9 @@ def get_dx(i: uint256, j: uint256, dy: uint256, balances: uint256[N_COINS], D: u
     if i > 0:
         dx = dx * PRECISION / price_scale[i-1]
     dx /= precisions[i]
-    # dy -= Curve(msg.sender).fee_calc(xp) * dy / 10**10
-    return dx
+    fee: uint256 = Curve(msg.sender).fee_calc(xp) * dx / 10**10
+    dx += fee
+    return dx, fee
 
 @view
 @external
