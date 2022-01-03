@@ -30,6 +30,7 @@ module.exports = {
             chainId: 1337
         },
         hardhat: {
+            allowUnlimitedContractSize: true,
             chainId: 1337
         },
         fuji: {

@@ -96,12 +96,37 @@ contract ClearingHouse is VanillaGovernable, ERC2771ContextUpgradeable {
     }
 
     function addLiquidity(uint idx, uint256 baseAssetQuantity, uint quoteAssetLimit) external {
-        address trader = _msgSender();
-        amms[idx].addLiquidity(trader, baseAssetQuantity, quoteAssetLimit);
-        require(isAboveMaintenanceMargin(trader), "CH: Below Maintenance Margin");
+        address maker = _msgSender();
+        updatePositions(maker);
+        amms[idx].addLiquidity(maker, baseAssetQuantity, quoteAssetLimit);
+        require(isAboveMaintenanceMargin(maker), "CH: Below Maintenance Margin");
+    }
+
+    function removeLiquidity(uint idx, uint256 amount, uint minQuoteValue, uint minBaseValue) external {
+        address maker = _msgSender();
+        updatePositions(maker);
+        int256 realizedPnl = amms[idx].removeLiquidity(maker, amount, minQuoteValue, minBaseValue);
+        marginAccount.realizePnL(maker, realizedPnl);
+    }
+
+    function liquidateMaker(address maker) external {
+        updatePositions(maker);
+
+        require(
+            _calcMarginFraction(maker, false) < maintenanceMargin,
+            "CH: Above Maintenance Margin"
+        );
+
+        int256 realizedPnl;
+        for (uint i = 0; i < amms.length; i++) {
+            (,, uint dToken,,,,) = amms[i].makers(maker);
+            realizedPnl += amms[i].removeLiquidity(maker, dToken, 0, 0);
+        }
+        marginAccount.realizePnL(maker, realizedPnl);
     }
 
     function updatePositions(address trader) public {
+        require(address(trader) != address(0), 'CH: 0x0 trader Address');
         int256 fundingPayment;
         for (uint i = 0; i < amms.length; i++) {
             fundingPayment += amms[i].updatePosition(trader);
@@ -111,19 +136,8 @@ contract ClearingHouse is VanillaGovernable, ERC2771ContextUpgradeable {
     }
 
     function settleFunding() external {
-        int256 premiumFraction;
-        int256 longMinusShortOpenInterestNotional;
-        int256 insurancePnL;
         for (uint i = 0; i < amms.length; i++) {
-            (premiumFraction, longMinusShortOpenInterestNotional) = amms[i].settleFunding();
-            // if premiumFraction > 0, longs pay shorts, extra shorts are paid for by insurance fund
-            // if premiumFraction < 0, shorts pay longs, extra longs are paid for by insurance fund
-            insurancePnL += (premiumFraction * longMinusShortOpenInterestNotional / 1e18);
-        }
-        if (insurancePnL > 0) {
-            vusd.mint(address(insuranceFund), insurancePnL.toUint256());
-        } else if (insurancePnL < 0) {
-            insuranceFund.seizeBadDebt((-insurancePnL).toUint256());
+            amms[i].settleFunding();
         }
     }
 
@@ -131,6 +145,7 @@ contract ClearingHouse is VanillaGovernable, ERC2771ContextUpgradeable {
     @notice Wooosh, you are now liquidate
     */
     function liquidate(address trader) public {
+        require(!hasLiquidity(trader), 'CH: Remove Liquidity First');
         updatePositions(trader);
         require(_calcMarginFraction(trader, false /* check funding payments again */) < maintenanceMargin, "Above Maintenance Margin");
         int realizedPnl;
@@ -188,10 +203,22 @@ contract ClearingHouse is VanillaGovernable, ERC2771ContextUpgradeable {
         return _calcMarginFraction(trader, true /* includeFundingPayments */);
     }
 
-    function getTotalFunding(address trader) public view returns(int256 totalFunding) {
+    function hasLiquidity(address trader) public view returns(bool) {
         for (uint i = 0; i < amms.length; i++) {
-            (int256 fundingPayment, ) = amms[i].getFundingPayment(trader);
-            totalFunding += fundingPayment;
+            (,, uint dToken,,,,) = amms[i].makers(trader);
+            if (dToken > 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function getTotalFunding(address trader) public view returns(int256 totalFunding) {
+        int256 takerFundingPayment;
+        int256 makerFundingPayment;
+        for (uint i = 0; i < amms.length; i++) {
+            (takerFundingPayment, makerFundingPayment,,) = amms[i].getPendingFundingPayment(trader);
+            totalFunding += (takerFundingPayment + makerFundingPayment);
         }
     }
 

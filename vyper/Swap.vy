@@ -114,7 +114,7 @@ A_MULTIPLIER: constant(uint256) = 10000
 math: address
 views: address
 amm: address
-totalSupply: uint256
+totalSupply: public(uint256)
 token: address
 # math: constant(address) = 0x8F68f4810CcE3194B6cB6F3d50fa58c2c9bDD1d5
 # token: constant(address) = 0xc4AD29ba4B3c580e6D59105FFf484999997675Ff
@@ -931,96 +931,144 @@ def add_liquidity(amounts: uint256[N_COINS], min_mint_amount: uint256) -> uint25
 
     return d_token
 
-@external
-@nonreentrant('lock')
-def remove_liquidity(_amount: uint256, min_amounts: uint256[N_COINS]):
-    """
-    This withdrawal method is very safe, does no complex math
-    """
-    total_supply: uint256 = self.totalSupply
-    balances: uint256[N_COINS] = self.balances
-    amount: uint256 = _amount - 1  # Make rounding errors favoring other LPs a tiny bit
-
-    for i in range(N_COINS):
-        d_balance: uint256 = balances[i] * amount / total_supply
-        assert d_balance >= min_amounts[i]
-        self.balances[i] = balances[i] - d_balance
-        balances[i] = d_balance  # now it's the amounts going out
-
-    D: uint256 = self.D
-    self.D = D - D * amount / total_supply
-
-    log RemoveLiquidity(msg.sender, balances, total_supply - _amount)
-
 @internal
-@view
-def _get_maker_position(_amount: uint256, vUSD: uint256, vAsset: uint256) -> (int256, int256, uint256, uint256[N_COINS]):
-    total_supply: uint256 = self.totalSupply
-    balances: uint256[N_COINS] = self.balances
-
-    position: int256 = 0
-    openNotional: int256 = 0
-    D: uint256 = self.D
-
-    if _amount > 0:
-        # the following leads to makers taking a slightly bigger position, hence commented out from original code
-        # amount: uint256 = _amount - 1  # Make rounding errors favoring other LPs a tiny bit
-        amount: uint256 = _amount
-        d_balances: uint256[N_COINS] = empty(uint256[N_COINS])
-        for x in range(N_COINS):
-            d_balances[x] = balances[x] * amount / total_supply
-            balances[x] -= d_balances[x]
-        D = D - D * amount / total_supply
-
-        position = convert(d_balances[N_COINS-1], int256) - convert(vAsset, int256)
-        if position > 0:
-            openNotional = convert(vUSD, int256) - convert(d_balances[0], int256)
-        elif position <= 0: # =0 when no position open but positive openNotional due to fee accumulation
-            openNotional = convert(d_balances[0], int256) - convert(vUSD, int256)
-        openNotional /= convert(1e12, int256)
-    return position, openNotional, D, balances
-
-@external
-@view
-def get_maker_position(_amount: uint256, vUSD: uint256, vAsset: uint256) -> (int256, int256):
-    makerPosSize: int256 = 0
-    openNotional: int256 = 0
-    D: uint256 = 0
-    balances: uint256[N_COINS] = empty(uint256[N_COINS])
-
-    makerPosSize, openNotional, D, balances = self._get_maker_position(_amount, vUSD, vAsset)
-    return makerPosSize, openNotional
-
-@external
-@view
-def get_notional(_amount: uint256, vUSD: uint256, vAsset: uint256, dx: int256, _openNotional: uint256) -> (uint256, int256, int256, int256):
-    makerPosSize: int256 = 0
-    makerOpenNotional: int256 = 0
-    D: uint256 = 0
-    balances: uint256[N_COINS] = empty(uint256[N_COINS])
-    notionalPosition: uint256 = 0
+@pure
+def _get_fee_adjusted_pnl(makerPosSize: int256, makerOpenNotional: int256) -> (int256, int256):
     unrealizedPnl: int256 = 0
+    openNotional: int256 = makerOpenNotional
 
-    # rug the maker liquidity, if any
-    makerPosSize, makerOpenNotional, D, balances = self._get_maker_position(_amount, vUSD, vAsset)
     if makerOpenNotional < 0:
         if makerPosSize > 0: # profit while removing liquidity
             unrealizedPnl = -makerOpenNotional
         elif makerPosSize < 0: # loss while removing liquidity
             unrealizedPnl = makerOpenNotional
-        makerOpenNotional = 0
+        openNotional = 0
     elif makerOpenNotional > 0 and makerPosSize == 0: # when all positions are balanced but profit due to fee accumulation
         unrealizedPnl = makerOpenNotional
-        makerOpenNotional = 0
+        openNotional = 0
+    return unrealizedPnl, openNotional
 
-    # aggregate rest of the position
-    position: int256 = makerPosSize + dx
-    openNotional: int256 = makerOpenNotional + convert(_openNotional, int256)
+@internal
+@view
+def _get_maker_position(amount: uint256, vUSD: uint256, vAsset: uint256, makerDToken: uint256) -> (int256, uint256, int256, uint256, uint256[N_COINS]):
+    if amount == 0:
+        return 0, 0, 0, self.D, self.balances
 
+    total_supply: uint256 = self.totalSupply
+    balances: uint256[N_COINS] = self.balances
+    D: uint256 = self.D
+
+    position: int256 = 0
+    openNotional: int256 = 0
+    feeAdjustedPnl: int256 = 0
+
+    # the following leads to makers taking a slightly bigger position, hence commented out from original code
+    # amount: uint256 = amount - 1  # Make rounding errors favoring other LPs a tiny bit
+    d_balances: uint256[N_COINS] = empty(uint256[N_COINS])
+    for x in range(N_COINS):
+        d_balances[x] = balances[x] * amount / total_supply
+        balances[x] -= d_balances[x]
+    D = D - D * amount / total_supply
+
+    position = convert(d_balances[N_COINS-1], int256)
+    _vUSD: int256 = convert(vUSD, int256)
+    if amount == makerDToken:
+        position -= convert(vAsset, int256)
+    else:
+        position -= convert(vAsset * amount / makerDToken, int256)
+        _vUSD = convert(vUSD * amount / makerDToken, int256)
+
+    if position > 0:
+        openNotional =  _vUSD - convert(d_balances[0], int256)
+    elif position <= 0: # =0 when no position open but positive openNotional due to fee accumulation
+        openNotional = convert(d_balances[0], int256) - _vUSD
+    openNotional /= convert(1e12, int256)
+    feeAdjustedPnl, openNotional = self._get_fee_adjusted_pnl(position, openNotional)
+    return position, convert(openNotional, uint256), feeAdjustedPnl, D, balances
+
+@internal
+@pure
+def _abs(x: int256) -> (int256):
+    if x >= 0:
+        return x
+    else:
+        return -x
+
+@internal
+@view
+def _get_combined_open_notional(
+        takerPosSize: int256,
+        takerOpenNotional: uint256,
+        makerPosSize: int256,
+        makerOpenNotional: uint256
+    ) -> (uint256):
+    totalOpenNotional: uint256 = 0
+    if makerPosSize * takerPosSize >= 0: # increasingPosition
+        totalOpenNotional = takerOpenNotional + makerOpenNotional
+    else: # reducePosition or reversePosition
+        _openNotional: int256 = convert(takerOpenNotional, int256) - convert(makerOpenNotional, int256)
+        totalOpenNotional = convert(self._abs(_openNotional), uint256)
+    return totalOpenNotional
+
+@external
+@nonreentrant('lock')
+def remove_liquidity(
+        amount: uint256,
+        min_amounts: uint256[N_COINS],
+        vUSD: uint256,
+        vAsset: uint256,
+        makerDToken: uint256,
+        takerPosSize: int256,
+        takerOpenNotional: uint256
+    ) -> (int256, uint256, int256):
+    """
+    This withdrawal method is very safe, does no complex math
+    """
+    assert msg.sender == self.amm
+
+    makerPosSize: int256 = 0
+    makerOpenNotional: uint256 = 0
+    totalOpenNotional: uint256 = 0
+    feeAdjustedPnl: int256 = 0
+    D: uint256 = 0
+    balances: uint256[N_COINS] = empty(uint256[N_COINS])
+
+    makerPosSize, makerOpenNotional, feeAdjustedPnl, D, balances = self._get_maker_position(amount, vUSD, vAsset, makerDToken)
+    totalOpenNotional = self._get_combined_open_notional(takerPosSize, takerOpenNotional, makerPosSize, makerOpenNotional)
+
+    d_balances: uint256[N_COINS] = self.balances
+    for i in range(N_COINS):
+        d_balances[i] -= balances[i]
+        assert d_balances[i] >= min_amounts[i]
+
+    self.balances = balances
+    self.D = D
+    self.totalSupply -= amount
+
+    log RemoveLiquidity(msg.sender, d_balances, self.totalSupply)
+    return makerPosSize, totalOpenNotional, feeAdjustedPnl
+
+@external
+@view
+def get_maker_position(amount: uint256, vUSD: uint256, vAsset: uint256, makerDToken: uint256) -> (int256, uint256):
+    makerPosSize: int256 = 0
+    makerOpenNotional: uint256 = 0
+    unrealizedPnl: int256 = 0
+    D: uint256 = 0
+    balances: uint256[N_COINS] = empty(uint256[N_COINS])
+
+    makerPosSize, makerOpenNotional, unrealizedPnl, D, balances = self._get_maker_position(amount, vUSD, vAsset, makerDToken)
+    return makerPosSize, makerOpenNotional
+
+@internal
+@view
+def _get_taker_notional_and_pnl(position: int256, openNotional: uint256, balances: uint256[N_COINS], D: uint256) -> (uint256, int256):
+    notionalPosition: uint256 = 0
+    unrealizedPnl: int256 = 0
     if D > 10**17 - 1:
         if position > 0:
             notionalPosition = Views(self.views).get_dy(2, 0, convert(position, uint256), balances, D)[0] / convert(1e12, uint256)
-            unrealizedPnl += convert(notionalPosition, int256) - openNotional
+            unrealizedPnl = convert(notionalPosition, int256) - convert(openNotional, int256)
         elif position < 0:
             _pos: uint256 = convert(-position, uint256)
             if _pos > balances[N_COINS-1]: # vamm doesn't have enough to sell _pos quantity of base asset
@@ -1028,8 +1076,47 @@ def get_notional(_amount: uint256, vUSD: uint256, vAsset: uint256, dx: int256, _
                 notionalPosition = 0
             else:
                 notionalPosition = Views(self.views).get_dx(0, 2, _pos, balances, D)[0] / convert(1e12, uint256)
-                unrealizedPnl +=  openNotional - convert(notionalPosition, int256)
-    return notionalPosition, makerPosSize, unrealizedPnl, makerOpenNotional
+                unrealizedPnl =  convert(openNotional, int256) - convert(notionalPosition, int256)
+    return notionalPosition, unrealizedPnl
+
+@external
+@view
+def get_notional(
+        makerDToken: uint256,
+        vUSD: uint256,
+        vAsset: uint256,
+        takerPosSize: int256,
+        takerOpenNotional: uint256
+    ) -> (uint256, int256, int256, uint256):
+    makerPosSize: int256 = 0
+    makerOpenNotional: uint256 = 0
+    D: uint256 = 0
+    balances: uint256[N_COINS] = empty(uint256[N_COINS])
+    feeAdjustedPnl: int256 = 0
+
+    # rug the maker liquidity, if any
+    makerPosSize, makerOpenNotional, feeAdjustedPnl, D, balances = self._get_maker_position(makerDToken, vUSD, vAsset, makerDToken)
+
+    position: int256 = takerPosSize
+    openNotional: uint256 = takerOpenNotional
+    notionalPosition: uint256 = 0
+    unrealizedPnl: int256 = 0
+
+    (notionalPosition, unrealizedPnl) = self._get_taker_notional_and_pnl(takerPosSize, takerOpenNotional, balances, D)
+
+    if makerDToken > 0:
+        makerDebt: uint256 = 2 * vUSD / convert(1e12, uint256)
+        # notionalPos = Max(debt, maker impermanent notional pos [1]) + taker notional pos [2]
+        # [1] and [2] are being calculated after removing the maker liquidity, reflected via (D, balances) returned from _get_maker_position
+        notionalPosUpperBound: uint256 = notionalPosition + makerDebt
+
+        position += makerPosSize
+        openNotional = self._get_combined_open_notional(takerPosSize, takerOpenNotional, makerPosSize, makerOpenNotional)
+        (notionalPosition, unrealizedPnl) = self._get_taker_notional_and_pnl(position, openNotional, balances, D)
+
+        notionalPosition = max(notionalPosition, notionalPosUpperBound)
+        unrealizedPnl += feeAdjustedPnl
+    return notionalPosition, position, unrealizedPnl, openNotional
 
 # @view
 # @external

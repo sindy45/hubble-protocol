@@ -188,7 +188,6 @@ contract MarginAccount is VanillaGovernable, ERC2771ContextUpgradeable {
         }
     }
 
-
     function settleBadDebt(address trader) external {
         (int256 notionalPosition,) = clearingHouse.getTotalNotionalPositionAndUnrealizedPnl(trader);
         require(notionalPosition == 0, "Liquidate positions before settling bad debt");

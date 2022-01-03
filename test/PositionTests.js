@@ -336,7 +336,7 @@ describe('Position Tests', async function() {
             const swapEvents = await amm.queryFilter('Swap')
             const realizedPnl = unrealizedPnl.mul(shortBaseAssetQuantity.abs()).div(longBaseAssetQuantity)
             unrealizedPnl = unrealizedPnl.sub(realizedPnl)
-            const notionalPosition = await amm.getNotionalPosition(_1e18.mul(4))
+            const notionalPosition = await amm.getCloseQuote(_1e18.mul(4))
 
             await assertions(contracts, alice, {
                 size: longBaseAssetQuantity.add(shortBaseAssetQuantity),
@@ -369,7 +369,7 @@ describe('Position Tests', async function() {
             const swapEvents = await amm.queryFilter('Swap')
             const realizedPnl = unrealizedPnl.mul(longBaseAssetQuantity).div(shortBaseAssetQuantity.abs())
             unrealizedPnl = unrealizedPnl.sub(realizedPnl)
-            const notionalPosition = await amm.getNotionalPosition(_1e18.mul(-4))
+            const notionalPosition = await amm.getCloseQuote(_1e18.mul(-4))
 
             await assertions(contracts, alice, {
                 size: longBaseAssetQuantity.add(shortBaseAssetQuantity),
@@ -490,26 +490,22 @@ describe('Position Tests', async function() {
 
         it('liquidation', async () => {
             // alice shorts
-            let tx = await clearingHouse.openPosition(0, _1e18.mul(-5), 0)
-            const trade1 = await getTradeDetails(tx, TRADE_FEE)
+            await clearingHouse.openPosition(0, _1e18.mul(-5), 0)
 
             // bob longs
             const bob = signers[1]
             await addMargin(bob, _1e6.mul(20000))
             await clearingHouse.connect(bob).openPosition(0, _1e18.mul(70), _1e6.mul(73000))
 
-            // console.log((await clearingHouse.getMarginFraction(alice)).toString())
             expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
 
             ;({ notionalPosition, unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(alice))
             expect(unrealizedPnl.lt(0)).to.be.true // loss
 
-            // console.log(notionalPosition.toString())
             await clearingHouse.connect(signers[2]).liquidate(alice)
 
             const liquidationPenalty = notionalPosition.mul(5e4).div(_1e6)
             const toInsurance = liquidationPenalty.div(2)
-            // console.log((await vusd.balanceOf(signers[2].address)).toString())
             expect(await vusd.balanceOf(signers[2].address)).to.eq(liquidationPenalty.sub(toInsurance)) // liquidation penalty
         })
     })

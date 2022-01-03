@@ -30,20 +30,29 @@ contract AMM is Governable, Pausable {
     uint256 public fundingBufferPeriod;
     uint256 public nextFundingTime;
     int256 public fundingRate;
+    int256 public cumulativePremiumFraction;
+    int256 public cumulativePremiumPerDtoken;
+
     uint256 public longOpenInterestNotional;
     uint256 public shortOpenInterestNotional;
 
     struct Position {
         int256 size;
         uint256 openNotional;
-        int256 lastUpdatedCumulativePremiumFraction;
+        int256 lastPremiumFraction;
+    }
+    mapping(address => Position) public positions;
 
-        // maker
+    struct Maker {
         uint vUSD;
         uint vAsset;
         uint dToken;
+        int pos; // position
+        int posAccumulator; // value of global.posAccumulator until which pos has been updated
+        int lastPremiumFraction;
+        int lastPremiumPerDtoken;
     }
-    mapping(address => Position) public positions;
+    mapping(address => Maker) public makers;
 
     struct ReserveSnapshot {
         uint256 quoteAssetReserve;
@@ -53,11 +62,7 @@ contract AMM is Governable, Pausable {
     }
     ReserveSnapshot[] public reserveSnapshots;
 
-    struct PremiumFraction {
-        uint256 blockNumber;
-        int256 cumulativePremiumFraction;
-    }
-    PremiumFraction[] public cumulativePremiumFractions;
+    int256 posAccumulator;
 
     enum Side { LONG, SHORT }
 
@@ -65,9 +70,10 @@ contract AMM is Governable, Pausable {
 
     event PositionChanged(address indexed trader, int256 size, uint256 openNotional);
     event FundingRateUpdated(int256 premiumFraction, int256 rate, uint256 underlyingPrice, uint256 timestamp, uint256 blockNumber);
-    event FundingPaid(address indexed trader, int256 latestCumulativePremiumFraction, int256 positionSize, int256 fundingPayment);
+    event FundingPaid(address indexed trader, int256 takerPosSize, int256 takerFundingPayment, int256 makerFundingPayment, int256 latestCumulativePremiumFraction, int256 latestPremiumPerDtoken);
     event Swap(int256 baseAssetQuantity, uint256 qouteAssetQuantity, uint256 lastPrice, uint256 openInterestNotional);
     event ReserveSnapshotted(uint256 quoteAssetReserve, uint256 baseAssetReserve, uint256 timestamp, uint256 blockNumber);
+    event LiquidityRemoved(address indexed maker, int256 realizedPnl);
 
     modifier onlyClearingHouse() {
         require(msg.sender == clearingHouse, "Only clearingHouse");
@@ -141,13 +147,24 @@ contract AMM is Governable, Pausable {
         onlyClearingHouse
         returns(int256 fundingPayment)
     {
-        Position storage position = positions[trader];
-        int256 latestCumulativePremiumFraction;
+        (
+            int256 takerFundingPayment,
+            int256 makerFundingPayment,
+            int256 latestCumulativePremiumFraction,
+            int256 latestPremiumPerDtoken
+        ) = getPendingFundingPayment(trader);
 
-        // @todo update position due to liquidity migration / vamm param updates etc.
-        (fundingPayment, latestCumulativePremiumFraction) = getFundingPayment(trader);
-        position.lastUpdatedCumulativePremiumFraction = latestCumulativePremiumFraction;
-        emit FundingPaid(trader, latestCumulativePremiumFraction, position.size, fundingPayment);
+        Position storage position = positions[trader];
+        position.lastPremiumFraction = latestCumulativePremiumFraction;
+
+        Maker storage maker = makers[trader];
+        maker.lastPremiumFraction = latestCumulativePremiumFraction;
+        maker.lastPremiumPerDtoken = latestPremiumPerDtoken;
+
+        emit FundingPaid(trader, position.size, takerFundingPayment, makerFundingPayment, latestCumulativePremiumFraction, latestPremiumPerDtoken);
+
+        // +: trader paid, -: trader received
+        fundingPayment = takerFundingPayment + makerFundingPayment;
     }
 
     function addLiquidity(address trader, uint baseAssetQuantity, uint quoteAssetLimit)
@@ -169,13 +186,113 @@ contract AMM is Governable, Pausable {
 
         uint _dToken = vamm.add_liquidity([quoteAsset, bal1 /* to be added in same ratio as other coins */, baseAssetQuantity], 0);
 
-        Position storage position = positions[trader];
-        position.vUSD += quoteAsset;
-        position.vAsset += baseAssetQuantity;
-        position.dToken += _dToken;
+        // updates
+        Maker storage _maker = makers[trader];
+        if (_maker.dToken > 0) { // Maker only accumulates position when they had non-zero liquidity
+            _maker.pos += (posAccumulator - _maker.posAccumulator) * _maker.dToken.toInt256() / 1e18;
+        }
+        _maker.vUSD += quoteAsset;
+        _maker.vAsset += baseAssetQuantity;
+        _maker.dToken += _dToken;
+        _maker.posAccumulator = posAccumulator;
     }
 
-    function removeLiquidity(uint quoteAsset) external {}
+    function removeLiquidity(address maker, uint amount, uint minQuote, uint minBase)
+        external
+        whenNotPaused
+        onlyClearingHouse
+        returns (int256 /* realizedPnl */)
+    {
+        Maker memory _maker = makers[maker];
+        Position memory _taker = positions[maker];
+        // amount <= _maker.dToken will be asserted when updating maker.dToken
+        (int256 makerPosition, uint256 totalOpenNotional, int256 feeAdjustedPnl) = vamm.remove_liquidity(
+            amount,
+            [minQuote * 1e12 /* minimum QuoteAsset amount */, 0, minBase /* minimum BaseAsset amount */],
+            _maker.vUSD,
+            _maker.vAsset,
+            _maker.dToken,
+            _taker.size,
+            _taker.openNotional
+        );
+
+        // update maker info
+        Maker storage __maker = makers[maker];
+        uint diff = _maker.dToken - amount;
+
+        if (diff == 0) {
+            __maker.pos = 0;
+            __maker.vAsset = 0;
+            __maker.vUSD = 0;
+            __maker.dToken = 0;
+        } else {
+            __maker.pos = _maker.pos + (posAccumulator - _maker.posAccumulator) * _maker.dToken.toInt256() / 1e18;
+            __maker.vAsset = _maker.vAsset * diff / _maker.dToken;
+            __maker.vUSD = _maker.vUSD * diff / _maker.dToken;
+            __maker.dToken = diff;
+        }
+        __maker.posAccumulator = posAccumulator;
+
+        int256 realizedPnl = feeAdjustedPnl;
+        if (makerPosition != 0) {
+            // translate impermanent position to a permanent one
+            Position storage position = positions[maker];
+            if (makerPosition * position.size < 0) { // reducing or reversing position
+                uint newNotional = getCloseQuote(position.size + makerPosition);
+                int256 reducePositionPnl = _getPnlWhileReducingPosition(position.size, position.openNotional, makerPosition, newNotional);
+                realizedPnl += reducePositionPnl;
+            }
+            position.openNotional = totalOpenNotional;
+            position.size += makerPosition;
+
+            // update long and short open interest notional
+            if (makerPosition > 0) {
+                longOpenInterestNotional += makerPosition.toUint256();
+            } else {
+                shortOpenInterestNotional += (-makerPosition).toUint256();
+            }
+        }
+
+        emit LiquidityRemoved(maker, realizedPnl);
+        return realizedPnl;
+    }
+
+    // @dev check takerPosition != 0 before calling
+    function _getPnlWhileReducingPosition(
+        int256 takerPosition,
+        uint takerOpenNotional,
+        int256 makerPosition,
+        uint newNotional
+    ) internal pure returns (int256 pnlToBeRealized) {
+        /**
+            makerNotional = newNotional * makerPos / totalPos
+            if (side remains same)
+                reducedOpenNotional = takerOpenNotional * makerPos / takerPos
+                pnl = makerNotional - reducedOpenNotional
+            else (reverse position)
+                closedPositionNotional = newNotional * takerPos / totalPos
+                pnl = closePositionNotional - takerOpenNotional
+         */
+
+        uint totalPosition = abs(makerPosition + takerPosition).toUint256();
+        if (abs(takerPosition) > abs(makerPosition)) { // taker position side remains same
+            uint reducedOpenNotional = takerOpenNotional * abs(makerPosition).toUint256() / abs(takerPosition).toUint256();
+            uint makerNotional = newNotional * abs(makerPosition).toUint256() / totalPosition;
+            pnlToBeRealized = _getPnlToBeRealized(takerPosition, makerNotional, reducedOpenNotional);
+        } else { // taker position side changes
+            // @todo handle case when totalPosition = 0
+            uint closedPositionNotional = newNotional * abs(takerPosition).toUint256() / totalPosition;
+            pnlToBeRealized = _getPnlToBeRealized(takerPosition, closedPositionNotional, takerOpenNotional);
+        }
+    }
+
+    function _getPnlToBeRealized(int256 takerPosition, uint notionalPosition, uint openNotional) internal pure returns (int256 pnlToBeRealized) {
+        if (takerPosition > 0) {
+            pnlToBeRealized = notionalPosition.toInt256() - openNotional.toInt256();
+        } else {
+            pnlToBeRealized = openNotional.toInt256() - notionalPosition.toInt256();
+        }
+    }
 
     function _increasePosition(address trader, int256 baseAssetQuantity, uint quoteAssetLimit)
         internal
@@ -219,7 +336,7 @@ contract AMM is Governable, Pausable {
         internal
         returns (int realizedPnl, uint256 quoteAsset)
     {
-        (, int256 unrealizedPnl,,) = getNotionalPositionAndUnrealizedPnl(trader);
+        (, int256 unrealizedPnl) = getTakerNotionalPositionAndUnrealizedPnl(trader);
 
         Position storage position = positions[trader]; // storage because there are updates at the end
         bool isLongPosition = position.size > 0 ? true : false;
@@ -231,7 +348,7 @@ contract AMM is Governable, Pausable {
             shortOpenInterestNotional -= baseAssetQuantity.toUint256();
             quoteAsset = _long(baseAssetQuantity, quoteAssetLimit);
         }
-        uint256 notionalPosition = getNotionalPosition(position.size + baseAssetQuantity);
+        uint256 notionalPosition = getCloseQuote(position.size + baseAssetQuantity);
         (position.openNotional, realizedPnl) = getOpenNotionalWhileReducingPosition(position.size, notionalPosition, unrealizedPnl, baseAssetQuantity);
         position.size += baseAssetQuantity;
     }
@@ -306,6 +423,8 @@ contract AMM is Governable, Pausable {
             baseAssetQuantity.toUint256(), // long exactly. Note that statement asserts that baseAssetQuantity >= 0
             max_dx
         ) / 1e12; // 6 decimals precision
+        // since maker position will be opposite of the trade
+        posAccumulator -= baseAssetQuantity * 1e18 / vamm.totalSupply().toInt256();
         emit Swap(baseAssetQuantity, qouteAssetQuantity, lastPrice(), openInterestNotional());
     }
 
@@ -327,6 +446,8 @@ contract AMM is Governable, Pausable {
             (-baseAssetQuantity).toUint256(), // short exactly. Note that statement asserts that baseAssetQuantity <= 0
             min_dy
         ) / 1e12;
+        // since maker position will be opposite of the trade
+        posAccumulator -= baseAssetQuantity * 1e18 / vamm.totalSupply().toInt256();
         emit Swap(baseAssetQuantity, qouteAssetQuantity, lastPrice(), openInterestNotional());
     }
 
@@ -370,13 +491,11 @@ contract AMM is Governable, Pausable {
     /**
      * @notice update funding rate
      * @dev only allow to update while reaching `nextFundingTime`
-     * @return premium fraction of this period in 18 digits
      */
     function settleFunding()
         external
         whenNotPaused
         onlyClearingHouse
-        returns (int256, int256)
     {
         require(_blockTimestamp() >= nextFundingTime, "settle funding too early");
 
@@ -387,13 +506,21 @@ contract AMM is Governable, Pausable {
         int256 premium = getTwapPrice(spotPriceTwapInterval) - underlyingPrice;
         int256 premiumFraction = (premium * int256(fundingPeriod)) / 1 days;
 
-        cumulativePremiumFractions.push(
-            PremiumFraction(block.number, premiumFraction + getLatestCumulativePremiumFraction())
-        );
-
         // update funding rate = premiumFraction / twapIndexPrice
         _updateFundingRate(premiumFraction, underlyingPrice);
 
+        int256 premiumPerDtoken = posAccumulator * premiumFraction;
+
+        if (premiumPerDtoken % 1e18 != 0) { // makers pay slightly more to account for rounding off
+            premiumPerDtoken = (premiumPerDtoken / 1e18) + 1;
+        } else {
+            premiumPerDtoken /= 1e18;
+        }
+
+        cumulativePremiumFraction += premiumFraction;
+        cumulativePremiumPerDtoken += premiumPerDtoken;
+
+        // Updates for next funding event
         // in order to prevent multiple funding settlement during very short time after network congestion
         uint256 minNextValidFundingTime = _blockTimestamp() + fundingBufferPeriod;
 
@@ -404,24 +531,9 @@ contract AMM is Governable, Pausable {
         nextFundingTime = nextFundingTimeOnHourStart > minNextValidFundingTime
             ? nextFundingTimeOnHourStart
             : minNextValidFundingTime;
-        return (
-            premiumFraction,
-            longOpenInterestNotional.toInt256() - shortOpenInterestNotional.toInt256()
-        );
     }
 
     // View
-
-    /**
-     * @notice get latest cumulative premium fraction.
-     * @return premiumFraction latest cumulative premium fraction in 18 digits
-     */
-    function getLatestCumulativePremiumFraction() public view returns (int256 premiumFraction) {
-        uint256 len = cumulativePremiumFractions.length;
-        if (len > 0) {
-            premiumFraction = cumulativePremiumFractions[len - 1].cumulativePremiumFraction;
-        }
-    }
 
     function _blockTimestamp() internal view virtual returns (uint256) {
         return block.timestamp;
@@ -509,51 +621,58 @@ contract AMM is Governable, Pausable {
     // View
 
     function getNotionalPositionAndUnrealizedPnl(address trader)
-        public
+        external
         view
         returns(uint256 notionalPosition, int256 unrealizedPnl, int256 size, uint256 openNotional)
     {
-        Position memory position = positions[trader];
-        int256 makerPosSize;
-        int256 makerOpenNotional;
-        (notionalPosition, makerPosSize, unrealizedPnl, makerOpenNotional) = vamm.get_notional(
-            position.dToken,
-            position.vUSD,
-            position.vAsset,
-            position.size,
-            position.openNotional
+        Position memory _taker = positions[trader];
+        Maker memory _maker = makers[trader];
+
+        (notionalPosition, size, unrealizedPnl, openNotional) = vamm.get_notional(
+            _maker.dToken,
+            _maker.vUSD,
+            _maker.vAsset,
+            _taker.size,
+            _taker.openNotional
         );
-        size = makerPosSize + position.size;
-        openNotional = makerOpenNotional.toUint256() + position.openNotional;
-        // All the liquidity that maker added counts as their notionalPosition
-        if (position.vUSD > 0) {
-            // @todo should we move accounting to 18 decimals? - seem to be dividing by 1e12 at too many places
-            notionalPosition += position.vUSD * 2 / 1e12;
-        }
     }
 
-    function getFundingPayment(address trader)
+    function getPendingFundingPayment(address trader)
         public
         view
-        returns(int256 fundingPayment, int256 latestCumulativePremiumFraction)
+        returns(
+            int256 takerFundingPayment,
+            int256 makerFundingPayment,
+            int256 latestCumulativePremiumFraction,
+            int256 latestPremiumPerDtoken
+        )
     {
-        latestCumulativePremiumFraction = getLatestCumulativePremiumFraction();
-        Position memory position = positions[trader];
-        if (position.size == 0) {
-            return (0, latestCumulativePremiumFraction);
-        }
+        latestCumulativePremiumFraction = cumulativePremiumFraction;
+        Position memory taker = positions[trader];
 
-        if (latestCumulativePremiumFraction == position.lastUpdatedCumulativePremiumFraction) {
-            return (0, latestCumulativePremiumFraction);
-        }
-
-        // +: trader paid, -: trader received
-        fundingPayment = (latestCumulativePremiumFraction - position.lastUpdatedCumulativePremiumFraction)
-            * position.size
+        takerFundingPayment = (latestCumulativePremiumFraction - taker.lastPremiumFraction)
+            * taker.size
             / 1e18;
+
+        // Maker funding payment
+        latestPremiumPerDtoken = cumulativePremiumPerDtoken;
+
+        Maker memory maker = makers[trader];
+        int256 dToken = maker.dToken.toInt256();
+        if (dToken > 0) {
+            int256 cpf = latestCumulativePremiumFraction - maker.lastPremiumFraction;
+            makerFundingPayment = (
+                maker.pos * cpf +
+                (
+                    latestPremiumPerDtoken
+                    - maker.lastPremiumPerDtoken
+                    - maker.posAccumulator * cpf / 1e18
+                ) * dToken
+            ) / 1e18;
+        }
     }
 
-    function getQuote(int256 baseAssetQuantity) external view returns(uint256 qouteAssetQuantity) {
+    function getQuote(int256 baseAssetQuantity) external view returns(uint256 quoteAssetQuantity) {
         if (baseAssetQuantity >= 0) {
             return vamm.get_dx(0, 2, baseAssetQuantity.toUint256()) / 1e12 + 1;
         }
@@ -562,13 +681,29 @@ contract AMM is Governable, Pausable {
         return vamm.get_dy(2, 0, (-baseAssetQuantity).toUint256()) / 1e12;
     }
 
-    function getNotionalPosition(int256 baseAssetQuantity) public view returns(uint256 quoteAssetQuantity) {
+    function getCloseQuote(int256 baseAssetQuantity) public view returns(uint256 quoteAssetQuantity) {
         if (baseAssetQuantity > 0) {
             return vamm.get_dy(2, 0, baseAssetQuantity.toUint256()) / 1e12;
         } else if (baseAssetQuantity < 0) {
             return vamm.get_dx(0, 2, (-baseAssetQuantity).toUint256()) / 1e12;
         }
         return 0;
+    }
+
+    function getTakerNotionalPositionAndUnrealizedPnl(address trader) public view returns(uint takerNotionalPosition, int256 unrealizedPnl) {
+        Position memory position = positions[trader];
+        if (position.size > 0) {
+            takerNotionalPosition = vamm.get_dy(2, 0, position.size.toUint256()) / 1e12;
+            unrealizedPnl = takerNotionalPosition.toInt256() - position.openNotional.toInt256();
+        } else if (position.size < 0) {
+            takerNotionalPosition = vamm.get_dx(0, 2, (-position.size).toUint256()) / 1e12;
+            unrealizedPnl = position.openNotional.toInt256() - takerNotionalPosition.toInt256();
+        }
+    }
+
+    function getImpermanentPosition(address _maker) external view returns (int256 position, uint openNotional) {
+        Maker memory maker = makers[_maker];
+        (position, openNotional) = vamm.get_maker_position(maker.dToken, maker.vUSD, maker.vAsset, maker.dToken);
     }
 
     function lastPrice() public view returns(uint256) {
