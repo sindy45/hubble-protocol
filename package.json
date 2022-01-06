@@ -6,7 +6,8 @@
   "scripts": {
     "compile": "npx hardhat compile",
     "test": "npx hardhat test",
-    "vyper-compile": "vyper -f abi,bytecode vyper/Swap.vy > vyper/Swap.txt; vyper -f abi,bytecode vyper/MoonMath.vy > vyper/MoonMath.txt; vyper -f abi,bytecode vyper/Views.vy > vyper/Views.txt"
+    "vyper-compile": "vyper -f abi,bytecode vyper/Swap.vy > vyper/Swap.txt; vyper -f abi,bytecode vyper/MoonMath.vy > vyper/MoonMath.txt; vyper -f abi,bytecode vyper/Views.vy > vyper/Views.txt",
+    "coverage": "hardhat coverage"
   },
   "author": "",
   "license": "MIT",
@@ -20,7 +21,9 @@
     "ethereum-waffle": "^3.4.0",
     "ethers": "^5.4.1",
     "hardhat": "^2.6.4",
-    "hardhat-spdx-license-identifier": "^2.0.3"
+    "hardhat-gas-reporter": "^1.0.6",
+    "hardhat-spdx-license-identifier": "^2.0.3",
+    "solidity-coverage": "^0.7.17"
   },
   "dependencies": {
     "@openzeppelin/contracts": "^4.2.0",

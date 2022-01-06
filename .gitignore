@@ -1,5 +1,6 @@
 node_modules
 *.env
+
 #Hardhat files
 cache
 artifacts
@@ -8,3 +9,5 @@ venv
 vyper/*.txt
 
 test/debug.js
+coverage/
+coverage.json

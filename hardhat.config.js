@@ -1,7 +1,8 @@
 require("@nomiclabs/hardhat-waffle");
 require('@nomiclabs/hardhat-web3')
 require('hardhat-spdx-license-identifier')
-// require("@nomiclabs/hardhat-vyper");
+require('solidity-coverage')
+require("hardhat-gas-reporter");
 
 const PRIVATE_KEY = `0x${process.env.PRIVATE_KEY || 'ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80'}`
 
@@ -47,5 +48,11 @@ module.exports = {
     },
     spdxLicenseIdentifier: {
         runOnCompile: true
+    },
+    gasReporter: {
+        currency: 'USD',
+        gasPrice: 25,
+        coinmarketcap: '554a6764-aae9-440e-852b-63e3c66c20d7',
+        token: 'AVAX'
     }
 };
