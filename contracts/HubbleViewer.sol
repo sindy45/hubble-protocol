@@ -23,6 +23,18 @@ contract HubbleViewer {
         }
     }
 
+    function getNotionalPositionAndMargin(address[] calldata traders)
+        external
+        view
+        returns(uint256[] memory notionalPositions, int256[] memory margins)
+    {
+        notionalPositions = new uint256[](traders.length);
+        margins = new int256[](traders.length);
+        for (uint i = 0; i < traders.length; i++) {
+            (notionalPositions[i], margins[i]) = clearingHouse.getNotionalPositionAndMargin(traders[i], true /* includeFundingPayments */);
+        }
+    }
+
     function liquidatationStatus(address[] calldata traders)
         external
         view

@@ -309,7 +309,7 @@ contract ClearingHouse is VanillaGovernable, ERC2771ContextUpgradeable {
         quoteAssetQuantity = amms[idx].getQuote(baseAssetQuantity);
 
         // get total notionalPosition and margin (including unrealizedPnL and funding)
-        (uint256 notionalPosition, int256 margin) = _getNotionalPositionAndMargin(trader, true /* includeFundingPayments */);
+        (uint256 notionalPosition, int256 margin) = getNotionalPositionAndMargin(trader, true /* includeFundingPayments */);
 
         // get market specific position info
         (int256 takerPosSize,,) = amms[idx].positions(trader);
@@ -337,7 +337,7 @@ contract ClearingHouse is VanillaGovernable, ERC2771ContextUpgradeable {
         returns (int256 expectedMarginFraction, uint256 liquidationPrice)
     {
         // get total notionalPosition and margin (including unrealizedPnL and funding)
-        (uint256 notionalPosition, int256 margin) = _getNotionalPositionAndMargin(trader, true /* includeFundingPayments */);
+        (uint256 notionalPosition, int256 margin) = getNotionalPositionAndMargin(trader, true /* includeFundingPayments */);
 
         // get taker info
         (int256 takerPosSize,,) = amms[idx].positions(trader);
@@ -364,7 +364,7 @@ contract ClearingHouse is VanillaGovernable, ERC2771ContextUpgradeable {
 
     function getLiquidationPrice(address trader, uint idx) external view returns (uint liquidationPrice) {
         // get total notionalPosition and margin (including unrealizedPnL and funding)
-        (uint256 notionalPosition, int256 margin) = _getNotionalPositionAndMargin(trader, true /* includeFundingPayments */);
+        (uint256 notionalPosition, int256 margin) = getNotionalPositionAndMargin(trader, true /* includeFundingPayments */);
         liquidationPrice = _getLiquidationPrice(trader, idx, notionalPosition, margin, 0, 0);
     }
 
@@ -442,12 +442,12 @@ contract ClearingHouse is VanillaGovernable, ERC2771ContextUpgradeable {
     }
 
     function _calcMarginFraction(address trader, bool includeFundingPayments) internal view returns(int256) {
-        (uint256 notionalPosition, int256 margin) = _getNotionalPositionAndMargin(trader, includeFundingPayments);
+        (uint256 notionalPosition, int256 margin) = getNotionalPositionAndMargin(trader, includeFundingPayments);
         return _getMarginFraction(margin, notionalPosition);
     }
 
-    function _getNotionalPositionAndMargin(address trader, bool includeFundingPayments)
-        internal
+    function getNotionalPositionAndMargin(address trader, bool includeFundingPayments)
+        public
         view
         returns(uint256 notionalPosition, int256 margin)
     {

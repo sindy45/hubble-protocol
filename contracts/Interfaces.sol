@@ -24,6 +24,10 @@ interface IClearingHouse {
     function updatePositions(address trader) external;
     function getMarginFraction(address trader) external view returns(uint256);
     function getTotalFunding(address trader) external view returns(int256 totalFunding);
+    function getNotionalPositionAndMargin(address trader, bool includeFundingPayments)
+        external
+        view
+        returns(uint256 notionalPosition, int256 margin);
 }
 
 interface ERC20Detailed {
