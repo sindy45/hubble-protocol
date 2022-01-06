@@ -355,7 +355,7 @@ contract AMM is Governable, Pausable {
 
     function getOpenNotionalWhileReducingPosition(
         int256 positionSize,
-        uint256 notionalPosition,
+        uint256 newNotionalPosition,
         int256 unrealizedPnl,
         int256 baseAssetQuantity
     )
@@ -363,7 +363,7 @@ contract AMM is Governable, Pausable {
         pure
         returns(uint256 remainOpenNotional, int realizedPnl)
     {
-        // Position memory position = positions[trader];
+        require(abs(positionSize) >= abs(baseAssetQuantity), "AMM.ONLY_REDUCE_POS");
         bool isLongPosition = positionSize > 0 ? true : false;
 
         realizedPnl = unrealizedPnl * abs(baseAssetQuantity) / abs(positionSize);
@@ -388,7 +388,7 @@ contract AMM is Governable, Pausable {
             * Since notionalPosition includes the PnL component, notionalPosition >= unrealizedPnl and size >= Q
             * Hence remainOpenNotional >= 0
             */
-            remainOpenNotional = (notionalPosition.toInt256() - unrealizedPnlAfter).toUint256();  // will assert that remainOpenNotional >= 0
+            remainOpenNotional = (newNotionalPosition.toInt256() - unrealizedPnlAfter).toUint256();  // will assert that remainOpenNotional >= 0
         } else {
             /**
             * Let baseAssetQuantity = Q, position.size = size, by definition of _reducePosition, abs(size) >= abs(Q)
@@ -401,7 +401,7 @@ contract AMM is Governable, Pausable {
             * => notionalPosition + unrealizedPnl >= 0
             * Hence remainOpenNotional >= 0
             */
-            remainOpenNotional = (notionalPosition.toInt256() + unrealizedPnlAfter).toUint256();  // will assert that remainOpenNotional >= 0
+            remainOpenNotional = (newNotionalPosition.toInt256() + unrealizedPnlAfter).toUint256();  // will assert that remainOpenNotional >= 0
         }
     }
 
@@ -681,6 +681,21 @@ contract AMM is Governable, Pausable {
         return vamm.get_dy(2, 0, (-baseAssetQuantity).toUint256()) / 1e12;
     }
 
+    /**
+    * @notice returns amount of base asset required for trade
+    * @param quoteAssetQuantity amount of quote asset to long/short
+    * @param isLong long - true, short - false
+    */
+    function getBase(uint256 quoteAssetQuantity, bool isLong) external view returns(int256 /* baseAssetQuantity */) {
+        uint256 baseAssetQuantity;
+        if (isLong) {
+            baseAssetQuantity = vamm.get_dy(0, 2, quoteAssetQuantity * 1e12);
+            return baseAssetQuantity.toInt256();
+        }
+        baseAssetQuantity = vamm.get_dx(2, 0, quoteAssetQuantity * 1e12);
+        return -(baseAssetQuantity.toInt256());
+    }
+
     function getCloseQuote(int256 baseAssetQuantity) public view returns(uint256 quoteAssetQuantity) {
         if (baseAssetQuantity > 0) {
             return vamm.get_dy(2, 0, baseAssetQuantity.toUint256()) / 1e12;
@@ -701,9 +716,42 @@ contract AMM is Governable, Pausable {
         }
     }
 
-    function getImpermanentPosition(address _maker) external view returns (int256 position, uint openNotional) {
+    function getMakerPositionAndUnrealizedPnl(address _maker) external view returns (int256 position, uint openNotional, int256 unrealizedPnl) {
         Maker memory maker = makers[_maker];
-        (position, openNotional) = vamm.get_maker_position(maker.dToken, maker.vUSD, maker.vAsset, maker.dToken);
+        (position, openNotional, unrealizedPnl) = vamm.get_maker_position(maker.dToken, maker.vUSD, maker.vAsset, maker.dToken);
+    }
+
+    /**
+    * @notice Get total liquidity deposited by maker and its current value
+    * @param _maker maker for which information to be obtained
+    * @return
+    *   vAsset - current base asset amount of maker in the pool
+    *   vUSD - current quote asset amount of maker in the pool
+    *   totalDeposited - total value of initial liquidity deposited in the pool by maker
+    */
+    function getMakerLiquidity(address _maker) external view returns (uint vAsset, uint vUSD, uint totalDeposited) {
+        Maker memory maker = makers[_maker];
+        totalDeposited = 2 * maker.vUSD / 1e12;
+        uint totalDTokenSupply = vamm.totalSupply();
+        if (totalDTokenSupply > 0) {
+            vUSD = vamm.balances(0) * maker.dToken / totalDTokenSupply / 1e12;
+            vAsset = vamm.balances(2) * maker.dToken / totalDTokenSupply;
+        }
+    }
+
+    /**
+    * @notice Get vUSD to add/remove given amount of vAsset
+    * @param vAsset base asset amount to add or remove
+    * @return vUSD equivalent quote asset amount to be added/removed
+    */
+    function getMakerBaseToQuote(uint vAsset) external view returns (uint vUSD) {
+        uint bal2 = vamm.balances(2);
+        if (bal2 > 0) {
+            vUSD = vAsset * vamm.balances(0) / bal2;
+        } else {
+            vUSD = vAsset * vamm.price_scale(1) / 1e18;
+        }
+        vUSD /= 1e12;
     }
 
     function lastPrice() public view returns(uint256) {

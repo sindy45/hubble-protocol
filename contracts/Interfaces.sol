@@ -51,6 +51,9 @@ interface IAMM {
     function underlyingAsset() external view returns (address);
     function positions(address trader) external view returns (int256,uint256,int256);
     function getQuote(int256 baseAssetQuantity) external view returns(uint256 qouteAssetQuantity);
+    function getCloseQuote(int256 baseAssetQuantity) external view returns(uint256 qouteAssetQuantity);
+    function getTakerNotionalPositionAndUnrealizedPnl(address trader) external view returns(uint takerNotionalPosition, int256 unrealizedPnl);
+    function getMakerPositionAndUnrealizedPnl(address maker) external view returns (int256 position, uint openNotional, int256 unrealizedPnl);
     function getPendingFundingPayment(address trader)
         external
         view
@@ -108,7 +111,7 @@ interface IVAMM {
     function price_scale(uint256 k) external view returns(uint256);
     function add_liquidity(uint256[3] calldata amounts, uint256 min_mint_amount) external returns (uint256);
     function remove_liquidity(uint256 amount, uint256[3] calldata minAmounts, uint256 vUSD, uint256 vAsset, uint256 makerDToken, int256 takerPosSize, uint256 takerOpenNotional) external returns (int256, uint256, int256);
-    function get_maker_position(uint256 amount, uint256 vUSD, uint256 vAsset, uint256 makerDToken) external view returns (int256, uint256);
+    function get_maker_position(uint256 amount, uint256 vUSD, uint256 vAsset, uint256 makerDToken) external view returns (int256, uint256, int256);
     function totalSupply() external view returns (uint256);
 }
 

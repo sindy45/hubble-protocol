@@ -62,14 +62,13 @@ describe('Position Tests', async function() {
             const trade1 = await getTradeDetails(tx, TRADE_FEE)
 
             const {
-                marginFraction : expectedMarginFraction,
+                expectedMarginFraction,
                 liquidationPrice
-            } = await clearingHouse.expectedMarginFraction(alice, 0, baseAssetQuantity)
-            expect(liquidationPrice).to.eq('980973753')
+            } = await clearingHouse.getTakerExpectedMFAndLiquidationPrice(alice, 0, baseAssetQuantity)
+            expect(parseInt(liquidationPrice.toNumber() / 1e6)).to.eq(980)
 
             const quote = await amm.getQuote(baseAssetQuantity)
             tx = await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* long exactly */, quote /* max_dx */)
-            // tx = await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* long exactly */, amount /* max_dx */)
             const trade2 = await getTradeDetails(tx, TRADE_FEE)
 
             const quoteAsset = trade1.quoteAsset.add(trade2.quoteAsset)
@@ -130,11 +129,11 @@ describe('Position Tests', async function() {
             const trade1 = await getTradeDetails(tx, TRADE_FEE)
 
             const {
-                marginFraction : expectedMarginFraction,
+                expectedMarginFraction,
                 quoteAssetQuantity,
                 liquidationPrice
-            } = await clearingHouse.expectedMarginFraction(alice, 0, baseAssetQuantity)
-            expect(liquidationPrice).to.eq('1019637444')
+            } = await clearingHouse.getTakerExpectedMFAndLiquidationPrice(alice, 0, baseAssetQuantity)
+            expect(parseInt(liquidationPrice.toNumber() / 1e6)).to.eq(1019)
 
             const quote = await amm.getQuote(baseAssetQuantity)
             tx = await clearingHouse.openPosition(0, baseAssetQuantity, quote)
@@ -168,10 +167,10 @@ describe('Position Tests', async function() {
             await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* long exactly */, quote /* max_dx */)
 
             baseAssetQuantity = baseAssetQuantity.mul(-1)
-            ;({ marginFraction, quoteAssetQuantity: quote, liquidationPrice } = await clearingHouse.expectedMarginFraction(alice, 0, baseAssetQuantity))
+            ;({ expectedMarginFraction, quoteAssetQuantity: quote, liquidationPrice } = await clearingHouse.getTakerExpectedMFAndLiquidationPrice(alice, 0, baseAssetQuantity))
 
             // since all positions will be closed
-            expect(marginFraction).to.eq(ethers.constants.MaxInt256)
+            expect(expectedMarginFraction).to.eq(ethers.constants.MaxInt256)
             expect(liquidationPrice).to.eq(ZERO)
 
             await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity, quote /* min_dy */)
@@ -197,10 +196,10 @@ describe('Position Tests', async function() {
             await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* exact base asset */, quote /* min_dy */)
 
             baseAssetQuantity = baseAssetQuantity.mul(-1)
-            ;({ marginFraction, quoteAssetQuantity: quote, liquidationPrice } = await clearingHouse.expectedMarginFraction(alice, 0, baseAssetQuantity))
+            ;({ expectedMarginFraction, quoteAssetQuantity: quote, liquidationPrice } = await clearingHouse.getTakerExpectedMFAndLiquidationPrice(alice, 0, baseAssetQuantity))
 
             // since all positions will be closed
-            expect(marginFraction).to.eq(ethers.constants.MaxInt256)
+            expect(expectedMarginFraction).to.eq(ethers.constants.MaxInt256)
             expect(liquidationPrice).to.eq(ZERO)
 
             await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* long exactly */, quote /* max_dx */)
@@ -210,7 +209,7 @@ describe('Position Tests', async function() {
                 openNotional: ZERO,
                 notionalPosition: ZERO,
                 unrealizedPnl: ZERO,
-                marginFraction,
+                marginFraction: expectedMarginFraction
             })
             expect(await amm.longOpenInterestNotional()).to.eq(ZERO)
             expect(await amm.shortOpenInterestNotional()).to.eq(ZERO)
@@ -231,16 +230,16 @@ describe('Position Tests', async function() {
             baseAssetQuantity = _1e18.mul(-7)
 
             let {
-                marginFraction : expectedMarginFraction,
+                expectedMarginFraction,
                 quoteAssetQuantity
-            } = await clearingHouse.expectedMarginFraction(alice, 0, baseAssetQuantity)
+            } = await clearingHouse.getTakerExpectedMFAndLiquidationPrice(alice, 0, baseAssetQuantity)
 
             tx = await clearingHouse.openPosition(0, baseAssetQuantity, await amm.getQuote(baseAssetQuantity))
 
             const trade2 = await getTradeDetails(tx, TRADE_FEE)
             expect(await amm.longOpenInterestNotional()).to.eq(ZERO)
             expect(await amm.shortOpenInterestNotional()).to.eq(_1e18.mul(2))
-            expect((await clearingHouse.getMarginFraction(alice)).div(1e4)).to.eq(expectedMarginFraction.div(1e4).sub(1)) // slightly different because of vamm fee
+            expect((await clearingHouse.getMarginFraction(alice)).div(1e4)).to.eq(expectedMarginFraction.div(1e4)) // slightly different because of vamm fee
             expect(trade2.quoteAsset).gt(quoteAssetQuantity) // slightly higher because less fee is paid while closing initial position
 
             let fee = trade1.fee.add(trade2.fee)
@@ -254,7 +253,7 @@ describe('Position Tests', async function() {
 
             // Long
             baseAssetQuantity = _1e18.mul(10)
-            ;({ marginFraction : expectedMarginFraction } = await clearingHouse.expectedMarginFraction(alice, 0, baseAssetQuantity))
+            ;({ expectedMarginFraction } = await clearingHouse.getTakerExpectedMFAndLiquidationPrice(alice, 0, baseAssetQuantity))
 
             const quote = await amm.getQuote(baseAssetQuantity)
             tx = await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* long exactly */, quote.add(7000)) // slightly higher quote value because of vamm fee while closing short position and then opening a long position of 8
@@ -327,11 +326,14 @@ describe('Position Tests', async function() {
             let fee = trade.fee
 
             const shortBaseAssetQuantity = _1e18.mul(-1)
+            const { expectedMarginFraction } = await clearingHouse.getTakerExpectedMFAndLiquidationPrice(alice, 0, shortBaseAssetQuantity)
+
 
             quote = await amm.getQuote(shortBaseAssetQuantity)
             tx = await clearingHouse.openPosition(0 /* amm index */, shortBaseAssetQuantity, quote /* min_dy */)
             trade = await getTradeDetails(tx, TRADE_FEE)
             fee = fee.add(trade.fee)
+            expect((await clearingHouse.getMarginFraction(alice)).div(1e3)).to.eq(expectedMarginFraction.div(1e3))
 
             const swapEvents = await amm.queryFilter('Swap')
             const realizedPnl = unrealizedPnl.mul(shortBaseAssetQuantity.abs()).div(longBaseAssetQuantity)
@@ -360,11 +362,13 @@ describe('Position Tests', async function() {
             let fee = trade.fee
 
             const longBaseAssetQuantity = _1e18.mul(1)
+            const { expectedMarginFraction } = await clearingHouse.getTakerExpectedMFAndLiquidationPrice(alice, 0, longBaseAssetQuantity)
 
             quote = await amm.getQuote(longBaseAssetQuantity)
             tx = await clearingHouse.openPosition(0 /* amm index */, longBaseAssetQuantity, quote /* min_dy */)
             trade = await getTradeDetails(tx, TRADE_FEE)
             fee = fee.add(trade.fee)
+            expect((await clearingHouse.getMarginFraction(alice)).div(1e3)).to.eq(expectedMarginFraction.div(1e3))
 
             const swapEvents = await amm.queryFilter('Swap')
             const realizedPnl = unrealizedPnl.mul(longBaseAssetQuantity).div(shortBaseAssetQuantity.abs())

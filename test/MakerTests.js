@@ -158,6 +158,12 @@ describe('Maker Tests', async function() {
             expect(openNotional).gt(quoteAsset.div(2)) // higher openNotional, increase pnl
             expect(unrealizedPnl).lt(ZERO)
 
+            const [ maker1Pos ] = await clearingHouse.makerPositions(maker1.address)
+            expect(maker1Pos.size).to.eq(size)
+            expect(maker1Pos.openNotional).to.eq(openNotional)
+            expect(maker1Pos.unrealizedPnl).to.eq(unrealizedPnl)
+            expect(maker1Pos.avgOpen).to.eq(openNotional.mul(_1e18).div(size.abs()))
+
             ;({ notionalPosition, unrealizedPnl, size, openNotional } = await amm.getNotionalPositionAndUnrealizedPnl(maker2.address))
             expect(notionalPosition).eq(_1e6.mul(2e6))
             expect(size).lt(baseAssetQuantity.div(-2))
@@ -192,6 +198,12 @@ describe('Maker Tests', async function() {
             expect(openNotional).gt(ZERO)
             expect(openNotional).lt(quoteAsset.div(2)) // lower openNotional becaue of vamm fee, increase pnl
             expect(unrealizedPnl).lt(ZERO)
+
+            const [ maker1Pos ] = await clearingHouse.makerPositions(maker1.address)
+            expect(maker1Pos.size).to.eq(size)
+            expect(maker1Pos.openNotional).to.eq(openNotional)
+            expect(maker1Pos.unrealizedPnl).to.eq(unrealizedPnl)
+            expect(maker1Pos.avgOpen).to.eq(openNotional.mul(_1e18).div(size.abs()))
 
             ;({ notionalPosition, unrealizedPnl, size, openNotional } = await amm.getNotionalPositionAndUnrealizedPnl(maker2.address))
             expect(notionalPosition).eq(_1e6.mul(2e6))
@@ -242,7 +254,7 @@ describe('Maker Tests', async function() {
             const tx = await clearingHouse.connect(maker2).addLiquidity(0, initialLiquidity.div(2), ethers.constants.MaxUint256)
 
             const addLiquidityEvent = (await parseRawEvent(tx, swap, 'AddLiquidity')).args
-            const totalSupply = addLiquidityEvent.token_supply
+            totalSupply = addLiquidityEvent.token_supply
             const tokenFee = addLiquidityEvent.fee
             initialPositionSize = initialLiquidity.mul(tokenFee).div(totalSupply)
 
@@ -265,6 +277,17 @@ describe('Maker Tests', async function() {
 
             const tx = await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* long exactly */, amount /* max_dx */)
             let { quoteAsset } = await getTradeDetails(tx, DEFAULT_TRADE_FEE)
+
+            const [{ vAsset, vUSD, totalDeposited }, { dToken: maker1Liquidity }, vUSDBalance] = await Promise.all([
+                amm.getMakerLiquidity(maker1.address),
+                amm.makers(maker1.address),
+                swap.balances(0)
+            ])
+            expect(totalDeposited).to.eq(_1e6.mul(2e6))
+            // base balance in pool = 1000 + 500 - 50 = 1450
+            expect(vAsset).to.eq(_1e18.mul(1450).mul(maker1Liquidity).div(totalSupply))
+            // quote balance in pool = 1m + 0.5m + quoteAsset
+            expect(vUSD).to.eq(vUSDBalance.mul(maker1Liquidity).div(totalSupply).div(_1e12))
 
             let { notionalPosition, unrealizedPnl, size, openNotional } = await amm.getNotionalPositionAndUnrealizedPnl(maker1.address)
             expect(notionalPosition).eq(_1e6.mul(2e6))
@@ -539,7 +562,7 @@ describe('Maker Tests', async function() {
             const {
                 position: maker1Position,
                 openNotional: maker1OpenNotional
-            } = await amm.getImpermanentPosition(maker1.address) // maker1 impermanent position
+            } = await amm.getMakerPositionAndUnrealizedPnl(maker1.address) // maker1 impermanent position
             assertBounds(maker1Position, _1e18.mul(75).div(10), _1e18.mul(8)) // 5/2 + 10/2 + noise
 
             let { notionalPosition, unrealizedPnl, size, openNotional } = await amm.getNotionalPositionAndUnrealizedPnl(maker1.address)
@@ -595,7 +618,7 @@ describe('Maker Tests', async function() {
             const {
                 position: maker1Position,
                 openNotional: maker1OpenNotional
-            } = await amm.getImpermanentPosition(maker1.address) // maker1 impermanent position
+            } = await amm.getMakerPositionAndUnrealizedPnl(maker1.address) // maker1 impermanent position
             assertBounds(maker1Position, _1e18.mul(-75).div(10), _1e18.mul(-7)) // -5/2 - 10/2 + noise
 
             let { notionalPosition, unrealizedPnl, size, openNotional } = await amm.getNotionalPositionAndUnrealizedPnl(maker1.address)
@@ -653,7 +676,7 @@ describe('Maker Tests', async function() {
             const {
                 position: maker1Position,
                 openNotional: maker1OpenNotional
-            } = await amm.getImpermanentPosition(maker1.address) // maker1 impermanent position
+            } = await amm.getMakerPositionAndUnrealizedPnl(maker1.address) // maker1 impermanent position
             assertBounds(maker1Position, _1e18.mul(10), _1e18.mul(105).div(10)) // 15/2 + 5/2 + noise
             expect(maker1OpenNotional).lt(quoteAsset.add(takerQuote).div(2)) // a little more than 1/2 share of maker1 in the pool, hence openNotional is less in case of long
 
@@ -709,7 +732,7 @@ describe('Maker Tests', async function() {
             const {
                 position: maker1Position,
                 openNotional: maker1OpenNotional
-            } = await amm.getImpermanentPosition(maker1.address) // maker1 impermanent position
+            } = await amm.getMakerPositionAndUnrealizedPnl(maker1.address) // maker1 impermanent position
             assertBounds(maker1Position, _1e18.mul(-10), _1e18.mul(-95).div(10)) // -15/2 - 5/2 + noise
             expect(maker1OpenNotional).gt(quoteAsset.add(takerQuote).div(2)) // a little more than 1/2 share of maker1 in the pool, hence openNotional is more in case of short
 
@@ -782,7 +805,7 @@ describe('Maker Tests', async function() {
 
             // liquidate maker position
             await expect(clearingHouse.liquidate(maker3.address)).to.be.revertedWith('CH: Remove Liquidity First')
-            const { position: maker3Pos } = await amm.getImpermanentPosition(maker3.address)
+            const { position: maker3Pos } = await amm.getMakerPositionAndUnrealizedPnl(maker3.address)
             await clearingHouse.liquidateMaker(maker3.address)
 
             const makerPosition = await amm.makers(maker3.address)
@@ -809,7 +832,7 @@ describe('Maker Tests', async function() {
             expect(await clearingHouse.isAboveMaintenanceMargin(maker3.address)).to.be.false // taker+maker marginFraction < MM
 
             await expect(clearingHouse.liquidate(maker3.address)).to.be.revertedWith('CH: Remove Liquidity First')
-            const { position: maker3Pos } = await amm.getImpermanentPosition(maker3.address)
+            const { position: maker3Pos } = await amm.getMakerPositionAndUnrealizedPnl(maker3.address)
             await clearingHouse.liquidateMaker(maker3.address)
 
             const makerPosition = await amm.makers(maker3.address)
