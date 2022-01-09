@@ -217,7 +217,7 @@ describe('Funding Tests', function() {
     it('alice is in liquidation zone but saved by positive funding payment', async () => {
         ;({ swap, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, oracle, weth, insuranceFund } = await setupContracts())
         await oracle.setUnderlyingPrice(weth.address, 1e6 * 2000) // $2k
-        await marginAccount.addCollateral(weth.address, 0.7 * 1e6) // weight = 0.7
+        await marginAccount.whitelistCollateral(weth.address, 0.7 * 1e6) // weight = 0.7
         wethAmount = _1e18
         await weth.mint(alice, wethAmount)
         await weth.approve(marginAccount.address, wethAmount)

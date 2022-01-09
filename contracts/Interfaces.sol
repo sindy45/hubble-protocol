@@ -42,7 +42,7 @@ interface IAMM {
     function openPosition(address trader, int256 baseAssetQuantity, uint quoteAssetLimit)
         external
         returns (int realizedPnl, uint quoteAsset, bool isPositionIncreased);
-    function addLiquidity(address trader, uint baseAssetQuantity, uint quoteAssetLimit) external;
+    function addLiquidity(address trader, uint baseAssetQuantity, uint minDToken) external;
     function removeLiquidity(address maker, uint amount, uint minQuote, uint minBase) external returns (int256 realizedPnl);
     function getUnrealizedPnL(address trade) external returns(int256);
     function getNotionalPositionAndUnrealizedPnl(address trader)
@@ -114,6 +114,7 @@ interface IVAMM {
     function price_oracle(uint256 k) external view returns(uint256);
     function price_scale(uint256 k) external view returns(uint256);
     function add_liquidity(uint256[3] calldata amounts, uint256 min_mint_amount) external returns (uint256);
+    function calc_token_amount(uint256[3] calldata amounts, bool deposit) external view returns (uint256);
     function remove_liquidity(uint256 amount, uint256[3] calldata minAmounts, uint256 vUSD, uint256 vAsset, uint256 makerDToken, int256 takerPosSize, uint256 takerOpenNotional) external returns (int256, uint256, int256);
     function get_maker_position(uint256 amount, uint256 vUSD, uint256 vAsset, uint256 makerDToken) external view returns (int256, uint256, int256);
     function totalSupply() external view returns (uint256);

@@ -79,7 +79,8 @@ describe('UI Helpers', async function() {
             margin = _1e6.mul(4000)
             await addMargin(signers[0], margin)
             const liquidity = _1e18.mul(10)
-            await clearingHouse.addLiquidity(0, liquidity, ethers.constants.MaxUint256)
+            const { dToken } = await amm.getMakerQuote(liquidity, true, true)
+            await clearingHouse.addLiquidity(0, liquidity, dToken)
         })
 
         it('increase taker position', async function() {
@@ -121,9 +122,10 @@ describe('UI Helpers', async function() {
         it('alice adds more liquidity', async function() {
             await addMargin(signers[0], _1e6.mul(2000))
             const liquidity = _1e18.mul(10)
-            const vUsd = await amm.getMakerBaseToQuote(liquidity)
+            const { fillAmount: vUsd } = await amm.getMakerQuote(liquidity, true, true)
             const { expectedMarginFraction, liquidationPrice } = await clearingHouse.getMakerExpectedMFAndLiquidationPrice(alice, 0, vUsd, false)
-            await clearingHouse.addLiquidity(0, liquidity, ethers.constants.MaxUint256)
+            const { dToken } = await amm.getMakerQuote(liquidity, true, true)
+            await clearingHouse.addLiquidity(0, liquidity, dToken)
 
             expect((await clearingHouse.getMarginFraction(alice)).div(1e3)).to.eq(expectedMarginFraction.div(1e3))
             expect(parseInt(liquidationPrice.toNumber() / 1e6)).to.eq(1094)
@@ -131,7 +133,7 @@ describe('UI Helpers', async function() {
 
         it('alice removes liquidity', async function() {
             const liquidity = _1e18.mul(5)
-            const vUsd = await amm.getMakerBaseToQuote(liquidity)
+            const { fillAmount: vUsd } = await amm.getMakerQuote(liquidity, true, false)
             const { expectedMarginFraction, liquidationPrice } = await clearingHouse.getMakerExpectedMFAndLiquidationPrice(alice, 0, vUsd, true)
             const { vAsset, dToken } = await amm.makers(alice)
             const dTokenAmount = liquidity.mul(dToken).div(vAsset)

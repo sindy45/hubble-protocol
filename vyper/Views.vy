@@ -12,6 +12,7 @@ interface Curve:
     def price_scale(i: uint256) -> uint256: view
     def balances(i: uint256) -> uint256: view
     def D() -> uint256: view
+    def totalSupply() -> uint256: view
     def fee_calc(xp: uint256[N_COINS]) -> uint256: view
     def calc_token_fee(amounts: uint256[N_COINS], xp: uint256[N_COINS]) -> uint256: view
     def token() -> address: view
@@ -99,7 +100,7 @@ def get_dx(i: uint256, j: uint256, dy: uint256, balances: uint256[N_COINS], D: u
 @external
 def calc_token_amount(amounts: uint256[N_COINS], deposit: bool) -> uint256:
     precisions: uint256[N_COINS] = PRECISIONS
-    token_supply: uint256 = ERC20(Curve(msg.sender).token()).totalSupply()
+    token_supply: uint256 = Curve(msg.sender).totalSupply()
     xp: uint256[N_COINS] = empty(uint256[N_COINS])
     for k in range(N_COINS):
         xp[k] = Curve(msg.sender).balances(k)

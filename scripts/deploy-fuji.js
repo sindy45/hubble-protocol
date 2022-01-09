@@ -24,7 +24,7 @@ async function main() {
     const avax = await ERC20Mintable.deploy('Hubble-Avax', 'hAVAX', 8)
 
     await oracle.setAggregator(avax.address, '0x5498BB86BC934c8D34FDA08E81D444153d0D06aD') // AVAX / USD Feed
-    await marginAccount.addCollateral(avax.address, 8e5) // weight = 0.8e6
+    await marginAccount.whitelistCollateral(avax.address, 8e5) // weight = 0.8e6
 
     // setup another market
     // const btc = await ERC20Mintable.deploy('Bitcoin', 'BTC', 8)
@@ -274,11 +274,11 @@ async function deployMilkyWay2Updates() {
     console.log({ link: link.address })
     await oracle.setAggregator(link.address, '0x34C4c526902d88a3Aa98DB8a9b802603EB1E3470') // LINK / USD Feed
     await sleep(2)
-    await marginAccount.addCollateral(weth.address, 9e5) // weight = 0.9
+    await marginAccount.whitelistCollateral(weth.address, 9e5) // weight = 0.9
     await sleep(2)
-    await marginAccount.addCollateral(btc.address, 9e5) // weight = 0.9
+    await marginAccount.whitelistCollateral(btc.address, 9e5) // weight = 0.9
     await sleep(2)
-    await marginAccount.addCollateral(link.address, 7e5) // weight = 0.7
+    await marginAccount.whitelistCollateral(link.address, 7e5) // weight = 0.7
 }
 
 // main()

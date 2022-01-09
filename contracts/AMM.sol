@@ -167,7 +167,7 @@ contract AMM is Governable, Pausable {
         fundingPayment = takerFundingPayment + makerFundingPayment;
     }
 
-    function addLiquidity(address trader, uint baseAssetQuantity, uint quoteAssetLimit)
+    function addLiquidity(address trader, uint baseAssetQuantity, uint minDToken)
         external
         whenNotPaused
         onlyClearingHouse
@@ -182,9 +182,8 @@ contract AMM is Governable, Pausable {
             quoteAsset = baseAssetQuantity * vamm.balances(0) / bal2;
             bal1 = baseAssetQuantity * vamm.balances(1) / bal2;
         }
-        require(quoteAsset <= quoteAssetLimit, "amm.addLiquidity.slippage");
 
-        uint _dToken = vamm.add_liquidity([quoteAsset, bal1 /* to be added in same ratio as other coins */, baseAssetQuantity], 0);
+        uint _dToken = vamm.add_liquidity([quoteAsset, bal1 /* to be added in same ratio as other coins */, baseAssetQuantity], minDToken);
 
         // updates
         Maker storage _maker = makers[trader];
@@ -728,9 +727,11 @@ contract AMM is Governable, Pausable {
     *   vAsset - current base asset amount of maker in the pool
     *   vUSD - current quote asset amount of maker in the pool
     *   totalDeposited - total value of initial liquidity deposited in the pool by maker
+    *   dToken - maker dToken balance
     */
-    function getMakerLiquidity(address _maker) external view returns (uint vAsset, uint vUSD, uint totalDeposited) {
+    function getMakerLiquidity(address _maker) external view returns (uint vAsset, uint vUSD, uint totalDeposited, uint dToken) {
         Maker memory maker = makers[_maker];
+        dToken = maker.dToken;
         totalDeposited = 2 * maker.vUSD / 1e12;
         uint totalDTokenSupply = vamm.totalSupply();
         if (totalDTokenSupply > 0) {
@@ -740,18 +741,51 @@ contract AMM is Governable, Pausable {
     }
 
     /**
-    * @notice Get vUSD to add/remove given amount of vAsset
-    * @param vAsset base asset amount to add or remove
-    * @return vUSD equivalent quote asset amount to be added/removed
-    */
-    function getMakerBaseToQuote(uint vAsset) external view returns (uint vUSD) {
-        uint bal2 = vamm.balances(2);
-        if (bal2 > 0) {
-            vUSD = vAsset * vamm.balances(0) / bal2;
-        } else {
-            vUSD = vAsset * vamm.price_scale(1) / 1e18;
+    * @notice calculate base and quote asset amount form dToken
+     */
+    function calcWithdrawAmounts(uint dToken) external view returns (uint quoteAsset, uint baseAsset) {
+        uint totalDTokenSupply = vamm.totalSupply();
+        if (totalDTokenSupply > 0) {
+            quoteAsset = vamm.balances(0) * dToken / totalDTokenSupply / 1e12;
+            baseAsset = vamm.balances(2) * dToken / totalDTokenSupply;
         }
-        vUSD /= 1e12;
+    }
+
+    /**
+    * @notice Get amount of token to add/remove given the amount of other token
+    * @param inputAmount quote/base asset amount to add or remove, base - 18 decimal, quote - 6 decimal
+    * @param isBase true if amount is base asset
+    * @param deposit true -> addLiquidity, false -> removeLiquidity
+    * @return fillAmount base/quote asset amount to be added/removed
+    *         dToken - equivalent dToken amount
+    */
+    function getMakerQuote(uint inputAmount, bool isBase, bool deposit) external view returns (uint fillAmount, uint dToken) {
+        uint bal1;
+        if (isBase) {
+            // calculate quoteAsset amount, fillAmount = quoteAsset, inputAmount = baseAsset
+            uint bal2 = vamm.balances(2);
+            if (bal2 == 0) {
+                fillAmount = inputAmount * vamm.price_scale(1) / 1e18;
+                bal1 = fillAmount * 1e8 / vamm.price_scale(0);
+            } else {
+                fillAmount = inputAmount * vamm.balances(0) / bal2;
+                bal1 = inputAmount * vamm.balances(1) / bal2;
+            }
+            dToken = vamm.calc_token_amount([fillAmount, bal1, inputAmount], deposit);
+            fillAmount /= 1e12;
+        } else {
+            uint bal0 = vamm.balances(0);
+            // calculate quote asset amount, fillAmount = baseAsset, inputAmount = quoteAsset
+            uint _inputAmount = inputAmount * 1e12; // inputAmount: 6 decimals
+            if (bal0 == 0) {
+                fillAmount = _inputAmount * 1e18 / vamm.price_scale(1);
+                bal1 = _inputAmount * 1e8 / vamm.price_scale(0);
+            } else {
+                fillAmount = _inputAmount * vamm.balances(2) / bal0;
+                bal1 = _inputAmount * vamm.balances(1) / bal0;
+            }
+            dToken = vamm.calc_token_amount([_inputAmount, bal1, fillAmount], deposit);
+        }
     }
 
     function lastPrice() public view returns(uint256) {

@@ -20,7 +20,7 @@ describe('Margin Account Meta Txs', async function () {
         weth = await ERC20Mintable.deploy('weth', 'weth', 18)
         await oracle.setUnderlyingPrice(weth.address, 1e6 * 2000) // $2k
 
-        await marginAccount.addCollateral(weth.address, 1e6) // weight = 1
+        await marginAccount.whitelistCollateral(weth.address, 1e6) // weight = 1
 
         const supportedCollateral = await marginAccount.supportedCollateral(1);
         expect(supportedCollateral.token).to.eq(weth.address)

@@ -199,10 +199,11 @@ PRECISIONS: constant(uint256[N_COINS]) = [
 ]
 
 INF_COINS: constant(uint256) = 15
+isInitialized: bool
 
 
 @external
-def __init__(
+def initialize (
     owner: address,
     math: address,
     views: address,
@@ -217,6 +218,7 @@ def __init__(
     ma_half_time: uint256,
     initial_prices: uint256[N_COINS-1]
 ):
+    assert not self.isInitialized, "Swap: contract is already initialized"
     self.math = math
     self.views = views
     self.totalSupply = 0
@@ -252,6 +254,7 @@ def __init__(
     self.ma_half_time = ma_half_time
     self.xcp_profit_a = 10**18
     self.kill_deadline = block.timestamp + KILL_DEADLINE_DT
+    self.isInitialized = True
 
 @payable
 @external
@@ -1124,10 +1127,10 @@ def get_notional(
         unrealizedPnl += feeAdjustedPnl
     return notionalPosition, position, unrealizedPnl, openNotional
 
-# @view
-# @external
-# def calc_token_amount(amounts: uint256[N_COINS], deposit: bool) -> uint256:
-#     return Views(self.views).calc_token_amount(amounts, deposit)
+@view
+@external
+def calc_token_amount(amounts: uint256[N_COINS], deposit: bool) -> uint256:
+    return Views(self.views).calc_token_amount(amounts, deposit)
 
 
 # @internal

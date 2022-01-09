@@ -19,7 +19,7 @@ describe('Liquidation Tests', async function() {
     it('addCollateral', async () => {
         oraclePrice = 1e6 * 2000 // $2k
         await oracle.setUnderlyingPrice(weth.address, oraclePrice)
-        await marginAccount.addCollateral(weth.address, 0.7 * 1e6) // weight = 0.7
+        await marginAccount.whitelistCollateral(weth.address, 0.7 * 1e6) // weight = 0.7
         expect((await marginAccount.isLiquidatable(alice))[0]).to.be.false
     })
 
@@ -150,8 +150,8 @@ describe('Multi-collateral Liquidation Tests', async function() {
             oracle.setUnderlyingPrice(weth.address, oraclePrice),
             oracle.setUnderlyingPrice(avax.address, avaxOraclePrice),
         ])
-        await marginAccount.addCollateral(weth.address, 0.7 * 1e6), // weight = 0.7
-        await marginAccount.addCollateral(avax.address, 0.8 * 1e6) // weight = 0.8
+        await marginAccount.whitelistCollateral(weth.address, 0.7 * 1e6), // weight = 0.7
+        await marginAccount.whitelistCollateral(avax.address, 0.8 * 1e6) // weight = 0.8
         expect((await marginAccount.isLiquidatable(alice))[0]).to.be.false
 
         // addMargin

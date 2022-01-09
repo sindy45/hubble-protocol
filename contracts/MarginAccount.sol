@@ -401,10 +401,14 @@ contract MarginAccount is VanillaGovernable, ERC2771ContextUpgradeable {
         liquidationIncentive = _liquidationIncentive;
     }
 
-    // @todo rename to whitelistCollateral
-    function addCollateral(address _coin, uint _weight) external onlyGovernance {
+    function whitelistCollateral(address _coin, uint _weight) external onlyGovernance {
         _addCollateral(_coin, _weight);
     }
 
-    // @todo function to change weight of an asset
+    // function to change weight of an asset
+    function changeCollateralWeight(uint idx, uint _weight) external onlyGovernance {
+        require(_weight <= PRECISION, "weight > 1e6");
+        require(idx < supportedCollateral.length, "Collateral not supported");
+        supportedCollateral[idx].weight = _weight;
+    }
 }

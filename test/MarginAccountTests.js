@@ -31,7 +31,7 @@ describe('Margin Account Tests', function() {
         weth = await ERC20Mintable.deploy('weth', 'weth', 18)
         await oracle.setUnderlyingPrice(weth.address, 1e6 * 2000) // $2k
 
-        await marginAccount.addCollateral(weth.address, 1e6) // weight = 1
+        await marginAccount.whitelistCollateral(weth.address, 1e6) // weight = 1
 
         const supportedCollateral = await marginAccount.supportedCollateral(1);
         expect(supportedCollateral.token).to.eq(weth.address)
@@ -56,5 +56,17 @@ describe('Margin Account Tests', function() {
         expect(await marginAccount.margin(0, alice)).to.eq(margin)
         expect(await marginAccount.margin(1, alice)).to.eq(amount)
         expect(await marginAccount.getNormalizedMargin(alice)).to.eq(_1e6.mul(2000).div(2).add(margin))
+    })
+
+    it('change collateral weight', async () => {
+        let supportedCollateral = await marginAccount.supportedCollateral(1);
+        expect(supportedCollateral.weight).to.eq(1e6)
+
+        const weight = 8e5 // weight = 0.8
+        await marginAccount.changeCollateralWeight(1, 8e5)
+        supportedCollateral = await marginAccount.supportedCollateral(1);
+        expect(supportedCollateral.token).to.eq(weth.address)
+        expect(supportedCollateral.decimals).to.eq(18)
+        expect(supportedCollateral.weight).to.eq(weight)
     })
 })

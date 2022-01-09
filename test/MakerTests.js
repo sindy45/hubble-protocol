@@ -34,17 +34,17 @@ describe('Maker Tests', async function() {
             // adding $2m liquidity in next step, adding $200k margin
             await addMargin(maker, _1e6.mul(2e5).sub(1))
             await expect(
-                clearingHouse.connect(maker).addLiquidity(0, initialLiquidity, ethers.constants.MaxUint256)
+                clearingHouse.connect(maker).addLiquidity(0, initialLiquidity, 0)
             ).to.be.revertedWith('CH: Below Maintenance Margin')
             await addMargin(maker, 1)
-            await clearingHouse.connect(maker).addLiquidity(0, initialLiquidity, ethers.constants.MaxUint256)
+            await clearingHouse.connect(maker).addLiquidity(0, initialLiquidity, 0)
             await assertions(contracts, maker.address, {
                 size: ZERO,
                 notionalPosition: _1e6.mul(2e6),
                 openNotional: ZERO,
                 unrealizedPnl: ZERO
             })
-            initialVusdBalance = await swap.balances(0)
+            initialVusdBalance = await swap.balances(0, {gasLimit: 100000})
         })
 
         it('maker takes a short counter-position', async () => {
@@ -65,7 +65,7 @@ describe('Maker Tests', async function() {
 
             await clearingHouse.closePosition(0, 0)
 
-            feeAccumulated = (await swap.balances(0)).sub(initialVusdBalance)
+            feeAccumulated = (await swap.balances(0, {gasLimit: 100000})).sub(initialVusdBalance)
             expect(feeAccumulated).gt(ZERO)
             await assertions(contracts, maker.address, {
                 size: ZERO,
@@ -91,7 +91,7 @@ describe('Maker Tests', async function() {
 
             await clearingHouse.closePosition(0, ethers.constants.MaxUint256)
 
-            feeAccumulated_2 = (await swap.balances(0)).sub(initialVusdBalance).sub(feeAccumulated)
+            feeAccumulated_2 = (await swap.balances(0, {gasLimit: 100000})).sub(initialVusdBalance).sub(feeAccumulated)
             expect(feeAccumulated_2).gt(ZERO)
             await assertions(contracts, maker.address, {
                 size: ZERO,
@@ -121,10 +121,11 @@ describe('Maker Tests', async function() {
             maker2 = signers[8]
             // adding $2m liquidity in next step, adding $200k margin
             await addMargin(maker1, _1e6.mul(2e5))
-            await clearingHouse.connect(maker1).addLiquidity(0, initialLiquidity, ethers.constants.MaxUint256)
+            await clearingHouse.connect(maker1).addLiquidity(0, initialLiquidity, 0)
 
+            const { dToken } = await amm.getMakerQuote(initialLiquidity, true, true)
             await addMargin(maker2, _1e6.mul(2.1e5))
-            const tx = await clearingHouse.connect(maker2).addLiquidity(0, initialLiquidity, ethers.constants.MaxUint256)
+            const tx = await clearingHouse.connect(maker2).addLiquidity(0, initialLiquidity, dToken)
 
             const addLiquidityEvent = (await parseRawEvent(tx, swap, 'AddLiquidity')).args
             const totalSupply = addLiquidityEvent.token_supply
@@ -247,11 +248,12 @@ describe('Maker Tests', async function() {
             maker2 = signers[8]
             // adding $2m liquidity in next step, adding $200k margin
             await addMargin(maker1, _1e6.mul(2e5))
-            await clearingHouse.connect(maker1).addLiquidity(0, initialLiquidity, ethers.constants.MaxUint256)
+            await clearingHouse.connect(maker1).addLiquidity(0, initialLiquidity, 0)
 
             // maker2 adds $1m liquidity, adding $100k margin
+            const { dToken } = await amm.getMakerQuote(initialLiquidity.div(2), true, true)
             await addMargin(maker2, _1e6.mul(1.1e5))
-            const tx = await clearingHouse.connect(maker2).addLiquidity(0, initialLiquidity.div(2), ethers.constants.MaxUint256)
+            const tx = await clearingHouse.connect(maker2).addLiquidity(0, initialLiquidity.div(2), dToken)
 
             const addLiquidityEvent = (await parseRawEvent(tx, swap, 'AddLiquidity')).args
             totalSupply = addLiquidityEvent.token_supply
@@ -278,10 +280,9 @@ describe('Maker Tests', async function() {
             const tx = await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* long exactly */, amount /* max_dx */)
             let { quoteAsset } = await getTradeDetails(tx, DEFAULT_TRADE_FEE)
 
-            const [{ vAsset, vUSD, totalDeposited }, { dToken: maker1Liquidity }, vUSDBalance] = await Promise.all([
+            const [{ vAsset, vUSD, totalDeposited, dToken: maker1Liquidity }, vUSDBalance] = await Promise.all([
                 amm.getMakerLiquidity(maker1.address),
-                amm.makers(maker1.address),
-                swap.balances(0)
+                swap.balances(0, {gasLimit: 100000})
             ])
             expect(totalDeposited).to.eq(_1e6.mul(2e6))
             // base balance in pool = 1000 + 500 - 50 = 1450
@@ -373,9 +374,9 @@ describe('Maker Tests', async function() {
             const initialLiquidity = _1e18.mul(1000)
             await addMargin(maker1, maker1Margin)
             await addMargin(maker2, _1e6.mul(2.1e5))
-            await clearingHouse.connect(maker1).addLiquidity(0, initialLiquidity, ethers.constants.MaxUint256)
-            await clearingHouse.connect(maker2).addLiquidity(0, initialLiquidity, ethers.constants.MaxUint256)
-            totalSupply = await swap.totalSupply()
+            await clearingHouse.connect(maker1).addLiquidity(0, initialLiquidity, 0)
+            await clearingHouse.connect(maker2).addLiquidity(0, initialLiquidity, 0)
+            totalSupply = await swap.totalSupply({gasLimit: 100000})
         })
 
         it('remove liquidity - maker short', async function() {
@@ -386,7 +387,8 @@ describe('Maker Tests', async function() {
             let tx = await clearingHouse.openPosition(0, baseAssetQuantity, amount)
             let { quoteAsset } = await getTradeDetails(tx, DEFAULT_TRADE_FEE)
             // maker1 removes all liquidity
-            tx = await clearingHouse.connect(maker1).removeLiquidity(0, maker1Liquidity, _1e6.mul(1e6) /* minQuote */, _1e18.mul(995) /* minBase */)
+            const { baseAsset: minBase, quoteAsset: minQuote } = await amm.calcWithdrawAmounts(maker1Liquidity)
+            tx = await clearingHouse.connect(maker1).removeLiquidity(0, maker1Liquidity, minQuote, minBase)
             const { realizedPnl } = (await parseRawEvent(tx, amm, 'LiquidityRemoved')).args
 
             expect(realizedPnl).to.eq(ZERO) // no reducePosition, fee profit is less than market loss
@@ -412,7 +414,8 @@ describe('Maker Tests', async function() {
             let tx = await clearingHouse.openPosition(0, baseAssetQuantity, amount)
             let { quoteAsset } = await getTradeDetails(tx, DEFAULT_TRADE_FEE)
             // maker1 removes all liquidity
-            tx = await clearingHouse.connect(maker1).removeLiquidity(0, maker1Liquidity, _1e6.mul(995000) /* minQuote */, _1e18.mul(1000) /* minBase */)
+            const { baseAsset: minBase, quoteAsset: minQuote } = await amm.calcWithdrawAmounts(maker1Liquidity)
+            tx = await clearingHouse.connect(maker1).removeLiquidity(0, maker1Liquidity, minQuote, minBase)
             const { realizedPnl } = (await parseRawEvent(tx, amm, 'LiquidityRemoved')).args
 
             expect(realizedPnl).to.eq(ZERO) // no reducePosition, fee profit is less than market loss
@@ -449,9 +452,9 @@ describe('Maker Tests', async function() {
             const initialLiquidity = _1e18.mul(1000)
             await addMargin(maker1, maker1Margin)
             await addMargin(maker2, maker1Margin)
-            await clearingHouse.connect(maker1).addLiquidity(0, initialLiquidity, ethers.constants.MaxUint256)
-            await clearingHouse.connect(maker2).addLiquidity(0, initialLiquidity, ethers.constants.MaxUint256)
-            totalSupply = await swap.totalSupply()
+            await clearingHouse.connect(maker1).addLiquidity(0, initialLiquidity, 0)
+            await clearingHouse.connect(maker2).addLiquidity(0, initialLiquidity, 0)
+            totalSupply = await swap.totalSupply({gasLimit: 100000})
         })
 
         it('increase net position - short -> bigger short', async function () {
@@ -784,15 +787,17 @@ describe('Maker Tests', async function() {
             const initialLiquidity = _1e18.mul(1000)
             await addMargin(maker1, maker1Margin)
             await addMargin(maker2, maker1Margin)
-            await clearingHouse.connect(maker1).addLiquidity(0, initialLiquidity, ethers.constants.MaxUint256)
-            await clearingHouse.connect(maker2).addLiquidity(0, initialLiquidity, ethers.constants.MaxUint256)
+            await clearingHouse.connect(maker1).addLiquidity(0, initialLiquidity, 0)
+            await clearingHouse.connect(maker2).addLiquidity(0, initialLiquidity, 0)
             maintenanceMargin = await clearingHouse.maintenanceMargin()
         })
 
         it('taker-notLiquidable, maker-Liquidable', async function() {
             // maker3 adds Liquidity
             await addMargin(maker3, _1e6.mul(2520))
-            await clearingHouse.connect(maker3).addLiquidity(0, _1e18.mul(10), ethers.constants.MaxUint256)
+            const amount = _1e18.mul(10)
+            const { dToken } = await amm.getMakerQuote(amount, true, true)
+            await clearingHouse.connect(maker3).addLiquidity(0, _1e18.mul(10), dToken)
             // maker3 longs
             const baseAssetQuantity = _1e18.mul(5)
             await clearingHouse.connect(maker3).openPosition(0, baseAssetQuantity, ethers.constants.MaxUint256)
@@ -821,7 +826,8 @@ describe('Maker Tests', async function() {
         it('taker-Liquidable, maker-notLiquidable', async function() {
             // maker3 adds Liquidity
             await addMargin(maker3, _1e6.mul(1250))
-            await clearingHouse.connect(maker3).addLiquidity(0, _1e18.mul(1), ethers.constants.MaxUint256)
+            const { dToken } = await amm.getMakerQuote(_1e18, true, true)
+            await clearingHouse.connect(maker3).addLiquidity(0, _1e18, dToken)
             // maker3 longs
             const baseAssetQuantity = _1e18.mul(10)
             await clearingHouse.connect(maker3).openPosition(0, baseAssetQuantity, ethers.constants.MaxUint256)
@@ -873,14 +879,14 @@ describe('Maker Tests', async function() {
             await addMargin(maker1, makerMargin)
             await addMargin(maker2, makerMargin)
             // epoch = 1
-            await clearingHouse.connect(maker1).addLiquidity(0, initialLiquidity, ethers.constants.MaxUint256)
-            await clearingHouse.connect(maker2).addLiquidity(0, initialLiquidity, ethers.constants.MaxUint256)
+            await clearingHouse.connect(maker1).addLiquidity(0, initialLiquidity, 0)
+            await clearingHouse.connect(maker2).addLiquidity(0, initialLiquidity, 0)
             await gotoNextFundingTime(amm)
             ;([{ dToken: maker1Liquidity }, { dToken: maker2Liquidity }] = await Promise.all([
                 amm.makers(maker1.address),
                 amm.makers(maker2.address)
             ]))
-            totalSupply = await swap.totalSupply()
+            totalSupply = await swap.totalSupply({gasLimit: 100000})
         })
 
         it('makers pay and alice receive funding', async function() {
@@ -923,7 +929,7 @@ describe('Maker Tests', async function() {
             await clearingHouse.openPosition(0, _1e18.mul(5), ethers.constants.MaxUint256)
             // maker2 adds liquidity
             await addMargin(maker2, _1e6.mul(1e6))
-            await clearingHouse.connect(maker2).addLiquidity(0, _1e18.mul(500), ethers.constants.MaxUint256)
+            await clearingHouse.connect(maker2).addLiquidity(0, _1e18.mul(500), 0)
             // alice closes position
             await clearingHouse.openPosition(0, _1e18.mul(-5), 0)
             const { size: maker1Position } = await amm.getNotionalPositionAndUnrealizedPnl(maker1.address)

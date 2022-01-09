@@ -31,8 +31,8 @@ async function setupContracts(tradeFee = DEFAULT_TRADE_FEE, options = { addLiqui
     abiAndBytecode = fs.readFileSync('./vyper/Views.txt').toString().split('\n').filter(Boolean)
     const Views = new ethers.ContractFactory(JSON.parse(abiAndBytecode[0]), abiAndBytecode[1], signers[0])
 
-    abiAndBytecode = fs.readFileSync('./vyper/Swap.txt').toString().split('\n').filter(Boolean)
-    Swap = new ethers.ContractFactory(JSON.parse(abiAndBytecode[0]), abiAndBytecode[1], signers[0])
+    vammAbiAndBytecode = fs.readFileSync('./vyper/Swap.txt').toString().split('\n').filter(Boolean)
+    Swap = new ethers.ContractFactory(JSON.parse(vammAbiAndBytecode[0]), vammAbiAndBytecode[1], signers[0])
 
     moonMath = await MoonMath.deploy()
     views = await Views.deploy(moonMath.address)
@@ -86,6 +86,7 @@ async function setupContracts(tradeFee = DEFAULT_TRADE_FEE, options = { addLiqui
         insuranceFund.syncDeps(registry.address)
     ])
 
+    vammImpl = await Swap.deploy()
     ;({ amm, vamm } = await setupAmm(
         governance,
         [ registry.address, weth.address, 'ETH-Perp' ],
@@ -131,18 +132,24 @@ async function setupUpgradeableProxy(contract, admin, initArgs, deployArgs) {
 }
 
 async function setupAmm(governance, args, initialRate, initialLiquidity, _pause = false, index = 0) {
-    const vamm = await Swap.deploy(
-        governance, // owner
-        moonMath.address, // math
-        views.address, // views
-        54000, // A
-        '3500000000000000', // gamma
-        11000000, 0, 0, 0, // mid_fee = 0.11%, out_fee, allowed_extra_profit, fee_gamma
-        '490000000000000', // adjustment_step
-        0, // admin_fee
-        600, // ma_half_time
-        [_1e18.mul(40000) /* btc initial rate */, _1e18.mul(initialRate)]
+    const VammProxy = await TransparentUpgradeableProxy.deploy(
+        vammImpl.address,
+        proxyAdmin.address,
+        vammImpl.interface.encodeFunctionData('initialize', [
+            governance, // owner
+            moonMath.address, // math
+            views.address, // views
+            54000, // A
+            '3500000000000000', // gamma
+            11000000, 0, 0, 0, // mid_fee = 0.11%, out_fee, allowed_extra_profit, fee_gamma
+            '490000000000000', // adjustment_step
+            0, // admin_fee
+            600, // ma_half_time
+            [_1e18.mul(40000) /* btc initial rate */, _1e18.mul(initialRate)]
+        ])
     )
+
+    const vamm = new ethers.Contract(VammProxy.address, JSON.parse(vammAbiAndBytecode[0]), signers[0])
     const amm = await setupUpgradeableProxy('AMM', proxyAdmin.address, args.concat([ vamm.address, governance ]))
     if (!_pause) {
         await amm.togglePause(_pause)
@@ -154,7 +161,7 @@ async function setupAmm(governance, args, initialRate, initialLiquidity, _pause 
     if (initialLiquidity) {
         maker = (await ethers.getSigners())[9]
         await addMargin(maker, _1e6.mul(initialLiquidity * initialRate * 2))
-        await clearingHouse.connect(maker).addLiquidity(index, _1e18.mul(initialLiquidity), ethers.constants.MaxUint256)
+        await clearingHouse.connect(maker).addLiquidity(index, _1e18.mul(initialLiquidity), 0)
     }
     return { amm, vamm }
 }
