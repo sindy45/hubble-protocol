@@ -11,3 +11,6 @@ vyper/*.txt
 test/debug.js
 coverage/
 coverage.json
+
+.DS_Store
+docgen

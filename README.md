@@ -33,3 +33,15 @@ npx hardhat run scripts/deploy-local.js --network local
 ```
 npx hardhat run scripts/deploy-fuji.js --network fuji
 ```
+
+### Documentation
+```
+npx hardhat docgen
+```
+Open `./docgen/index.html` in a browser.
+
+### Coverage
+```
+npx hardhat coverage
+```
+Open `./coverage/index.html` in a browser.

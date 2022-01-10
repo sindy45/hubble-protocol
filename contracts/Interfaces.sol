@@ -77,7 +77,7 @@ interface IAMM {
 interface IMarginAccount {
     function getNormalizedMargin(address trader) external view returns(int256);
     function realizePnL(address trader, int256 realizedPnl) external;
-    function isLiquidatable(address trader) external view returns(bool, uint, uint);
+    function isLiquidatable(address trader, bool includeFunding) external view returns(bool, uint, uint);
 }
 
 interface IVAMM {

@@ -20,7 +20,7 @@ describe('Liquidation Tests', async function() {
         oraclePrice = 1e6 * 2000 // $2k
         await oracle.setUnderlyingPrice(weth.address, oraclePrice)
         await marginAccount.whitelistCollateral(weth.address, 0.7 * 1e6) // weight = 0.7
-        expect((await marginAccount.isLiquidatable(alice))[0]).to.be.false
+        expect((await marginAccount.isLiquidatable(alice, true))[0]).to.be.false
     })
 
     it('addMargin', async () => {
@@ -28,13 +28,13 @@ describe('Liquidation Tests', async function() {
         await weth.mint(alice, wethMargin)
         await weth.approve(marginAccount.address, wethMargin)
         await marginAccount.addMargin(1, wethMargin)
-        expect((await marginAccount.isLiquidatable(alice))[0]).to.be.false
+        expect((await marginAccount.isLiquidatable(alice, true))[0]).to.be.false
     })
 
     it('alice makes a trade', async function() {
         let tx = await clearingHouse.openPosition(0, _1e18.mul(-5), 0)
         ;({ fee: tradeFee } = await getTradeDetails(tx))
-        expect((await marginAccount.isLiquidatable(alice))[0]).to.be.false
+        expect((await marginAccount.isLiquidatable(alice, true))[0]).to.be.false
     })
 
     it('bob makes a counter-trade', async function() {
@@ -43,7 +43,7 @@ describe('Liquidation Tests', async function() {
     })
 
     it('alice\'s position is liquidated', async function() {
-        expect((await marginAccount.isLiquidatable(alice))[0]).to.be.false // notionalPosition should be 0
+        expect((await marginAccount.isLiquidatable(alice, true))[0]).to.be.false // notionalPosition should be 0
 
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
         ;({ unrealizedPnl, notionalPosition } = await amm.getNotionalPositionAndUnrealizedPnl(alice))
@@ -69,7 +69,7 @@ describe('Liquidation Tests', async function() {
         const { weighted, spot } = await marginAccount.weightedAndSpotCollateral(alice)
         expect(weighted.lt(ZERO)).to.be.true
         expect(spot.gt(ZERO)).to.be.true
-        ;({ _isLiquidatable, incentivePerDollar } = await marginAccount.isLiquidatable(alice))
+        ;({ _isLiquidatable, incentivePerDollar } = await marginAccount.isLiquidatable(alice, true))
         expect(incentivePerDollar.toNumber() / 1e6).to.eq(1.05)
         expect(_isLiquidatable).to.be.true
     })
@@ -96,7 +96,7 @@ describe('Liquidation Tests', async function() {
             wethMargin
         ] = await Promise.all([
             marginAccount.weightedAndSpotCollateral(alice),
-            marginAccount.isLiquidatable(alice),
+            marginAccount.isLiquidatable(alice, true),
             marginAccount.margin(1, alice)
         ])
         expect(parseInt(weighted.toNumber() / 1e6)).to.eq(-57) // .4 * 2000 * .7 - 617.x
@@ -121,7 +121,7 @@ describe('Liquidation Tests', async function() {
         const { weighted, spot } = await marginAccount.weightedAndSpotCollateral(alice)
         expect(weighted.gt(ZERO)).to.be.true
         expect(spot.gt(ZERO)).to.be.true
-        expect((await marginAccount.isLiquidatable(alice))[0]).to.be.false
+        expect((await marginAccount.isLiquidatable(alice, true))[0]).to.be.false
     })
 
     async function addMargin(trader, margin) {
@@ -152,7 +152,7 @@ describe('Multi-collateral Liquidation Tests', async function() {
         ])
         await marginAccount.whitelistCollateral(weth.address, 0.7 * 1e6), // weight = 0.7
         await marginAccount.whitelistCollateral(avax.address, 0.8 * 1e6) // weight = 0.8
-        expect((await marginAccount.isLiquidatable(alice))[0]).to.be.false
+        expect((await marginAccount.isLiquidatable(alice, true))[0]).to.be.false
 
         // addMargin
         wethMargin = _1e18.div(4) // $500
@@ -165,12 +165,12 @@ describe('Multi-collateral Liquidation Tests', async function() {
         ])
         await marginAccount.addMargin(1, wethMargin)
         await marginAccount.addMargin(2, avaxMargin)
-        expect((await marginAccount.isLiquidatable(alice))[0]).to.be.false
+        expect((await marginAccount.isLiquidatable(alice, true))[0]).to.be.false
 
         // alice makes a trade
         let tx = await clearingHouse.openPosition(0, _1e18.mul(-5), 0)
         ;({ fee: tradeFee } = await getTradeDetails(tx))
-        expect((await marginAccount.isLiquidatable(alice))[0]).to.be.false
+        expect((await marginAccount.isLiquidatable(alice, true))[0]).to.be.false
 
         // bob makes a counter-trade
         await addMargin(bob, _1e6.mul(20000))
@@ -178,7 +178,7 @@ describe('Multi-collateral Liquidation Tests', async function() {
     })
 
     it('alice\'s position is liquidated', async function() {
-        expect((await marginAccount.isLiquidatable(alice))[0]).to.be.false // notionalPosition should be 0
+        expect((await marginAccount.isLiquidatable(alice, true))[0]).to.be.false // notionalPosition should be 0
 
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
         ;({ unrealizedPnl, notionalPosition } = await amm.getNotionalPositionAndUnrealizedPnl(alice))
@@ -204,7 +204,7 @@ describe('Multi-collateral Liquidation Tests', async function() {
         const { weighted, spot } = await marginAccount.weightedAndSpotCollateral(alice)
         expect(weighted.lt(ZERO)).to.be.true
         expect(spot.gt(ZERO)).to.be.true
-        ;({ _isLiquidatable, incentivePerDollar } = await marginAccount.isLiquidatable(alice))
+        ;({ _isLiquidatable, incentivePerDollar } = await marginAccount.isLiquidatable(alice, true))
         expect(_isLiquidatable).to.be.true
     })
 
@@ -216,7 +216,7 @@ describe('Multi-collateral Liquidation Tests', async function() {
             wethMargin
         ] = await Promise.all([
             marginAccount.weightedAndSpotCollateral(alice),
-            marginAccount.isLiquidatable(alice),
+            marginAccount.isLiquidatable(alice, true),
             marginAccount.margin(1, alice)
         ])
         expect(parseInt(weighted.toNumber() / 1e6)).to.eq(-234) // 750 - 984.x
@@ -243,7 +243,7 @@ describe('Multi-collateral Liquidation Tests', async function() {
             avaxMargin
         ] = await Promise.all([
             marginAccount.weightedAndSpotCollateral(alice),
-            marginAccount.isLiquidatable(alice),
+            marginAccount.isLiquidatable(alice, true),
             marginAccount.margin(2, alice)
         ])
         expect(parseInt(weighted.toNumber() / 1e6)).to.eq(-92) // 400 - 492.x
@@ -296,8 +296,10 @@ describe('Multi-collateral Liquidation Tests', async function() {
         expect(await marginAccount.margin(2, alice)).to.eq(ZERO)
         expect(await avax.balanceOf(insuranceFund.address)).to.eq(avaxMargin)
         expect(await vusd.balanceOf(insuranceFund.address)).to.eq(ZERO)
-        expect((await marginAccount.isLiquidatable(alice))[0]).to.be.false
+        expect((await marginAccount.isLiquidatable(alice, true))[0]).to.be.false
     })
+
+    it('liquidateFlexible with >=2 collateral excluding vusd');
 
     async function addMargin(trader, margin) {
         await usdc.mint(trader.address, margin)

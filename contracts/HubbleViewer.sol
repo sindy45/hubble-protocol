@@ -44,7 +44,7 @@ contract HubbleViewer {
         repayAmount = new uint[](traders.length);
         incentivePerDollar = new uint[](traders.length);
         for (uint i = 0; i < traders.length; i++) {
-            (isLiquidatable[i], repayAmount[i], incentivePerDollar[i]) = marginAccount.isLiquidatable(traders[i]);
+            (isLiquidatable[i], repayAmount[i], incentivePerDollar[i]) = marginAccount.isLiquidatable(traders[i], true);
         }
     }
 }
