@@ -19,7 +19,7 @@ describe('Clearing House Meta Txs', async function() {
 
     beforeEach(async function() {
         contracts = await setupContracts()
-        ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, forwarder, tradeFee } = contracts)
+        ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, forwarder, tradeFee, hubbleViewer } = contracts)
         // add margin
         margin = _1e6.mul(1000)
         await addMargin(signers[0], margin)
@@ -51,7 +51,7 @@ describe('Clearing House Meta Txs', async function() {
         expect(await amm.shortOpenInterestNotional()).to.eq(ZERO)
         expect((await amm.lastPrice()).gt(_1e6.mul(1000))).to.be.true // rate increases after long
 
-        const [ pos ] = await clearingHouse.userPositions(alice)
+        const [ pos ] = await hubbleViewer.userPositions(alice)
         expect(pos.size).to.eq(baseAssetQuantity)
         expect(pos.openNotional).to.eq(quoteAsset)
         expect(pos.unrealizedPnl).to.lt(ZERO)
@@ -86,7 +86,7 @@ describe('Clearing House Meta Txs', async function() {
         expect(await amm.shortOpenInterestNotional()).to.eq(baseAssetQuantity.abs())
         expect((await amm.lastPrice()).lt(_1e6.mul(1000))).to.be.true // rate decreases after short
 
-        const [ pos ] = await clearingHouse.userPositions(alice)
+        const [ pos ] = await hubbleViewer.userPositions(alice)
         expect(pos.size).to.eq(baseAssetQuantity)
         expect(pos.openNotional).to.eq(quoteAsset)
         expect(pos.unrealizedPnl).to.lt(ZERO)

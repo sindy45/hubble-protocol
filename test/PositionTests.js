@@ -16,7 +16,7 @@ describe('Position Tests', async function() {
         ;([ alice ] = signers.map(s => s.address))
 
         contracts = await setupContracts(TRADE_FEE)
-        ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, swap } = contracts)
+        ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, swap, hubbleViewer } = contracts)
 
         // add margin
         margin = _1e6.mul(1000)
@@ -47,7 +47,7 @@ describe('Position Tests', async function() {
             expect(await amm.shortOpenInterestNotional()).to.eq(ZERO)
             expect((await amm.lastPrice()).gt(_1e6.mul(1000))).to.be.true // rate increases after long
 
-            const [ pos ] = await clearingHouse.userPositions(alice)
+            const [ pos ] = await hubbleViewer.userPositions(alice)
             expect(pos.size).to.eq(baseAssetQuantity)
             expect(pos.openNotional).to.eq(quoteAsset)
             expect(pos.unrealizedPnl).lt(ZERO)
@@ -64,10 +64,10 @@ describe('Position Tests', async function() {
             const {
                 expectedMarginFraction,
                 liquidationPrice
-            } = await clearingHouse.getTakerExpectedMFAndLiquidationPrice(alice, 0, baseAssetQuantity)
+            } = await hubbleViewer.getTakerExpectedMFAndLiquidationPrice(alice, 0, baseAssetQuantity)
             expect(parseInt(liquidationPrice.toNumber() / 1e6)).to.eq(980)
 
-            const quote = await amm.getQuote(baseAssetQuantity)
+            const quote = await hubbleViewer.getQuote(baseAssetQuantity, 0)
             tx = await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* long exactly */, quote /* max_dx */)
             const trade2 = await getTradeDetails(tx, TRADE_FEE)
 
@@ -114,7 +114,7 @@ describe('Position Tests', async function() {
             expect(await amm.shortOpenInterestNotional()).to.eq(baseAssetQuantity.abs())
             expect((await amm.lastPrice()).lt(_1e6.mul(1000))).to.be.true // rate decreases after short
 
-            const [ pos ] = await clearingHouse.userPositions(alice)
+            const [ pos ] = await hubbleViewer.userPositions(alice)
             expect(pos.size).to.eq(baseAssetQuantity)
             expect(pos.openNotional).to.eq(quoteAsset)
             expect(pos.unrealizedPnl).lt(ZERO)
@@ -132,10 +132,10 @@ describe('Position Tests', async function() {
                 expectedMarginFraction,
                 quoteAssetQuantity,
                 liquidationPrice
-            } = await clearingHouse.getTakerExpectedMFAndLiquidationPrice(alice, 0, baseAssetQuantity)
+            } = await hubbleViewer.getTakerExpectedMFAndLiquidationPrice(alice, 0, baseAssetQuantity)
             expect(parseInt(liquidationPrice.toNumber() / 1e6)).to.eq(1019)
 
-            const quote = await amm.getQuote(baseAssetQuantity)
+            const quote = await hubbleViewer.getQuote(baseAssetQuantity, 0)
             tx = await clearingHouse.openPosition(0, baseAssetQuantity, quote)
             const trade2 = await getTradeDetails(tx, TRADE_FEE)
 
@@ -163,11 +163,11 @@ describe('Position Tests', async function() {
         it('long + short', async () => {
             let baseAssetQuantity = _1e18.mul(5)
 
-            let quote = await amm.getQuote(baseAssetQuantity)
+            let quote = await hubbleViewer.getQuote(baseAssetQuantity, 0)
             await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* long exactly */, quote /* max_dx */)
 
             baseAssetQuantity = baseAssetQuantity.mul(-1)
-            ;({ expectedMarginFraction, quoteAssetQuantity: quote, liquidationPrice } = await clearingHouse.getTakerExpectedMFAndLiquidationPrice(alice, 0, baseAssetQuantity))
+            ;({ expectedMarginFraction, quoteAssetQuantity: quote, liquidationPrice } = await hubbleViewer.getTakerExpectedMFAndLiquidationPrice(alice, 0, baseAssetQuantity))
 
             // since all positions will be closed
             expect(expectedMarginFraction).to.eq(ethers.constants.MaxInt256)
@@ -192,11 +192,11 @@ describe('Position Tests', async function() {
         it('short + long', async () => {
             let baseAssetQuantity = _1e18.mul(-3)
 
-            let quote = await amm.getQuote(baseAssetQuantity)
+            let quote = await hubbleViewer.getQuote(baseAssetQuantity, 0)
             await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* exact base asset */, quote /* min_dy */)
 
             baseAssetQuantity = baseAssetQuantity.mul(-1)
-            ;({ expectedMarginFraction, quoteAssetQuantity: quote, liquidationPrice } = await clearingHouse.getTakerExpectedMFAndLiquidationPrice(alice, 0, baseAssetQuantity))
+            ;({ expectedMarginFraction, quoteAssetQuantity: quote, liquidationPrice } = await hubbleViewer.getTakerExpectedMFAndLiquidationPrice(alice, 0, baseAssetQuantity))
 
             // since all positions will be closed
             expect(expectedMarginFraction).to.eq(ethers.constants.MaxInt256)
@@ -218,7 +218,7 @@ describe('Position Tests', async function() {
         it('long + bigger short + bigger long', async () => {
             // Long
             let baseAssetQuantity = _1e18.mul(5)
-            let tx = await clearingHouse.openPosition(0, baseAssetQuantity, await amm.getQuote(baseAssetQuantity))
+            let tx = await clearingHouse.openPosition(0, baseAssetQuantity, await hubbleViewer.getQuote(baseAssetQuantity, 0))
 
             const trade1 = await getTradeDetails(tx, TRADE_FEE)
             expect(await amm.longOpenInterestNotional()).to.eq(_1e18.mul(5))
@@ -232,9 +232,9 @@ describe('Position Tests', async function() {
             let {
                 expectedMarginFraction,
                 quoteAssetQuantity
-            } = await clearingHouse.getTakerExpectedMFAndLiquidationPrice(alice, 0, baseAssetQuantity)
+            } = await hubbleViewer.getTakerExpectedMFAndLiquidationPrice(alice, 0, baseAssetQuantity)
 
-            tx = await clearingHouse.openPosition(0, baseAssetQuantity, await amm.getQuote(baseAssetQuantity))
+            tx = await clearingHouse.openPosition(0, baseAssetQuantity, await hubbleViewer.getQuote(baseAssetQuantity, 0))
 
             const trade2 = await getTradeDetails(tx, TRADE_FEE)
             expect(await amm.longOpenInterestNotional()).to.eq(ZERO)
@@ -253,9 +253,9 @@ describe('Position Tests', async function() {
 
             // Long
             baseAssetQuantity = _1e18.mul(10)
-            ;({ expectedMarginFraction } = await clearingHouse.getTakerExpectedMFAndLiquidationPrice(alice, 0, baseAssetQuantity))
+            ;({ expectedMarginFraction } = await hubbleViewer.getTakerExpectedMFAndLiquidationPrice(alice, 0, baseAssetQuantity))
 
-            const quote = await amm.getQuote(baseAssetQuantity)
+            const quote = await hubbleViewer.getQuote(baseAssetQuantity, 0)
             tx = await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* long exactly */, quote.add(7000)) // slightly higher quote value because of vamm fee while closing short position and then opening a long position of 8
             const trade3 = await getTradeDetails(tx, TRADE_FEE)
             fee = fee.add(trade3.fee)
@@ -319,17 +319,17 @@ describe('Position Tests', async function() {
         it('long + smaller short', async () => {
             const longBaseAssetQuantity = _1e18.mul(5)
 
-            let quote = await amm.getQuote(longBaseAssetQuantity)
+            let quote = await hubbleViewer.getQuote(longBaseAssetQuantity, 0)
             let tx = await clearingHouse.openPosition(0 /* amm index */, longBaseAssetQuantity /* long exactly */, quote /* max_dx */)
             let { unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(alice)
             let trade = await getTradeDetails(tx, TRADE_FEE)
             let fee = trade.fee
 
             const shortBaseAssetQuantity = _1e18.mul(-1)
-            const { expectedMarginFraction } = await clearingHouse.getTakerExpectedMFAndLiquidationPrice(alice, 0, shortBaseAssetQuantity)
+            const { expectedMarginFraction } = await hubbleViewer.getTakerExpectedMFAndLiquidationPrice(alice, 0, shortBaseAssetQuantity)
 
 
-            quote = await amm.getQuote(shortBaseAssetQuantity)
+            quote = await hubbleViewer.getQuote(shortBaseAssetQuantity, 0)
             tx = await clearingHouse.openPosition(0 /* amm index */, shortBaseAssetQuantity, quote /* min_dy */)
             trade = await getTradeDetails(tx, TRADE_FEE)
             fee = fee.add(trade.fee)
@@ -355,16 +355,16 @@ describe('Position Tests', async function() {
         it('short + smaller long', async () => {
             const shortBaseAssetQuantity = _1e18.mul(-5)
 
-            let quote = await amm.getQuote(shortBaseAssetQuantity)
+            let quote = await hubbleViewer.getQuote(shortBaseAssetQuantity, 0)
             let tx = await clearingHouse.openPosition(0, shortBaseAssetQuantity, quote)
             let { unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(alice)
             let trade = await getTradeDetails(tx, TRADE_FEE)
             let fee = trade.fee
 
             const longBaseAssetQuantity = _1e18.mul(1)
-            const { expectedMarginFraction } = await clearingHouse.getTakerExpectedMFAndLiquidationPrice(alice, 0, longBaseAssetQuantity)
+            const { expectedMarginFraction } = await hubbleViewer.getTakerExpectedMFAndLiquidationPrice(alice, 0, longBaseAssetQuantity)
 
-            quote = await amm.getQuote(longBaseAssetQuantity)
+            quote = await hubbleViewer.getQuote(longBaseAssetQuantity, 0)
             tx = await clearingHouse.openPosition(0 /* amm index */, longBaseAssetQuantity, quote /* min_dy */)
             trade = await getTradeDetails(tx, TRADE_FEE)
             fee = fee.add(trade.fee)
@@ -526,7 +526,7 @@ describe('Position Tests', async function() {
                 false,
                 1 // amm index
             )
-            const markets = await clearingHouse.markets()
+            const markets = await hubbleViewer.markets()
             expect(markets[0].amm).to.eq(amm.address)
             expect(markets[0].underlying).to.eq(weth.address)
             expect(markets[1].amm).to.eq(secondAmm.amm.address)
@@ -540,7 +540,7 @@ describe('Position Tests', async function() {
             const baseAssetQuantity = _1e18.mul(100) // 100 * 65 = 6500
             amount = _1e6.mul(1e4)
 
-            const quote = await amm.getQuote(baseAssetQuantity)
+            const quote = await hubbleViewer.getQuote(baseAssetQuantity, 1)
             expect(quote.lte(amount)).to.be.true // this asserts that long was executed at a price <= amount
 
             // console.log({ quote: quote.toString() })
@@ -560,7 +560,7 @@ describe('Position Tests', async function() {
             expect(await amm.shortOpenInterestNotional()).to.eq(ZERO)
             expect((await amm.lastPrice()).gt(_1e6.mul(65))).to.be.true // rate increases after long
 
-            const [ _, pos ] = await clearingHouse.userPositions(alice)
+            const [ _, pos ] = await hubbleViewer.userPositions(alice)
             expect(pos.size).to.eq(baseAssetQuantity)
             expect(pos.openNotional).to.eq(quoteAsset)
             expect(pos.unrealizedPnl).to.lt(ZERO)

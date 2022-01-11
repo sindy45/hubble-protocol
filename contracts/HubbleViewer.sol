@@ -2,11 +2,30 @@
 
 pragma solidity 0.8.4;
 
-import { IClearingHouse,IMarginAccount } from "./Interfaces.sol";
+import { IClearingHouse, IMarginAccount, IAMM, IVAMM } from "./Interfaces.sol";
+import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 contract HubbleViewer {
+    using SafeCast for uint256;
+    using SafeCast for int256;
+
     IClearingHouse public clearingHouse;
     IMarginAccount public marginAccount;
+    uint256 constant PRECISION = 1e6;
+    uint constant VUSD_IDX = 0;
+
+    struct Position {
+        int256 size;
+        uint256 openNotional;
+        int256 unrealizedPnl;
+        uint256 avgOpen;
+    }
+
+    /// @dev UI Helper
+    struct MarketInfo {
+        address amm;
+        address underlying;
+    }
 
     constructor(
         IClearingHouse _clearingHouse,
@@ -46,5 +65,375 @@ contract HubbleViewer {
         for (uint i = 0; i < traders.length; i++) {
             (isLiquidatable[i], repayAmount[i], incentivePerDollar[i]) = marginAccount.isLiquidatable(traders[i], true);
         }
+    }
+
+    /**
+    * @notice Get information about all user positions
+    * @param trader Trader for which information is to be obtained
+    * @return positions in order of amms
+    *   positions[i].size - BaseAssetQuantity amount longed (+ve) or shorted (-ve)
+    *   positions[i].openNotional - $ value of position
+    *   positions[i].unrealizedPnl - in dollars. +ve is profit, -ve if loss
+    *   positions[i].avgOpen - Average $ value at which position was started
+    */
+    function userPositions(address trader) external view returns(Position[] memory positions) {
+        uint l = clearingHouse.getAmmsLength();
+        positions = new Position[](l);
+        for (uint i = 0; i < l; i++) {
+            IAMM amm = clearingHouse.amms(i);
+            (positions[i].size, positions[i].openNotional, ) = amm.positions(trader);
+            if (positions[i].size == 0) {
+                positions[i].unrealizedPnl = 0;
+                positions[i].avgOpen = 0;
+            } else {
+                (,positions[i].unrealizedPnl) = amm.getTakerNotionalPositionAndUnrealizedPnl(trader);
+                positions[i].avgOpen = positions[i].openNotional * 1e18 / _abs(positions[i].size).toUint256();
+            }
+        }
+    }
+
+    /**
+    * @notice Get information about maker's all impermanent positions
+    * @param maker Maker for which information is to be obtained
+    * @return positions in order of amms
+    *   positions[i].size - BaseAssetQuantity amount longed (+ve) or shorted (-ve)
+    *   positions[i].openNotional - $ value of position
+    *   positions[i].unrealizedPnl - in dollars. +ve is profit, -ve if loss
+    *   positions[i].avgOpen - Average $ value at which position was started
+    */
+    function makerPositions(address maker) external view returns(Position[] memory positions) {
+        uint l = clearingHouse.getAmmsLength();
+        positions = new Position[](l);
+        for (uint i = 0; i < l; i++) {
+            (
+                positions[i].size,
+                positions[i].openNotional,
+                positions[i].unrealizedPnl
+            ) = getMakerPositionAndUnrealizedPnl(maker, i);
+            if (positions[i].size == 0) {
+                positions[i].avgOpen = 0;
+            } else {
+                positions[i].avgOpen = positions[i].openNotional * 1e18 / _abs(positions[i].size).toUint256();
+            }
+        }
+    }
+
+    function markets() external view returns(MarketInfo[] memory _markets) {
+        uint l = clearingHouse.getAmmsLength();
+        _markets = new MarketInfo[](l);
+        for (uint i = 0; i < l; i++) {
+            IAMM amm = clearingHouse.amms(i);
+            _markets[i] = MarketInfo(address(amm), amm.underlyingAsset());
+        }
+    }
+
+    /**
+    * Get final margin fraction and liquidation price if user longs/shorts baseAssetQuantity
+    * @param idx AMM Index
+    * @param baseAssetQuantity Positive if long, negative if short, scaled 18 decimals
+    * @return expectedMarginFraction Resultant Margin fraction when the trade is executed
+    * @return quoteAssetQuantity USD rate for the trade
+    * @return liquidationPrice Mark Price at which trader will be liquidated
+    */
+    function getTakerExpectedMFAndLiquidationPrice(address trader, uint idx, int256 baseAssetQuantity)
+        external
+        view
+        returns (int256 expectedMarginFraction, uint256 quoteAssetQuantity, uint256 liquidationPrice)
+    {
+        IAMM amm = clearingHouse.amms(idx);
+        // get quoteAsset required to swap baseAssetQuantity
+        quoteAssetQuantity = getQuote(baseAssetQuantity, idx);
+
+        // get total notionalPosition and margin (including unrealizedPnL and funding)
+        (uint256 notionalPosition, int256 margin) = clearingHouse.getNotionalPositionAndMargin(trader, true /* includeFundingPayments */);
+
+        // get market specific position info
+        (int256 takerPosSize,,) = amm.positions(trader);
+        uint takerNowNotional = amm.getCloseQuote(takerPosSize);
+        uint takerUpdatedNotional = amm.getCloseQuote(takerPosSize + baseAssetQuantity);
+        // Calculate new total notionalPosition
+        notionalPosition = notionalPosition + takerUpdatedNotional - takerNowNotional;
+
+        margin -= _calculateTradeFee(quoteAssetQuantity).toInt256();
+        expectedMarginFraction = _getMarginFraction(margin, notionalPosition);
+        liquidationPrice = _getLiquidationPrice(trader, amm, notionalPosition, margin, baseAssetQuantity, quoteAssetQuantity);
+    }
+
+    /**
+    * Get final margin fraction and liquidation price if user add/remove liquidity
+    * @param idx AMM Index
+    * @param vUSD vUSD amount to be added in the pool (in 6 decimals)
+    * @param isRemove true is liquidity is being removed, false if added
+    * @return expectedMarginFraction Resultant Margin fraction after the tx
+    * @return liquidationPrice Mark Price at which maker will be liquidated
+    */
+    function getMakerExpectedMFAndLiquidationPrice(address trader, uint idx, uint vUSD, bool isRemove)
+        external
+        view
+        returns (int256 expectedMarginFraction, uint256 liquidationPrice)
+    {
+        // get total notionalPosition and margin (including unrealizedPnL and funding)
+        (uint256 notionalPosition, int256 margin) = clearingHouse.getNotionalPositionAndMargin(trader, true /* includeFundingPayments */);
+
+        IAMM amm = clearingHouse.amms(idx);
+
+        // get taker info
+        (int256 takerPosSize,,) = amm.positions(trader);
+        uint takerNotional = amm.getCloseQuote(takerPosSize);
+        // get maker info
+        (uint makerDebt,,,,,,) = amm.makers(trader);
+        // calculate total value of deposited liquidity after the tx
+        if (isRemove) {
+            makerDebt = 2 * (makerDebt / 1e12 - vUSD);
+        } else {
+            makerDebt = 2 * (makerDebt / 1e12 + vUSD);
+        }
+
+        {
+            // calculate effective notionalPosition
+            (int256 makerPosSize,,) = getMakerPositionAndUnrealizedPnl(trader, idx);
+            uint totalPosNotional = amm.getCloseQuote(makerPosSize + takerPosSize);
+            notionalPosition += _max(makerDebt + takerNotional, totalPosNotional);
+        }
+
+        {
+            (uint nowNotional,,,) = amm.getNotionalPositionAndUnrealizedPnl(trader);
+            notionalPosition -= nowNotional;
+        }
+
+        expectedMarginFraction = _getMarginFraction(margin, notionalPosition);
+        liquidationPrice = _getLiquidationPrice(trader, amm, notionalPosition, margin, 0, 0);
+    }
+
+    function getLiquidationPrice(address trader, uint idx) external view returns (uint liquidationPrice) {
+        // get total notionalPosition and margin (including unrealizedPnL and funding)
+        (uint256 notionalPosition, int256 margin) = clearingHouse.getNotionalPositionAndMargin(trader, true /* includeFundingPayments */);
+        IAMM amm = clearingHouse.amms(idx);
+        liquidationPrice = _getLiquidationPrice(trader, amm, notionalPosition, margin, 0, 0);
+    }
+
+    /**
+    * @notice get maker impermanent position and unrealizedPnl for a particular amm
+    * @param _maker maker address
+    * @param idx amm index
+    */
+    function getMakerPositionAndUnrealizedPnl(address _maker, uint idx) public view returns (int256 position, uint openNotional, int256 unrealizedPnl) {
+        IAMM amm = clearingHouse.amms(idx);
+        IVAMM vamm = amm.vamm();
+
+        (uint vUSD, uint vAsset, uint dToken,,,,) = amm.makers(_maker);
+        (position, openNotional, unrealizedPnl) = vamm.get_maker_position(dToken, vUSD, vAsset, dToken);
+    }
+
+    /**
+    * @notice calculate amount of quote asset required for trade
+    * @param baseAssetQuantity base asset to long/short
+    * @param idx amm index
+    */
+    function getQuote(int256 baseAssetQuantity, uint idx) public view returns(uint256 quoteAssetQuantity) {
+        IAMM amm = clearingHouse.amms(idx);
+        IVAMM vamm = amm.vamm();
+
+        if (baseAssetQuantity >= 0) {
+            return vamm.get_dx(0, 2, baseAssetQuantity.toUint256()) / 1e12 + 1;
+        }
+        // rounding-down while shorting is not a problem
+        // because lower the min_dy, more permissible it is
+        return vamm.get_dy(2, 0, (-baseAssetQuantity).toUint256()) / 1e12;
+    }
+
+    /**
+    * @notice calculate amount of base asset required for trade
+    * @param quoteAssetQuantity amount of quote asset to long/short
+    * @param idx amm index
+    * @param isLong long - true, short - false
+    */
+    function getBase(uint256 quoteAssetQuantity, uint idx, bool isLong) external view returns(int256 /* baseAssetQuantity */) {
+        IAMM amm = clearingHouse.amms(idx);
+        IVAMM vamm = amm.vamm();
+
+        uint256 baseAssetQuantity;
+        if (isLong) {
+            baseAssetQuantity = vamm.get_dy(0, 2, quoteAssetQuantity * 1e12);
+            return baseAssetQuantity.toInt256();
+        }
+        baseAssetQuantity = vamm.get_dx(2, 0, quoteAssetQuantity * 1e12);
+        return -(baseAssetQuantity.toInt256());
+    }
+
+    /**
+    * @notice Get total liquidity deposited by maker and its current value
+    * @param _maker maker for which information to be obtained
+    * @return
+    *   vAsset - current base asset amount of maker in the pool
+    *   vUSD - current quote asset amount of maker in the pool
+    *   totalDeposited - total value of initial liquidity deposited in the pool by maker
+    *   dToken - maker dToken balance
+    */
+    function getMakerLiquidity(address _maker, uint idx) external view returns (uint vAsset, uint vUSD, uint totalDeposited, uint dToken) {
+        IAMM amm = clearingHouse.amms(idx);
+        IVAMM vamm = amm.vamm();
+        (vUSD,, dToken,,,,) = amm.makers(_maker);
+
+        totalDeposited = 2 * vUSD / 1e12;
+        uint totalDTokenSupply = vamm.totalSupply();
+        if (totalDTokenSupply > 0) {
+            vUSD = vamm.balances(0) * dToken / totalDTokenSupply / 1e12;
+            vAsset = vamm.balances(2) * dToken / totalDTokenSupply;
+        }
+    }
+
+    /**
+    * @notice calculate base and quote asset amount form dToken
+     */
+    function calcWithdrawAmounts(uint dToken, uint idx) external view returns (uint quoteAsset, uint baseAsset) {
+        IAMM amm = clearingHouse.amms(idx);
+        IVAMM vamm = amm.vamm();
+
+        uint totalDTokenSupply = vamm.totalSupply();
+        if (totalDTokenSupply > 0) {
+            quoteAsset = vamm.balances(0) * dToken / totalDTokenSupply / 1e12;
+            baseAsset = vamm.balances(2) * dToken / totalDTokenSupply;
+        }
+    }
+
+    /**
+    * @notice Get amount of token to add/remove given the amount of other token
+    * @param inputAmount quote/base asset amount to add or remove, base - 18 decimal, quote - 6 decimal
+    * @param isBase true if amount is base asset
+    * @param deposit true -> addLiquidity, false -> removeLiquidity
+    * @return fillAmount base/quote asset amount to be added/removed
+    *         dToken - equivalent dToken amount
+    */
+    function getMakerQuote(uint idx, uint inputAmount, bool isBase, bool deposit) external view returns (uint fillAmount, uint dToken) {
+        IAMM amm = clearingHouse.amms(idx);
+        IVAMM vamm = amm.vamm();
+
+        uint bal1;
+        if (isBase) {
+            // calculate quoteAsset amount, fillAmount = quoteAsset, inputAmount = baseAsset
+            uint bal2 = vamm.balances(2);
+            if (bal2 == 0) {
+                fillAmount = inputAmount * vamm.price_scale(1) / 1e18;
+                bal1 = fillAmount * 1e8 / vamm.price_scale(0);
+            } else {
+                fillAmount = inputAmount * vamm.balances(0) / bal2;
+                bal1 = inputAmount * vamm.balances(1) / bal2;
+            }
+            dToken = vamm.calc_token_amount([fillAmount, bal1, inputAmount], deposit);
+            fillAmount /= 1e12;
+        } else {
+            uint bal0 = vamm.balances(0);
+            // calculate quote asset amount, fillAmount = baseAsset, inputAmount = quoteAsset
+            uint _inputAmount = inputAmount * 1e12; // inputAmount: 6 decimals
+            if (bal0 == 0) {
+                fillAmount = _inputAmount * 1e18 / vamm.price_scale(1);
+                bal1 = _inputAmount * 1e8 / vamm.price_scale(0);
+            } else {
+                fillAmount = _inputAmount * vamm.balances(2) / bal0;
+                bal1 = _inputAmount * vamm.balances(1) / bal0;
+            }
+            dToken = vamm.calc_token_amount([_inputAmount, bal1, fillAmount], deposit);
+        }
+    }
+
+    /**
+    * @notice get user margin for all collaterals
+    */
+    function userInfo(address trader) external view returns(int256[] memory) {
+        uint length = marginAccount.supportedAssetsLen();
+        int256[] memory _margin = new int256[](length);
+        // -ve funding means user received funds
+        _margin[VUSD_IDX] = marginAccount.margin(VUSD_IDX, trader) - clearingHouse.getTotalFunding(trader);
+        for (uint i = 1; i < length; i++) {
+            _margin[i] = marginAccount.margin(i, trader);
+        }
+        return _margin;
+    }
+
+    // Internal
+
+    /**
+    * @dev At liquidation,
+    * (margin + pnl) / notionalPosition = maintenanceMargin (MM)
+    * => pnl = MM * notionalPosition - margin
+    *
+    * for long, pnl = liquidationPrice * size - openNotional
+    * => liquidationPrice = (pnl + openNotional) / size
+    *
+    * for short, pnl = openNotional - liquidationPrice * size
+    * => liquidationPrice = (openNotional - pnl) / size
+    */
+    function _getLiquidationPrice(
+            address trader,
+            IAMM amm,
+            uint256 notionalPosition,
+            int256 margin,
+            int256 baseAssetQuantity,
+            uint quoteAssetQuantity
+        )
+        internal
+        view
+        returns(uint256 liquidationPrice)
+    {
+        if (notionalPosition == 0) {
+            return 0;
+        }
+
+        (, int256 unrealizedPnl, int256 totalPosSize, uint256 openNotional) = amm.getNotionalPositionAndUnrealizedPnl(trader);
+
+        if (baseAssetQuantity != 0) {
+            // Calculate effective position and openNotional
+            if (baseAssetQuantity * totalPosSize >= 0) { // increasingPosition i.e. same direction trade
+                openNotional += quoteAssetQuantity;
+            } else { // open reverse position
+                uint totalPosNotional = amm.getCloseQuote(totalPosSize + baseAssetQuantity);
+                if (_abs(totalPosSize) >= _abs(baseAssetQuantity)) { // position side remains same after the trade
+                    (openNotional,) = amm.getOpenNotionalWhileReducingPosition(
+                        totalPosSize,
+                        totalPosNotional,
+                        unrealizedPnl,
+                        baseAssetQuantity
+                    );
+                } else { // position side changes after the trade
+                    openNotional = totalPosNotional;
+                }
+            }
+            totalPosSize += baseAssetQuantity;
+        }
+
+        int256 pnlForLiquidation = clearingHouse.maintenanceMargin() * notionalPosition.toInt256() / 1e6 - margin;
+        int256 _liquidationPrice;
+        if (totalPosSize > 0) {
+            _liquidationPrice = (openNotional.toInt256() + pnlForLiquidation) * 1e18 / totalPosSize;
+        } else {
+            _liquidationPrice = (openNotional.toInt256() - pnlForLiquidation) * 1e18 / (-totalPosSize);
+        }
+
+        if (_liquidationPrice < 0) { // is this possible?
+            _liquidationPrice = 0;
+        }
+        return _liquidationPrice.toUint256();
+    }
+
+    function _calculateTradeFee(uint quoteAsset) internal view returns (uint) {
+        return quoteAsset * clearingHouse.tradeFee() / PRECISION;
+    }
+
+    // Pure
+
+    function _getMarginFraction(int256 accountValue, uint notionalPosition) private pure returns(int256) {
+        if (notionalPosition == 0) {
+            return type(int256).max;
+        }
+        return accountValue * PRECISION.toInt256() / notionalPosition.toInt256();
+    }
+
+    function _abs(int x) private pure returns (int) {
+        return x >= 0 ? x : -x;
+    }
+
+    function _max(uint x, uint y) private pure returns (uint) {
+        return x >= y ? x : y;
     }
 }

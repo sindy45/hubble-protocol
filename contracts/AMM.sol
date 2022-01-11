@@ -256,6 +256,284 @@ contract AMM is Governable, Pausable {
         return realizedPnl;
     }
 
+
+    function getOpenNotionalWhileReducingPosition(
+        int256 positionSize,
+        uint256 newNotionalPosition,
+        int256 unrealizedPnl,
+        int256 baseAssetQuantity
+    )
+        public
+        pure
+        returns(uint256 remainOpenNotional, int realizedPnl)
+    {
+        require(abs(positionSize) >= abs(baseAssetQuantity), "AMM.ONLY_REDUCE_POS");
+        bool isLongPosition = positionSize > 0 ? true : false;
+
+        realizedPnl = unrealizedPnl * abs(baseAssetQuantity) / abs(positionSize);
+        int256 unrealizedPnlAfter = unrealizedPnl - realizedPnl;
+
+        /**
+        * We need to determine the openNotional value of the reduced position now.
+        * We know notionalPosition and unrealizedPnlAfter (unrealizedPnl times the ratio of open position)
+        * notionalPosition = notionalPosition - quoteAsset (exchangedQuoteAssetAmount)
+        * calculate openNotional (it's different depends on long or short side)
+        * long: unrealizedPnl = notionalPosition - openNotional => openNotional = notionalPosition - unrealizedPnl
+        * short: unrealizedPnl = openNotional - notionalPosition => openNotional = notionalPosition + unrealizedPnl
+        */
+        if (isLongPosition) {
+            /**
+            * Let baseAssetQuantity = Q, position.size = size, by definition of _reducePosition, abs(size) >= abs(Q)
+            * quoteAsset = notionalPosition * Q / size
+            * unrealizedPnlAfter = unrealizedPnl - realizedPnl = unrealizedPnl - unrealizedPnl * Q / size
+            * remainOpenNotional = notionalPosition - notionalPosition * Q / size - unrealizedPnl + unrealizedPnl * Q / size
+            * => remainOpenNotional = notionalPosition(size-Q)/size - unrealizedPnl(size-Q)/size
+            * => remainOpenNotional = (notionalPosition - unrealizedPnl) * (size-Q)/size
+            * Since notionalPosition includes the PnL component, notionalPosition >= unrealizedPnl and size >= Q
+            * Hence remainOpenNotional >= 0
+            */
+            remainOpenNotional = (newNotionalPosition.toInt256() - unrealizedPnlAfter).toUint256();  // will assert that remainOpenNotional >= 0
+        } else {
+            /**
+            * Let baseAssetQuantity = Q, position.size = size, by definition of _reducePosition, abs(size) >= abs(Q)
+            * quoteAsset = notionalPosition * Q / size
+            * unrealizedPnlAfter = unrealizedPnl - realizedPnl = unrealizedPnl - unrealizedPnl * Q / size
+            * remainOpenNotional = notionalPosition - notionalPosition * Q / size + unrealizedPnl - unrealizedPnl * Q / size
+            * => remainOpenNotional = notionalPosition(size-Q)/size + unrealizedPnl(size-Q)/size
+            * => remainOpenNotional = (notionalPosition + unrealizedPnl) * (size-Q)/size
+            * => In AMM.sol, unrealizedPnl = position.openNotional - notionalPosition
+            * => notionalPosition + unrealizedPnl >= 0
+            * Hence remainOpenNotional >= 0
+            */
+            remainOpenNotional = (newNotionalPosition.toInt256() + unrealizedPnlAfter).toUint256();  // will assert that remainOpenNotional >= 0
+        }
+    }
+
+
+    function addReserveSnapshot(uint256 _quoteAssetReserve, uint256 _baseAssetReserve)
+        onlyVamm
+        whenNotPaused
+        external
+    {
+        uint256 currentBlock = block.number;
+        uint256 blockTimestamp = _blockTimestamp();
+        emit ReserveSnapshotted(_quoteAssetReserve, _baseAssetReserve, blockTimestamp, currentBlock);
+
+        if (reserveSnapshots.length == 0) {
+            reserveSnapshots.push(
+                ReserveSnapshot(_quoteAssetReserve, _baseAssetReserve, blockTimestamp, currentBlock)
+            );
+            return;
+        }
+
+        ReserveSnapshot storage latestSnapshot = reserveSnapshots[reserveSnapshots.length - 1];
+        // update values in snapshot if in the same block
+        if (currentBlock == latestSnapshot.blockNumber) {
+            latestSnapshot.quoteAssetReserve = _quoteAssetReserve;
+            latestSnapshot.baseAssetReserve = _baseAssetReserve;
+        } else {
+            reserveSnapshots.push(
+                ReserveSnapshot(_quoteAssetReserve, _baseAssetReserve, blockTimestamp, currentBlock)
+            );
+        }
+    }
+
+    /**
+     * @notice update funding rate
+     * @dev only allow to update while reaching `nextFundingTime`
+     */
+    function settleFunding()
+        external
+        whenNotPaused
+        onlyClearingHouse
+    {
+        require(_blockTimestamp() >= nextFundingTime, "settle funding too early");
+
+        // premium = twapMarketPrice - twapIndexPrice
+        // timeFraction = fundingPeriod(1 hour) / 1 day
+        // premiumFraction = premium * timeFraction
+        int256 underlyingPrice = getUnderlyingTwapPrice(spotPriceTwapInterval);
+        int256 premium = getTwapPrice(spotPriceTwapInterval) - underlyingPrice;
+        int256 premiumFraction = (premium * int256(fundingPeriod)) / 1 days;
+
+        // update funding rate = premiumFraction / twapIndexPrice
+        _updateFundingRate(premiumFraction, underlyingPrice);
+
+        int256 premiumPerDtoken = posAccumulator * premiumFraction;
+
+        if (premiumPerDtoken % 1e18 != 0) { // makers pay slightly more to account for rounding off
+            premiumPerDtoken = (premiumPerDtoken / 1e18) + 1;
+        } else {
+            premiumPerDtoken /= 1e18;
+        }
+
+        cumulativePremiumFraction += premiumFraction;
+        cumulativePremiumPerDtoken += premiumPerDtoken;
+
+        // Updates for next funding event
+        // in order to prevent multiple funding settlement during very short time after network congestion
+        uint256 minNextValidFundingTime = _blockTimestamp() + fundingBufferPeriod;
+
+        // floor((nextFundingTime + fundingPeriod) / 3600) * 3600
+        uint256 nextFundingTimeOnHourStart = ((nextFundingTime + fundingPeriod) / 1 hours) * 1 hours;
+
+        // max(nextFundingTimeOnHourStart, minNextValidFundingTime)
+        nextFundingTime = nextFundingTimeOnHourStart > minNextValidFundingTime
+            ? nextFundingTimeOnHourStart
+            : minNextValidFundingTime;
+    }
+
+    // View
+
+    function getSnapshotLen() external view returns (uint256) {
+        return reserveSnapshots.length;
+    }
+
+    function getUnderlyingTwapPrice(uint256 _intervalInSeconds) public view returns (int256) {
+        return oracle.getUnderlyingTwapPrice(underlyingAsset, _intervalInSeconds);
+    }
+
+    function getTwapPrice(uint256 _intervalInSeconds) public view returns (int256) {
+        return int256(_calcTwap(_intervalInSeconds));
+    }
+
+    function getSpotPrice() public view returns (int256) {
+        return int256(vamm.balances(0) * 1e6 / vamm.balances(2));
+    }
+
+    function getNotionalPositionAndUnrealizedPnl(address trader)
+        external
+        view
+        returns(uint256 notionalPosition, int256 unrealizedPnl, int256 size, uint256 openNotional)
+    {
+        Position memory _taker = positions[trader];
+        Maker memory _maker = makers[trader];
+
+        (notionalPosition, size, unrealizedPnl, openNotional) = vamm.get_notional(
+            _maker.dToken,
+            _maker.vUSD,
+            _maker.vAsset,
+            _taker.size,
+            _taker.openNotional
+        );
+    }
+
+    function getPendingFundingPayment(address trader)
+        public
+        view
+        returns(
+            int256 takerFundingPayment,
+            int256 makerFundingPayment,
+            int256 latestCumulativePremiumFraction,
+            int256 latestPremiumPerDtoken
+        )
+    {
+        latestCumulativePremiumFraction = cumulativePremiumFraction;
+        Position memory taker = positions[trader];
+
+        takerFundingPayment = (latestCumulativePremiumFraction - taker.lastPremiumFraction)
+            * taker.size
+            / 1e18;
+
+        // Maker funding payment
+        latestPremiumPerDtoken = cumulativePremiumPerDtoken;
+
+        Maker memory maker = makers[trader];
+        int256 dToken = maker.dToken.toInt256();
+        if (dToken > 0) {
+            int256 cpf = latestCumulativePremiumFraction - maker.lastPremiumFraction;
+            makerFundingPayment = (
+                maker.pos * cpf +
+                (
+                    latestPremiumPerDtoken
+                    - maker.lastPremiumPerDtoken
+                    - maker.posAccumulator * cpf / 1e18
+                ) * dToken
+            ) / 1e18;
+        }
+    }
+
+    function getCloseQuote(int256 baseAssetQuantity) public view returns(uint256 quoteAssetQuantity) {
+        if (baseAssetQuantity > 0) {
+            return vamm.get_dy(2, 0, baseAssetQuantity.toUint256()) / 1e12;
+        } else if (baseAssetQuantity < 0) {
+            return vamm.get_dx(0, 2, (-baseAssetQuantity).toUint256()) / 1e12;
+        }
+        return 0;
+    }
+
+    function getTakerNotionalPositionAndUnrealizedPnl(address trader) public view returns(uint takerNotionalPosition, int256 unrealizedPnl) {
+        Position memory position = positions[trader];
+        if (position.size > 0) {
+            takerNotionalPosition = vamm.get_dy(2, 0, position.size.toUint256()) / 1e12;
+            unrealizedPnl = takerNotionalPosition.toInt256() - position.openNotional.toInt256();
+        } else if (position.size < 0) {
+            takerNotionalPosition = vamm.get_dx(0, 2, (-position.size).toUint256()) / 1e12;
+            unrealizedPnl = position.openNotional.toInt256() - takerNotionalPosition.toInt256();
+        }
+    }
+
+    function lastPrice() public view returns(uint256) {
+        return vamm.last_prices(1) / 1e12;
+    }
+
+    function openInterestNotional() public view returns (uint256) {
+        return longOpenInterestNotional + shortOpenInterestNotional;
+    }
+
+    // internal
+
+    /**
+    * @dev Go long on an asset
+    * @param baseAssetQuantity Exact base asset quantity to go long
+    * @param max_dx Maximum amount of qoute asset to be used while longing baseAssetQuantity. Lower means longing at a lower price (desirable).
+    * @return qouteAssetQuantity quote asset utilised. qouteAssetQuantity / baseAssetQuantity was the average rate.
+      qouteAssetQuantity <= max_dx
+    */
+    function _long(int256 baseAssetQuantity, uint max_dx) internal returns (uint256 qouteAssetQuantity) {
+        require(baseAssetQuantity > 0, "VAMM._long: baseAssetQuantity is <= 0");
+        if (max_dx != type(uint).max) {
+            max_dx *= 1e12;
+        }
+        qouteAssetQuantity = vamm.exchangeExactOut(
+            0, // sell quote asset
+            2, // purchase base asset
+            baseAssetQuantity.toUint256(), // long exactly. Note that statement asserts that baseAssetQuantity >= 0
+            max_dx
+        ) / 1e12; // 6 decimals precision
+        // since maker position will be opposite of the trade
+        posAccumulator -= baseAssetQuantity * 1e18 / vamm.totalSupply().toInt256();
+        emit Swap(baseAssetQuantity, qouteAssetQuantity, lastPrice(), openInterestNotional());
+    }
+
+    /**
+    * @dev Go short on an asset
+    * @param baseAssetQuantity Exact base asset quantity to short
+    * @param min_dy Minimum amount of qoute asset to be used while shorting baseAssetQuantity. Higher means shorting at a higher price (desirable).
+    * @return qouteAssetQuantity quote asset utilised. qouteAssetQuantity / baseAssetQuantity was the average short rate.
+      qouteAssetQuantity >= min_dy.
+    */
+    function _short(int256 baseAssetQuantity, uint min_dy) internal returns (uint256 qouteAssetQuantity) {
+        require(baseAssetQuantity < 0, "VAMM._short: baseAssetQuantity is >= 0");
+        if (min_dy != type(uint).max) {
+            min_dy *= 1e12;
+        }
+        qouteAssetQuantity = vamm.exchange(
+            2, // sell base asset
+            0, // get quote asset
+            (-baseAssetQuantity).toUint256(), // short exactly. Note that statement asserts that baseAssetQuantity <= 0
+            min_dy
+        ) / 1e12;
+        // since maker position will be opposite of the trade
+        posAccumulator -= baseAssetQuantity * 1e18 / vamm.totalSupply().toInt256();
+        emit Swap(baseAssetQuantity, qouteAssetQuantity, lastPrice(), openInterestNotional());
+    }
+
+    function _emitPositionChanged(address trader) internal {
+        Position memory position = positions[trader];
+        emit PositionChanged(trader, position.size, position.openNotional);
+    }
+
     // @dev check takerPosition != 0 before calling
     function _getPnlWhileReducingPosition(
         int256 takerPosition,
@@ -352,202 +630,8 @@ contract AMM is Governable, Pausable {
         position.size += baseAssetQuantity;
     }
 
-    function getOpenNotionalWhileReducingPosition(
-        int256 positionSize,
-        uint256 newNotionalPosition,
-        int256 unrealizedPnl,
-        int256 baseAssetQuantity
-    )
-        public
-        pure
-        returns(uint256 remainOpenNotional, int realizedPnl)
-    {
-        require(abs(positionSize) >= abs(baseAssetQuantity), "AMM.ONLY_REDUCE_POS");
-        bool isLongPosition = positionSize > 0 ? true : false;
-
-        realizedPnl = unrealizedPnl * abs(baseAssetQuantity) / abs(positionSize);
-        int256 unrealizedPnlAfter = unrealizedPnl - realizedPnl;
-
-        /**
-        * We need to determine the openNotional value of the reduced position now.
-        * We know notionalPosition and unrealizedPnlAfter (unrealizedPnl times the ratio of open position)
-        * notionalPosition = notionalPosition - quoteAsset (exchangedQuoteAssetAmount)
-        * calculate openNotional (it's different depends on long or short side)
-        * long: unrealizedPnl = notionalPosition - openNotional => openNotional = notionalPosition - unrealizedPnl
-        * short: unrealizedPnl = openNotional - notionalPosition => openNotional = notionalPosition + unrealizedPnl
-        */
-        if (isLongPosition) {
-            /**
-            * Let baseAssetQuantity = Q, position.size = size, by definition of _reducePosition, abs(size) >= abs(Q)
-            * quoteAsset = notionalPosition * Q / size
-            * unrealizedPnlAfter = unrealizedPnl - realizedPnl = unrealizedPnl - unrealizedPnl * Q / size
-            * remainOpenNotional = notionalPosition - notionalPosition * Q / size - unrealizedPnl + unrealizedPnl * Q / size
-            * => remainOpenNotional = notionalPosition(size-Q)/size - unrealizedPnl(size-Q)/size
-            * => remainOpenNotional = (notionalPosition - unrealizedPnl) * (size-Q)/size
-            * Since notionalPosition includes the PnL component, notionalPosition >= unrealizedPnl and size >= Q
-            * Hence remainOpenNotional >= 0
-            */
-            remainOpenNotional = (newNotionalPosition.toInt256() - unrealizedPnlAfter).toUint256();  // will assert that remainOpenNotional >= 0
-        } else {
-            /**
-            * Let baseAssetQuantity = Q, position.size = size, by definition of _reducePosition, abs(size) >= abs(Q)
-            * quoteAsset = notionalPosition * Q / size
-            * unrealizedPnlAfter = unrealizedPnl - realizedPnl = unrealizedPnl - unrealizedPnl * Q / size
-            * remainOpenNotional = notionalPosition - notionalPosition * Q / size + unrealizedPnl - unrealizedPnl * Q / size
-            * => remainOpenNotional = notionalPosition(size-Q)/size + unrealizedPnl(size-Q)/size
-            * => remainOpenNotional = (notionalPosition + unrealizedPnl) * (size-Q)/size
-            * => In AMM.sol, unrealizedPnl = position.openNotional - notionalPosition
-            * => notionalPosition + unrealizedPnl >= 0
-            * Hence remainOpenNotional >= 0
-            */
-            remainOpenNotional = (newNotionalPosition.toInt256() + unrealizedPnlAfter).toUint256();  // will assert that remainOpenNotional >= 0
-        }
-    }
-
-    /**
-    * @dev Go long on an asset
-    * @param baseAssetQuantity Exact base asset quantity to go long
-    * @param max_dx Maximum amount of qoute asset to be used while longing baseAssetQuantity. Lower means longing at a lower price (desirable).
-    * @return qouteAssetQuantity quote asset utilised. qouteAssetQuantity / baseAssetQuantity was the average rate.
-      qouteAssetQuantity <= max_dx
-    */
-    function _long(int256 baseAssetQuantity, uint max_dx) internal returns (uint256 qouteAssetQuantity) {
-        require(baseAssetQuantity > 0, "VAMM._long: baseAssetQuantity is <= 0");
-        if (max_dx != type(uint).max) {
-            max_dx *= 1e12;
-        }
-        qouteAssetQuantity = vamm.exchangeExactOut(
-            0, // sell quote asset
-            2, // purchase base asset
-            baseAssetQuantity.toUint256(), // long exactly. Note that statement asserts that baseAssetQuantity >= 0
-            max_dx
-        ) / 1e12; // 6 decimals precision
-        // since maker position will be opposite of the trade
-        posAccumulator -= baseAssetQuantity * 1e18 / vamm.totalSupply().toInt256();
-        emit Swap(baseAssetQuantity, qouteAssetQuantity, lastPrice(), openInterestNotional());
-    }
-
-    /**
-    * @dev Go short on an asset
-    * @param baseAssetQuantity Exact base asset quantity to short
-    * @param min_dy Minimum amount of qoute asset to be used while shorting baseAssetQuantity. Higher means shorting at a higher price (desirable).
-    * @return qouteAssetQuantity quote asset utilised. qouteAssetQuantity / baseAssetQuantity was the average short rate.
-      qouteAssetQuantity >= min_dy.
-    */
-    function _short(int256 baseAssetQuantity, uint min_dy) internal returns (uint256 qouteAssetQuantity) {
-        require(baseAssetQuantity < 0, "VAMM._short: baseAssetQuantity is >= 0");
-        if (min_dy != type(uint).max) {
-            min_dy *= 1e12;
-        }
-        qouteAssetQuantity = vamm.exchange(
-            2, // sell base asset
-            0, // get quote asset
-            (-baseAssetQuantity).toUint256(), // short exactly. Note that statement asserts that baseAssetQuantity <= 0
-            min_dy
-        ) / 1e12;
-        // since maker position will be opposite of the trade
-        posAccumulator -= baseAssetQuantity * 1e18 / vamm.totalSupply().toInt256();
-        emit Swap(baseAssetQuantity, qouteAssetQuantity, lastPrice(), openInterestNotional());
-    }
-
-    function _emitPositionChanged(address trader) internal {
-        Position memory position = positions[trader];
-        emit PositionChanged(trader, position.size, position.openNotional);
-    }
-
-    function addReserveSnapshot(uint256 _quoteAssetReserve, uint256 _baseAssetReserve)
-        onlyVamm
-        whenNotPaused
-        external
-    {
-        uint256 currentBlock = block.number;
-        uint256 blockTimestamp = _blockTimestamp();
-        emit ReserveSnapshotted(_quoteAssetReserve, _baseAssetReserve, blockTimestamp, currentBlock);
-
-        if (reserveSnapshots.length == 0) {
-            reserveSnapshots.push(
-                ReserveSnapshot(_quoteAssetReserve, _baseAssetReserve, blockTimestamp, currentBlock)
-            );
-            return;
-        }
-
-        ReserveSnapshot storage latestSnapshot = reserveSnapshots[reserveSnapshots.length - 1];
-        // update values in snapshot if in the same block
-        if (currentBlock == latestSnapshot.blockNumber) {
-            latestSnapshot.quoteAssetReserve = _quoteAssetReserve;
-            latestSnapshot.baseAssetReserve = _baseAssetReserve;
-        } else {
-            reserveSnapshots.push(
-                ReserveSnapshot(_quoteAssetReserve, _baseAssetReserve, blockTimestamp, currentBlock)
-            );
-        }
-    }
-
-    function getSnapshotLen() external view returns (uint256) {
-        return reserveSnapshots.length;
-    }
-
-    /**
-     * @notice update funding rate
-     * @dev only allow to update while reaching `nextFundingTime`
-     */
-    function settleFunding()
-        external
-        whenNotPaused
-        onlyClearingHouse
-    {
-        require(_blockTimestamp() >= nextFundingTime, "settle funding too early");
-
-        // premium = twapMarketPrice - twapIndexPrice
-        // timeFraction = fundingPeriod(1 hour) / 1 day
-        // premiumFraction = premium * timeFraction
-        int256 underlyingPrice = getUnderlyingTwapPrice(spotPriceTwapInterval);
-        int256 premium = getTwapPrice(spotPriceTwapInterval) - underlyingPrice;
-        int256 premiumFraction = (premium * int256(fundingPeriod)) / 1 days;
-
-        // update funding rate = premiumFraction / twapIndexPrice
-        _updateFundingRate(premiumFraction, underlyingPrice);
-
-        int256 premiumPerDtoken = posAccumulator * premiumFraction;
-
-        if (premiumPerDtoken % 1e18 != 0) { // makers pay slightly more to account for rounding off
-            premiumPerDtoken = (premiumPerDtoken / 1e18) + 1;
-        } else {
-            premiumPerDtoken /= 1e18;
-        }
-
-        cumulativePremiumFraction += premiumFraction;
-        cumulativePremiumPerDtoken += premiumPerDtoken;
-
-        // Updates for next funding event
-        // in order to prevent multiple funding settlement during very short time after network congestion
-        uint256 minNextValidFundingTime = _blockTimestamp() + fundingBufferPeriod;
-
-        // floor((nextFundingTime + fundingPeriod) / 3600) * 3600
-        uint256 nextFundingTimeOnHourStart = ((nextFundingTime + fundingPeriod) / 1 hours) * 1 hours;
-
-        // max(nextFundingTimeOnHourStart, minNextValidFundingTime)
-        nextFundingTime = nextFundingTimeOnHourStart > minNextValidFundingTime
-            ? nextFundingTimeOnHourStart
-            : minNextValidFundingTime;
-    }
-
-    // View
-
     function _blockTimestamp() internal view virtual returns (uint256) {
         return block.timestamp;
-    }
-
-    function getUnderlyingTwapPrice(uint256 _intervalInSeconds) public view returns (int256) {
-        return oracle.getUnderlyingTwapPrice(underlyingAsset, _intervalInSeconds);
-    }
-
-    function getTwapPrice(uint256 _intervalInSeconds) public view returns (int256) {
-        return int256(_calcTwap(_intervalInSeconds));
-    }
-
-    function getSpotPrice() public view returns (int256) {
-        return int256(vamm.balances(0) * 1e6 / vamm.balances(2));
     }
 
     function _calcTwap(uint256 _intervalInSeconds)
@@ -615,185 +699,6 @@ contract AMM is Governable, Pausable {
     ) internal {
         fundingRate = _premiumFraction * 1e6 / _underlyingPrice;
         emit FundingRateUpdated(_premiumFraction, fundingRate, _underlyingPrice.toUint256(), _blockTimestamp(), block.number);
-    }
-
-    // View
-
-    function getNotionalPositionAndUnrealizedPnl(address trader)
-        external
-        view
-        returns(uint256 notionalPosition, int256 unrealizedPnl, int256 size, uint256 openNotional)
-    {
-        Position memory _taker = positions[trader];
-        Maker memory _maker = makers[trader];
-
-        (notionalPosition, size, unrealizedPnl, openNotional) = vamm.get_notional(
-            _maker.dToken,
-            _maker.vUSD,
-            _maker.vAsset,
-            _taker.size,
-            _taker.openNotional
-        );
-    }
-
-    function getPendingFundingPayment(address trader)
-        public
-        view
-        returns(
-            int256 takerFundingPayment,
-            int256 makerFundingPayment,
-            int256 latestCumulativePremiumFraction,
-            int256 latestPremiumPerDtoken
-        )
-    {
-        latestCumulativePremiumFraction = cumulativePremiumFraction;
-        Position memory taker = positions[trader];
-
-        takerFundingPayment = (latestCumulativePremiumFraction - taker.lastPremiumFraction)
-            * taker.size
-            / 1e18;
-
-        // Maker funding payment
-        latestPremiumPerDtoken = cumulativePremiumPerDtoken;
-
-        Maker memory maker = makers[trader];
-        int256 dToken = maker.dToken.toInt256();
-        if (dToken > 0) {
-            int256 cpf = latestCumulativePremiumFraction - maker.lastPremiumFraction;
-            makerFundingPayment = (
-                maker.pos * cpf +
-                (
-                    latestPremiumPerDtoken
-                    - maker.lastPremiumPerDtoken
-                    - maker.posAccumulator * cpf / 1e18
-                ) * dToken
-            ) / 1e18;
-        }
-    }
-
-    function getQuote(int256 baseAssetQuantity) external view returns(uint256 quoteAssetQuantity) {
-        if (baseAssetQuantity >= 0) {
-            return vamm.get_dx(0, 2, baseAssetQuantity.toUint256()) / 1e12 + 1;
-        }
-        // rounding-down while shorting is not a problem
-        // because lower the min_dy, more permissible it is
-        return vamm.get_dy(2, 0, (-baseAssetQuantity).toUint256()) / 1e12;
-    }
-
-    /**
-    * @notice returns amount of base asset required for trade
-    * @param quoteAssetQuantity amount of quote asset to long/short
-    * @param isLong long - true, short - false
-    */
-    function getBase(uint256 quoteAssetQuantity, bool isLong) external view returns(int256 /* baseAssetQuantity */) {
-        uint256 baseAssetQuantity;
-        if (isLong) {
-            baseAssetQuantity = vamm.get_dy(0, 2, quoteAssetQuantity * 1e12);
-            return baseAssetQuantity.toInt256();
-        }
-        baseAssetQuantity = vamm.get_dx(2, 0, quoteAssetQuantity * 1e12);
-        return -(baseAssetQuantity.toInt256());
-    }
-
-    function getCloseQuote(int256 baseAssetQuantity) public view returns(uint256 quoteAssetQuantity) {
-        if (baseAssetQuantity > 0) {
-            return vamm.get_dy(2, 0, baseAssetQuantity.toUint256()) / 1e12;
-        } else if (baseAssetQuantity < 0) {
-            return vamm.get_dx(0, 2, (-baseAssetQuantity).toUint256()) / 1e12;
-        }
-        return 0;
-    }
-
-    function getTakerNotionalPositionAndUnrealizedPnl(address trader) public view returns(uint takerNotionalPosition, int256 unrealizedPnl) {
-        Position memory position = positions[trader];
-        if (position.size > 0) {
-            takerNotionalPosition = vamm.get_dy(2, 0, position.size.toUint256()) / 1e12;
-            unrealizedPnl = takerNotionalPosition.toInt256() - position.openNotional.toInt256();
-        } else if (position.size < 0) {
-            takerNotionalPosition = vamm.get_dx(0, 2, (-position.size).toUint256()) / 1e12;
-            unrealizedPnl = position.openNotional.toInt256() - takerNotionalPosition.toInt256();
-        }
-    }
-
-    function getMakerPositionAndUnrealizedPnl(address _maker) external view returns (int256 position, uint openNotional, int256 unrealizedPnl) {
-        Maker memory maker = makers[_maker];
-        (position, openNotional, unrealizedPnl) = vamm.get_maker_position(maker.dToken, maker.vUSD, maker.vAsset, maker.dToken);
-    }
-
-    /**
-    * @notice Get total liquidity deposited by maker and its current value
-    * @param _maker maker for which information to be obtained
-    * @return
-    *   vAsset - current base asset amount of maker in the pool
-    *   vUSD - current quote asset amount of maker in the pool
-    *   totalDeposited - total value of initial liquidity deposited in the pool by maker
-    *   dToken - maker dToken balance
-    */
-    function getMakerLiquidity(address _maker) external view returns (uint vAsset, uint vUSD, uint totalDeposited, uint dToken) {
-        Maker memory maker = makers[_maker];
-        dToken = maker.dToken;
-        totalDeposited = 2 * maker.vUSD / 1e12;
-        uint totalDTokenSupply = vamm.totalSupply();
-        if (totalDTokenSupply > 0) {
-            vUSD = vamm.balances(0) * maker.dToken / totalDTokenSupply / 1e12;
-            vAsset = vamm.balances(2) * maker.dToken / totalDTokenSupply;
-        }
-    }
-
-    /**
-    * @notice calculate base and quote asset amount form dToken
-     */
-    function calcWithdrawAmounts(uint dToken) external view returns (uint quoteAsset, uint baseAsset) {
-        uint totalDTokenSupply = vamm.totalSupply();
-        if (totalDTokenSupply > 0) {
-            quoteAsset = vamm.balances(0) * dToken / totalDTokenSupply / 1e12;
-            baseAsset = vamm.balances(2) * dToken / totalDTokenSupply;
-        }
-    }
-
-    /**
-    * @notice Get amount of token to add/remove given the amount of other token
-    * @param inputAmount quote/base asset amount to add or remove, base - 18 decimal, quote - 6 decimal
-    * @param isBase true if amount is base asset
-    * @param deposit true -> addLiquidity, false -> removeLiquidity
-    * @return fillAmount base/quote asset amount to be added/removed
-    *         dToken - equivalent dToken amount
-    */
-    function getMakerQuote(uint inputAmount, bool isBase, bool deposit) external view returns (uint fillAmount, uint dToken) {
-        uint bal1;
-        if (isBase) {
-            // calculate quoteAsset amount, fillAmount = quoteAsset, inputAmount = baseAsset
-            uint bal2 = vamm.balances(2);
-            if (bal2 == 0) {
-                fillAmount = inputAmount * vamm.price_scale(1) / 1e18;
-                bal1 = fillAmount * 1e8 / vamm.price_scale(0);
-            } else {
-                fillAmount = inputAmount * vamm.balances(0) / bal2;
-                bal1 = inputAmount * vamm.balances(1) / bal2;
-            }
-            dToken = vamm.calc_token_amount([fillAmount, bal1, inputAmount], deposit);
-            fillAmount /= 1e12;
-        } else {
-            uint bal0 = vamm.balances(0);
-            // calculate quote asset amount, fillAmount = baseAsset, inputAmount = quoteAsset
-            uint _inputAmount = inputAmount * 1e12; // inputAmount: 6 decimals
-            if (bal0 == 0) {
-                fillAmount = _inputAmount * 1e18 / vamm.price_scale(1);
-                bal1 = _inputAmount * 1e8 / vamm.price_scale(0);
-            } else {
-                fillAmount = _inputAmount * vamm.balances(2) / bal0;
-                bal1 = _inputAmount * vamm.balances(1) / bal0;
-            }
-            dToken = vamm.calc_token_amount([_inputAmount, bal1, fillAmount], deposit);
-        }
-    }
-
-    function lastPrice() public view returns(uint256) {
-        return vamm.last_prices(1) / 1e12;
-    }
-
-    function openInterestNotional() public view returns (uint256) {
-        return longOpenInterestNotional + shortOpenInterestNotional;
     }
 
     // Pure

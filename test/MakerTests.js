@@ -108,7 +108,7 @@ describe('Maker Tests', async function() {
             ;([ alice ] = signers.map(s => s.address))
 
             contracts = await setupContracts(DEFAULT_TRADE_FEE, { addLiquidity: false })
-            ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, swap } = contracts)
+            ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, swap, hubbleViewer } = contracts)
 
             // add margin
             margin = _1e6.mul(10000)
@@ -123,7 +123,7 @@ describe('Maker Tests', async function() {
             await addMargin(maker1, _1e6.mul(2e5))
             await clearingHouse.connect(maker1).addLiquidity(0, initialLiquidity, 0)
 
-            const { dToken } = await amm.getMakerQuote(initialLiquidity, true, true)
+            const { dToken } = await hubbleViewer.getMakerQuote(0, initialLiquidity, true, true)
             await addMargin(maker2, _1e6.mul(2.1e5))
             const tx = await clearingHouse.connect(maker2).addLiquidity(0, initialLiquidity, dToken)
 
@@ -159,7 +159,7 @@ describe('Maker Tests', async function() {
             expect(openNotional).gt(quoteAsset.div(2)) // higher openNotional, increase pnl
             expect(unrealizedPnl).lt(ZERO)
 
-            const [ maker1Pos ] = await clearingHouse.makerPositions(maker1.address)
+            const [ maker1Pos ] = await hubbleViewer.makerPositions(maker1.address)
             expect(maker1Pos.size).to.eq(size)
             expect(maker1Pos.openNotional).to.eq(openNotional)
             expect(maker1Pos.unrealizedPnl).to.eq(unrealizedPnl)
@@ -200,7 +200,7 @@ describe('Maker Tests', async function() {
             expect(openNotional).lt(quoteAsset.div(2)) // lower openNotional becaue of vamm fee, increase pnl
             expect(unrealizedPnl).lt(ZERO)
 
-            const [ maker1Pos ] = await clearingHouse.makerPositions(maker1.address)
+            const [ maker1Pos ] = await hubbleViewer.makerPositions(maker1.address)
             expect(maker1Pos.size).to.eq(size)
             expect(maker1Pos.openNotional).to.eq(openNotional)
             expect(maker1Pos.unrealizedPnl).to.eq(unrealizedPnl)
@@ -235,7 +235,7 @@ describe('Maker Tests', async function() {
             ;([ alice ] = signers.map(s => s.address))
 
             contracts = await setupContracts(DEFAULT_TRADE_FEE, { addLiquidity: false })
-            ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, swap } = contracts)
+            ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, swap, hubbleViewer } = contracts)
 
             // add margin
             margin = _1e6.mul(10000)
@@ -251,7 +251,7 @@ describe('Maker Tests', async function() {
             await clearingHouse.connect(maker1).addLiquidity(0, initialLiquidity, 0)
 
             // maker2 adds $1m liquidity, adding $100k margin
-            const { dToken } = await amm.getMakerQuote(initialLiquidity.div(2), true, true)
+            const { dToken } = await hubbleViewer.getMakerQuote(0, initialLiquidity.div(2), true, true)
             await addMargin(maker2, _1e6.mul(1.1e5))
             const tx = await clearingHouse.connect(maker2).addLiquidity(0, initialLiquidity.div(2), dToken)
 
@@ -281,7 +281,7 @@ describe('Maker Tests', async function() {
             let { quoteAsset } = await getTradeDetails(tx, DEFAULT_TRADE_FEE)
 
             const [{ vAsset, vUSD, totalDeposited, dToken: maker1Liquidity }, vUSDBalance] = await Promise.all([
-                amm.getMakerLiquidity(maker1.address),
+                hubbleViewer.getMakerLiquidity(maker1.address, 0),
                 swap.balances(0, {gasLimit: 100000})
             ])
             expect(totalDeposited).to.eq(_1e6.mul(2e6))
@@ -362,7 +362,7 @@ describe('Maker Tests', async function() {
             ;([ alice ] = signers.map(s => s.address))
 
             contracts = await setupContracts(DEFAULT_TRADE_FEE, { addLiquidity: false })
-            ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, swap } = contracts)
+            ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, swap, hubbleViewer } = contracts)
 
             // add margin
             margin = _1e6.mul(1100)
@@ -383,11 +383,11 @@ describe('Maker Tests', async function() {
             const maker1Liquidity = (await amm.makers(maker1.address)).dToken
             // alice longs
             const baseAssetQuantity = _1e18.mul(10)
-            const amount = await amm.getQuote(baseAssetQuantity)
+            const amount = await hubbleViewer.getQuote(baseAssetQuantity, 0)
             let tx = await clearingHouse.openPosition(0, baseAssetQuantity, amount)
             let { quoteAsset } = await getTradeDetails(tx, DEFAULT_TRADE_FEE)
             // maker1 removes all liquidity
-            const { baseAsset: minBase, quoteAsset: minQuote } = await amm.calcWithdrawAmounts(maker1Liquidity)
+            const { baseAsset: minBase, quoteAsset: minQuote } = await hubbleViewer.calcWithdrawAmounts(maker1Liquidity, 0)
             tx = await clearingHouse.connect(maker1).removeLiquidity(0, maker1Liquidity, minQuote, minBase)
             const { realizedPnl } = (await parseRawEvent(tx, amm, 'LiquidityRemoved')).args
 
@@ -410,11 +410,11 @@ describe('Maker Tests', async function() {
             const maker1Liquidity = (await amm.makers(maker1.address)).dToken
             // alice shorts
             const baseAssetQuantity = _1e18.mul(-10)
-            const amount = await amm.getQuote(baseAssetQuantity)
+            const amount = await hubbleViewer.getQuote(baseAssetQuantity, 0)
             let tx = await clearingHouse.openPosition(0, baseAssetQuantity, amount)
             let { quoteAsset } = await getTradeDetails(tx, DEFAULT_TRADE_FEE)
             // maker1 removes all liquidity
-            const { baseAsset: minBase, quoteAsset: minQuote } = await amm.calcWithdrawAmounts(maker1Liquidity)
+            const { baseAsset: minBase, quoteAsset: minQuote } = await hubbleViewer.calcWithdrawAmounts(maker1Liquidity, 0)
             tx = await clearingHouse.connect(maker1).removeLiquidity(0, maker1Liquidity, minQuote, minBase)
             const { realizedPnl } = (await parseRawEvent(tx, amm, 'LiquidityRemoved')).args
 
@@ -440,7 +440,7 @@ describe('Maker Tests', async function() {
             ;([ alice ] = signers.map(s => s.address))
 
             contracts = await setupContracts(DEFAULT_TRADE_FEE, { addLiquidity: false })
-            ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, swap } = contracts)
+            ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, swap, hubbleViewer } = contracts)
 
             // add margin
             margin = _1e6.mul(1100)
@@ -460,14 +460,14 @@ describe('Maker Tests', async function() {
         it('increase net position - short -> bigger short', async function () {
             // alice longs
             let baseAssetQuantity = _1e18.mul(10)
-            let amount = await amm.getQuote(baseAssetQuantity)
+            let amount = await hubbleViewer.getQuote(baseAssetQuantity, 0)
             let tx = await clearingHouse.openPosition(0, baseAssetQuantity, amount)
             const { quoteAsset } = await getTradeDetails(tx, DEFAULT_TRADE_FEE)
             let positionAccumulator = baseAssetQuantity.mul(_1e18).div(totalSupply).mul(-1)
 
             // maker1 shorts as taker
             baseAssetQuantity = _1e18.mul(-5)
-            amount = await amm.getQuote(baseAssetQuantity)
+            amount = await hubbleViewer.getQuote(baseAssetQuantity, 0)
             tx = await clearingHouse.connect(maker1).openPosition(0, baseAssetQuantity, amount)
             ;({ quoteAsset: takerQuote } = await getTradeDetails(tx, DEFAULT_TRADE_FEE))
             positionAccumulator = positionAccumulator.sub(baseAssetQuantity.mul(_1e18).div(totalSupply))
@@ -504,14 +504,14 @@ describe('Maker Tests', async function() {
         it('increase net position - long -> bigger long', async function () {
             // alice shorts
             let baseAssetQuantity = _1e18.mul(-10)
-            let amount = await amm.getQuote(baseAssetQuantity)
+            let amount = await hubbleViewer.getQuote(baseAssetQuantity, 0)
             let tx = await clearingHouse.openPosition(0, baseAssetQuantity, amount)
             const { quoteAsset } = await getTradeDetails(tx, DEFAULT_TRADE_FEE)
             let positionAccumulator = baseAssetQuantity.mul(_1e18).div(totalSupply).mul(-1)
 
             // maker1 longs as taker
             baseAssetQuantity = _1e18.mul(5)
-            amount = await amm.getQuote(baseAssetQuantity)
+            amount = await hubbleViewer.getQuote(baseAssetQuantity, 0)
             tx = await clearingHouse.connect(maker1).openPosition(0, baseAssetQuantity, amount)
             ;({ quoteAsset: takerQuote } = await getTradeDetails(tx, DEFAULT_TRADE_FEE))
             positionAccumulator = positionAccumulator.sub(baseAssetQuantity.mul(_1e18).div(totalSupply))
@@ -548,13 +548,13 @@ describe('Maker Tests', async function() {
         it('reduce net position - short -> smaller short', async function () {
             // alice shorts
             let baseAssetQuantity = _1e18.mul(-5)
-            let amount = await amm.getQuote(baseAssetQuantity)
+            let amount = await hubbleViewer.getQuote(baseAssetQuantity, 0)
             await clearingHouse.openPosition(0, baseAssetQuantity, amount)
             let positionAccumulator = baseAssetQuantity.mul(_1e18).div(totalSupply).mul(-1)
 
             // maker1 shorts as taker
             baseAssetQuantity = _1e18.mul(-10)
-            amount = await amm.getQuote(baseAssetQuantity)
+            amount = await hubbleViewer.getQuote(baseAssetQuantity, 0)
             let tx = await clearingHouse.connect(maker1).openPosition(0, baseAssetQuantity, amount)
             ;({ quoteAsset: takerQuote, fee } = await getTradeDetails(tx, DEFAULT_TRADE_FEE))
             positionAccumulator = positionAccumulator.sub(baseAssetQuantity.mul(_1e18).div(totalSupply))
@@ -565,7 +565,7 @@ describe('Maker Tests', async function() {
             const {
                 position: maker1Position,
                 openNotional: maker1OpenNotional
-            } = await amm.getMakerPositionAndUnrealizedPnl(maker1.address) // maker1 impermanent position
+            } = await hubbleViewer.getMakerPositionAndUnrealizedPnl(maker1.address, 0) // maker1 impermanent position
             assertBounds(maker1Position, _1e18.mul(75).div(10), _1e18.mul(8)) // 5/2 + 10/2 + noise
 
             let { notionalPosition, unrealizedPnl, size, openNotional } = await amm.getNotionalPositionAndUnrealizedPnl(maker1.address)
@@ -604,13 +604,13 @@ describe('Maker Tests', async function() {
         it('reduce net position - long -> smaller long', async function () {
             // alice longs
             let baseAssetQuantity = _1e18.mul(5)
-            let amount = await amm.getQuote(baseAssetQuantity)
+            let amount = await hubbleViewer.getQuote(baseAssetQuantity, 0)
             await clearingHouse.openPosition(0, baseAssetQuantity, amount)
             let positionAccumulator = baseAssetQuantity.mul(_1e18).div(totalSupply).mul(-1)
 
             // maker1 longs as taker
             baseAssetQuantity = _1e18.mul(10)
-            amount = await amm.getQuote(baseAssetQuantity)
+            amount = await hubbleViewer.getQuote(baseAssetQuantity, 0)
             let tx = await clearingHouse.connect(maker1).openPosition(0, baseAssetQuantity, amount)
             ;({ quoteAsset: takerQuote, fee } = await getTradeDetails(tx, DEFAULT_TRADE_FEE))
             positionAccumulator = positionAccumulator.sub(baseAssetQuantity.mul(_1e18).div(totalSupply))
@@ -621,7 +621,7 @@ describe('Maker Tests', async function() {
             const {
                 position: maker1Position,
                 openNotional: maker1OpenNotional
-            } = await amm.getMakerPositionAndUnrealizedPnl(maker1.address) // maker1 impermanent position
+            } = await hubbleViewer.getMakerPositionAndUnrealizedPnl(maker1.address, 0) // maker1 impermanent position
             assertBounds(maker1Position, _1e18.mul(-75).div(10), _1e18.mul(-7)) // -5/2 - 10/2 + noise
 
             let { notionalPosition, unrealizedPnl, size, openNotional } = await amm.getNotionalPositionAndUnrealizedPnl(maker1.address)
@@ -661,14 +661,14 @@ describe('Maker Tests', async function() {
             // alice shorts
             await addMargin(signers[0], _1e6.mul(500))
             let baseAssetQuantity = _1e18.mul(-15)
-            let amount = await amm.getQuote(baseAssetQuantity)
+            let amount = await hubbleViewer.getQuote(baseAssetQuantity, 0)
             let tx = await clearingHouse.openPosition(0, baseAssetQuantity, amount)
             let { quoteAsset } = await getTradeDetails(tx, DEFAULT_TRADE_FEE)
             let positionAccumulator = baseAssetQuantity.mul(_1e18).div(totalSupply).mul(-1)
 
             // maker1 shorts as taker
             baseAssetQuantity = _1e18.mul(-5)
-            amount = await amm.getQuote(baseAssetQuantity)
+            amount = await hubbleViewer.getQuote(baseAssetQuantity, 0)
             tx = await clearingHouse.connect(maker1).openPosition(0, baseAssetQuantity, amount)
             ;({ quoteAsset: takerQuote, fee } = await getTradeDetails(tx, DEFAULT_TRADE_FEE))
             positionAccumulator = positionAccumulator.sub(baseAssetQuantity.mul(_1e18).div(totalSupply))
@@ -679,7 +679,7 @@ describe('Maker Tests', async function() {
             const {
                 position: maker1Position,
                 openNotional: maker1OpenNotional
-            } = await amm.getMakerPositionAndUnrealizedPnl(maker1.address) // maker1 impermanent position
+            } = await hubbleViewer.getMakerPositionAndUnrealizedPnl(maker1.address, 0) // maker1 impermanent position
             assertBounds(maker1Position, _1e18.mul(10), _1e18.mul(105).div(10)) // 15/2 + 5/2 + noise
             expect(maker1OpenNotional).lt(quoteAsset.add(takerQuote).div(2)) // a little more than 1/2 share of maker1 in the pool, hence openNotional is less in case of long
 
@@ -717,14 +717,14 @@ describe('Maker Tests', async function() {
             // alice longs
             await addMargin(signers[0], _1e6.mul(500))
             let baseAssetQuantity = _1e18.mul(15)
-            let amount = await amm.getQuote(baseAssetQuantity)
+            let amount = await hubbleViewer.getQuote(baseAssetQuantity, 0)
             let tx = await clearingHouse.openPosition(0, baseAssetQuantity, amount)
             let { quoteAsset } = await getTradeDetails(tx, DEFAULT_TRADE_FEE)
             let positionAccumulator = baseAssetQuantity.mul(_1e18).div(totalSupply).mul(-1)
 
             // maker1 longs as taker
             baseAssetQuantity = _1e18.mul(5)
-            amount = await amm.getQuote(baseAssetQuantity)
+            amount = await hubbleViewer.getQuote(baseAssetQuantity, 0)
             tx = await clearingHouse.connect(maker1).openPosition(0, baseAssetQuantity, amount)
             ;({ quoteAsset: takerQuote, fee } = await getTradeDetails(tx, DEFAULT_TRADE_FEE))
             positionAccumulator = positionAccumulator.sub(baseAssetQuantity.mul(_1e18).div(totalSupply))
@@ -735,7 +735,7 @@ describe('Maker Tests', async function() {
             const {
                 position: maker1Position,
                 openNotional: maker1OpenNotional
-            } = await amm.getMakerPositionAndUnrealizedPnl(maker1.address) // maker1 impermanent position
+            } = await hubbleViewer.getMakerPositionAndUnrealizedPnl(maker1.address, 0) // maker1 impermanent position
             assertBounds(maker1Position, _1e18.mul(-10), _1e18.mul(-95).div(10)) // -15/2 - 5/2 + noise
             expect(maker1OpenNotional).gt(quoteAsset.add(takerQuote).div(2)) // a little more than 1/2 share of maker1 in the pool, hence openNotional is more in case of short
 
@@ -776,7 +776,7 @@ describe('Maker Tests', async function() {
             ;([ alice ] = signers.map(s => s.address))
 
             contracts = await setupContracts(DEFAULT_TRADE_FEE, { addLiquidity: false })
-            ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, swap } = contracts)
+            ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, swap, hubbleViewer } = contracts)
 
             // add margin
             margin = _1e6.mul(22000)
@@ -796,7 +796,7 @@ describe('Maker Tests', async function() {
             // maker3 adds Liquidity
             await addMargin(maker3, _1e6.mul(2520))
             const amount = _1e18.mul(10)
-            const { dToken } = await amm.getMakerQuote(amount, true, true)
+            const { dToken } = await hubbleViewer.getMakerQuote(0, amount, true, true)
             await clearingHouse.connect(maker3).addLiquidity(0, _1e18.mul(10), dToken)
             // maker3 longs
             const baseAssetQuantity = _1e18.mul(5)
@@ -810,7 +810,7 @@ describe('Maker Tests', async function() {
 
             // liquidate maker position
             await expect(clearingHouse.liquidate(maker3.address)).to.be.revertedWith('CH: Remove Liquidity First')
-            const { position: maker3Pos } = await amm.getMakerPositionAndUnrealizedPnl(maker3.address)
+            const { position: maker3Pos } = await hubbleViewer.getMakerPositionAndUnrealizedPnl(maker3.address, 0)
             await clearingHouse.liquidateMaker(maker3.address)
 
             const makerPosition = await amm.makers(maker3.address)
@@ -826,7 +826,7 @@ describe('Maker Tests', async function() {
         it('taker-Liquidable, maker-notLiquidable', async function() {
             // maker3 adds Liquidity
             await addMargin(maker3, _1e6.mul(1250))
-            const { dToken } = await amm.getMakerQuote(_1e18, true, true)
+            const { dToken } = await hubbleViewer.getMakerQuote(0, _1e18, true, true)
             await clearingHouse.connect(maker3).addLiquidity(0, _1e18, dToken)
             // maker3 longs
             const baseAssetQuantity = _1e18.mul(10)
@@ -838,7 +838,7 @@ describe('Maker Tests', async function() {
             expect(await clearingHouse.isAboveMaintenanceMargin(maker3.address)).to.be.false // taker+maker marginFraction < MM
 
             await expect(clearingHouse.liquidate(maker3.address)).to.be.revertedWith('CH: Remove Liquidity First')
-            const { position: maker3Pos } = await amm.getMakerPositionAndUnrealizedPnl(maker3.address)
+            const { position: maker3Pos } = await hubbleViewer.getMakerPositionAndUnrealizedPnl(maker3.address, 0)
             await clearingHouse.liquidateMaker(maker3.address)
 
             const makerPosition = await amm.makers(maker3.address)

@@ -11,7 +11,7 @@ describe('Liquidation Tests', async function() {
         signers = await ethers.getSigners()
         ;([ _, bob, liquidator1, liquidator2, liquidator3, admin ] = signers)
         alice = signers[0].address
-        ;({ swap, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, oracle, weth, insuranceFund } = await setupContracts())
+        ;({ swap, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, oracle, weth, insuranceFund, hubbleViewer } = await setupContracts())
 
         await vusd.grantRole(await vusd.MINTER_ROLE(), admin.address) // will mint vusd to liquidators account
     })
@@ -35,6 +35,10 @@ describe('Liquidation Tests', async function() {
         let tx = await clearingHouse.openPosition(0, _1e18.mul(-5), 0)
         ;({ fee: tradeFee } = await getTradeDetails(tx))
         expect((await marginAccount.isLiquidatable(alice, true))[0]).to.be.false
+
+        const userInfo = await hubbleViewer.userInfo(alice)
+        expect(userInfo[0]).to.eq(tradeFee.mul(-1)) // vUSD margin = 0 - tradeFee
+        expect(userInfo[1]).to.eq(wethMargin)
     })
 
     it('bob makes a counter-trade', async function() {

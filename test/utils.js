@@ -93,6 +93,10 @@ async function setupContracts(tradeFee = DEFAULT_TRADE_FEE, options = { addLiqui
         1000, // initialRate,
         options.addLiquidity ? 1000 : 0 // initialLiquidity
     ))
+
+    const HubbleViewer = await ethers.getContractFactory('HubbleViewer')
+    const hubbleViewer = await HubbleViewer.deploy(clearingHouse.address, marginAccount.address)
+
     return {
         swap: vamm,
         amm,
@@ -100,6 +104,7 @@ async function setupContracts(tradeFee = DEFAULT_TRADE_FEE, options = { addLiqui
         marginAccount,
         marginAccountHelper,
         clearingHouse,
+        hubbleViewer,
         vusd,
         usdc,
         weth,

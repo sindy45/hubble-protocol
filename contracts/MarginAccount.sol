@@ -72,7 +72,7 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, ERC2771ContextUpgra
     * @notice Maps index in supportedCollateral => trader => balance
     * @dev equivalent to margin(uint idx, address user)
     */
-    mapping(uint => mapping(address => int)) public margin;
+    mapping(uint => mapping(address => int)) override public margin;
 
     /* ****************** */
     /*       Events       */
@@ -511,15 +511,8 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, ERC2771ContextUpgra
         return supportedCollateral;
     }
 
-    function userInfo(address trader) external view returns(int256[] memory) {
-        uint length = supportedCollateral.length;
-        int256[] memory _margin = new int256[](length);
-        // -ve funding means user received funds
-        _margin[VUSD_IDX] = margin[VUSD_IDX][trader] - clearingHouse.getTotalFunding(trader);
-        for (uint i = 1; i < length; i++) {
-            _margin[i] = margin[i][trader];
-        }
-        return _margin;
+    function supportedAssetsLen() override external view returns (uint) {
+        return supportedCollateral.length;
     }
 
     /* ****************** */

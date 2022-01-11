@@ -24,6 +24,10 @@ interface IClearingHouse {
     function updatePositions(address trader) external;
     function getMarginFraction(address trader) external view returns(uint256);
     function getTotalFunding(address trader) external view returns(int256 totalFunding);
+    function getAmmsLength() external view returns(uint);
+    function amms(uint idx) external view returns(IAMM);
+    function maintenanceMargin() external view returns(int256);
+    function tradeFee() external view returns(uint256);
     function getNotionalPositionAndMargin(address trader, bool includeFundingPayments)
         external
         view
@@ -54,10 +58,8 @@ interface IAMM {
     function settleFunding() external;
     function underlyingAsset() external view returns (address);
     function positions(address trader) external view returns (int256,uint256,int256);
-    function getQuote(int256 baseAssetQuantity) external view returns(uint256 qouteAssetQuantity);
     function getCloseQuote(int256 baseAssetQuantity) external view returns(uint256 qouteAssetQuantity);
     function getTakerNotionalPositionAndUnrealizedPnl(address trader) external view returns(uint takerNotionalPosition, int256 unrealizedPnl);
-    function getMakerPositionAndUnrealizedPnl(address maker) external view returns (int256 position, uint openNotional, int256 unrealizedPnl);
     function getPendingFundingPayment(address trader)
         external
         view
@@ -72,12 +74,15 @@ interface IAMM {
         pure
         returns(uint256 remainOpenNotional, int realizedPnl);
     function makers(address maker) external view returns(uint,uint,uint,int,int,uint,uint);
+    function vamm() external view returns(IVAMM);
 }
 
 interface IMarginAccount {
     function getNormalizedMargin(address trader) external view returns(int256);
     function realizePnL(address trader, int256 realizedPnl) external;
     function isLiquidatable(address trader, bool includeFunding) external view returns(bool, uint, uint);
+    function supportedAssetsLen() external view returns(uint);
+    function margin(uint idx, address trader) external view returns(int256);
 }
 
 interface IVAMM {
