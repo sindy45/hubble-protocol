@@ -84,7 +84,7 @@ describe('Maker Tests', async function() {
 
             await assertions(contracts, maker.address, {
                 size: baseAssetQuantity.mul(-1),
-                openNotional: quoteAsset.sub(feeAccumulated.div(_1e12)), // openNotional decreases, hence higher pnl
+                openNotional: quoteAsset.sub(feeAccumulated.div(_1e12)).sub(1), // openNotional decreases, hence higher pnl
                 notionalPosition: _1e6.mul(2e6),
                 unrealizedPnl: ZERO
             })
@@ -97,7 +97,7 @@ describe('Maker Tests', async function() {
                 size: ZERO,
                 notionalPosition: _1e6.mul(2e6),
                 openNotional: ZERO,
-                unrealizedPnl: feeAccumulated.div(_1e12).add(feeAccumulated_2.div(_1e12))
+                unrealizedPnl: feeAccumulated.div(_1e12).add(feeAccumulated_2.div(_1e12)).add(1)
             })
         })
     })
@@ -480,7 +480,7 @@ describe('Maker Tests', async function() {
              // -10/2 + 5/2 - 5 + noise = -7.495. Maker takes a long position of 2.5 during trade as taker, hence reducing their position
             assertBounds(size, _1e18.mul(-75).div(10), _1e18.mul(-7))
             expect(openNotional).gt(takerQuote.add(quoteAsset.sub(takerQuote).div(2))) // makerOpenNotional = (quoteAsset - takerQuote) / 2, reducing impermanent position during trades, side remains same
-            assertBounds(unrealizedPnl, _1e6.mul(-145).div(10), _1e6.mul(-14)) // -14.19
+            assertBounds(unrealizedPnl, _1e6.mul(-10), _1e6.mul(-95).div(10)) // -9.7
 
             // maker1 removes all liquidity
             const { dToken: maker1Liquidity } = await amm.makers(maker1.address)
@@ -525,7 +525,7 @@ describe('Maker Tests', async function() {
             assertBounds(size, _1e18.mul(75).div(10), _1e18.mul(8))
             expect(openNotional).gt(ZERO)
             expect(openNotional).lt(takerQuote.add(quoteAsset.sub(takerQuote).div(2))) // makerOpenNotional = (quoteAsset - takerQuote) / 2, reducing impermanent position during trades, side remains same
-            assertBounds(unrealizedPnl, _1e6.mul(-141).div(10), _1e6.mul(-136).div(10)) // -13.9
+            assertBounds(unrealizedPnl, _1e6.mul(-10), _1e6.mul(-95).div(10)) // -9.7
             // maker1 removes all liquidity
             const { dToken: maker1Liquidity } = await amm.makers(maker1.address)
             await clearingHouse.connect(maker1).removeLiquidity(0, maker1Liquidity, _1e6.mul(997000), _1e18.mul(1000))
@@ -833,7 +833,7 @@ describe('Maker Tests', async function() {
             await clearingHouse.connect(maker3).openPosition(0, baseAssetQuantity, ethers.constants.MaxUint256)
             expect(await clearingHouse.isAboveMaintenanceMargin(maker3.address)).to.be.true // taker+maker marginFraction > MM
             // alice shorts
-            await clearingHouse.openPosition(0, _1e18.mul(-60), 0)
+            await clearingHouse.openPosition(0, _1e18.mul(-65), 0)
 
             expect(await clearingHouse.isAboveMaintenanceMargin(maker3.address)).to.be.false // taker+maker marginFraction < MM
 

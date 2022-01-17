@@ -9,7 +9,7 @@ from vyper.interfaces import ERC20
 interface Curve:
     def A() -> uint256: view
     def gamma() -> uint256: view
-    def price_scale(i: uint256) -> uint256: view
+    def price_scale() -> uint256: view
     def balances(i: uint256) -> uint256: view
     def D() -> uint256: view
     def totalSupply() -> uint256: view
@@ -21,11 +21,10 @@ interface Math:
     def newton_D(ANN: uint256, gamma: uint256, x_unsorted: uint256[N_COINS]) -> uint256: view
     def newton_y(ANN: uint256, gamma: uint256, x: uint256[N_COINS], D: uint256, i: uint256) -> uint256: view
 
-N_COINS: constant(int128) = 3  # <- change
+N_COINS: constant(int128) = 2  # <- change
 PRECISION: constant(uint256) = 10 ** 18  # The precision to convert to
 PRECISIONS: constant(uint256[N_COINS]) = [
     1,
-    10000000000,
     1,
 ]
 
@@ -39,19 +38,16 @@ def __init__(math: address):
 @external
 @view
 def get_dy(i: uint256, j: uint256, dx: uint256, balances: uint256[N_COINS], D: uint256) -> (uint256, uint256):
-    assert i != j and i < N_COINS and j < N_COINS, "coin index out of range"
+    assert i != j  # dev: same input and output coin
+    assert i < N_COINS  # dev: coin index out of range
+    assert j < N_COINS  # dev: coin index out of range
     assert dx > 0, "do not exchange 0 coins"
 
-    precisions: uint256[N_COINS] = PRECISIONS
+    price_scale: uint256 = Curve(msg.sender).price_scale() * PRECISIONS[1]
     xp: uint256[N_COINS] = balances
 
-    price_scale: uint256[N_COINS-1] = empty(uint256[N_COINS-1])
-    for k in range(N_COINS-1):
-        price_scale[k] = Curve(msg.sender).price_scale(k)
     xp[i] += dx
-    xp[0] *= precisions[0]
-    for k in range(N_COINS-1):
-        xp[k+1] = xp[k+1] * price_scale[k] * precisions[k+1] / PRECISION
+    xp = [xp[0] * PRECISIONS[0], xp[1] * price_scale / PRECISION]
 
     A: uint256 = Curve(msg.sender).A()
     gamma: uint256 = Curve(msg.sender).gamma()
@@ -60,8 +56,10 @@ def get_dy(i: uint256, j: uint256, dx: uint256, balances: uint256[N_COINS], D: u
     dy: uint256 = xp[j] - y - 1
     xp[j] = y
     if j > 0:
-        dy = dy * PRECISION / price_scale[j-1]
-    dy /= precisions[j]
+        dy = dy * PRECISION / price_scale
+    else:
+        dy /= PRECISIONS[0]
+
     fee: uint256 = Curve(msg.sender).fee_calc(xp) * dy / 10**10
     dy -= fee
     return dy, fee
@@ -69,19 +67,16 @@ def get_dy(i: uint256, j: uint256, dx: uint256, balances: uint256[N_COINS], D: u
 @external
 @view
 def get_dx(i: uint256, j: uint256, dy: uint256, balances: uint256[N_COINS], D: uint256) -> (uint256, uint256):
-    assert i != j and i < N_COINS and j < N_COINS, "coin index out of range"
+    assert i != j  # dev: same input and output coin
+    assert i < N_COINS  # dev: coin index out of range
+    assert j < N_COINS  # dev: coin index out of range
     assert dy > 0, "do not exchange 0 coins"
 
-    precisions: uint256[N_COINS] = PRECISIONS
+    price_scale: uint256 = Curve(msg.sender).price_scale() * PRECISIONS[1]
     xp: uint256[N_COINS] = balances
 
-    price_scale: uint256[N_COINS-1] = empty(uint256[N_COINS-1])
-    for k in range(N_COINS-1):
-        price_scale[k] = Curve(msg.sender).price_scale(k)
     xp[j] -= dy
-    xp[0] *= precisions[0]
-    for k in range(N_COINS-1):
-        xp[k+1] = xp[k+1] * price_scale[k] * precisions[k+1] / PRECISION
+    xp = [xp[0] * PRECISIONS[0], xp[1] * price_scale / PRECISION]
 
     A: uint256 = Curve(msg.sender).A()
     gamma: uint256 = Curve(msg.sender).gamma()
@@ -90,8 +85,10 @@ def get_dx(i: uint256, j: uint256, dy: uint256, balances: uint256[N_COINS], D: u
     dx: uint256 = x - xp[i] + 1
     xp[i] = x
     if i > 0:
-        dx = dx * PRECISION / price_scale[i-1]
-    dx /= precisions[i]
+        dx = dx * PRECISION / price_scale
+    else:
+        dx /= PRECISIONS[0]
+
     fee: uint256 = Curve(msg.sender).fee_calc(xp) * dx / 10**10
     dx += fee
     return dx, fee
@@ -99,24 +96,24 @@ def get_dx(i: uint256, j: uint256, dy: uint256, balances: uint256[N_COINS], D: u
 @view
 @external
 def calc_token_amount(amounts: uint256[N_COINS], deposit: bool) -> uint256:
-    precisions: uint256[N_COINS] = PRECISIONS
     token_supply: uint256 = Curve(msg.sender).totalSupply()
-    xp: uint256[N_COINS] = empty(uint256[N_COINS])
-    for k in range(N_COINS):
-        xp[k] = Curve(msg.sender).balances(k)
-    amountsp: uint256[N_COINS] = amounts
+    price_scale: uint256 = Curve(msg.sender).price_scale() * PRECISIONS[1]
+
+    xp: uint256[N_COINS] = [
+        Curve(msg.sender).balances(0) * PRECISIONS[0],
+        Curve(msg.sender).balances(1) * PRECISIONS[1] * price_scale / PRECISION]
+
+    amountsp: uint256[N_COINS] = [
+        amounts[0] * PRECISIONS[0],
+        amounts[1] * price_scale / PRECISION]
+
     if deposit:
         for k in range(N_COINS):
-            xp[k] += amounts[k]
+            xp[k] += amountsp[k]
     else:
         for k in range(N_COINS):
-            xp[k] -= amounts[k]
-    xp[0] *= precisions[0]
-    amountsp[0] *= precisions[0]
-    for k in range(N_COINS-1):
-        p: uint256 = Curve(msg.sender).price_scale(k) * precisions[k+1]
-        xp[k+1] = xp[k+1] * p / PRECISION
-        amountsp[k+1] = amountsp[k+1] * p / PRECISION
+            xp[k] -= amountsp[k]
+
     A: uint256 = Curve(msg.sender).A()
     gamma: uint256 = Curve(msg.sender).gamma()
     D: uint256 = Math(self.math).newton_D(A, gamma, xp)

@@ -150,7 +150,7 @@ async function setupAmm(governance, args, initialRate, initialLiquidity, _pause 
             '490000000000000', // adjustment_step
             0, // admin_fee
             600, // ma_half_time
-            [_1e18.mul(40000) /* btc initial rate */, _1e18.mul(initialRate)]
+            _1e18.mul(initialRate)
         ])
     )
 

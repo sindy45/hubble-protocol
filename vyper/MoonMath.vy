@@ -5,7 +5,7 @@
 # Unless otherwise agreed on, only contracts owned by Curve DAO or
 # Swiss Stake GmbH are allowed to call this contract.
 
-N_COINS: constant(int128) = 3  # <- change
+N_COINS: constant(int128) = 2  # <- change
 A_MULTIPLIER: constant(uint256) = 10000
 
 MIN_GAMMA: constant(uint256) = 10**10
@@ -16,44 +16,24 @@ MAX_A: constant(uint256) = N_COINS**N_COINS * A_MULTIPLIER * 1000
 
 
 @internal
-@pure
-def sort(A0: uint256[N_COINS]) -> uint256[N_COINS]:
-    """
-    Insertion sort from high to low
-    """
-    A: uint256[N_COINS] = A0
-    for i in range(1, N_COINS):
-        x: uint256 = A[i]
-        cur: uint256 = i
-        for j in range(N_COINS):
-            y: uint256 = A[cur-1]
-            if y > x:
-                break
-            A[cur] = y
-            cur -= 1
-            if cur == 0:
-                break
-        A[cur] = x
-    return A
-
-
-@internal
 @view
 def _geometric_mean(unsorted_x: uint256[N_COINS], sort: bool = True) -> uint256:
     """
     (x[0] * x[1] * ...) ** (1/N)
     """
     x: uint256[N_COINS] = unsorted_x
-    if sort:
-        x = self.sort(x)
+    if sort and x[0] < x[1]:
+        x = [unsorted_x[1], unsorted_x[0]]
     D: uint256 = x[0]
     diff: uint256 = 0
     for i in range(255):
         D_prev: uint256 = D
-        tmp: uint256 = 10**18
-        for _x in x:
-            tmp = tmp * _x / D
-        D = D * ((N_COINS - 1) * 10**18 + tmp) / (N_COINS * 10**18)
+        # tmp: uint256 = 10**18
+        # for _x in x:
+        #     tmp = tmp * _x / D
+        # D = D * ((N_COINS - 1) * 10**18 + tmp) / (N_COINS * 10**18)
+        # line below makes it for 2 coins
+        D = (D + x[0] * x[1] / D) / N_COINS
         if D > D_prev:
             diff = D - D_prev
         else:
@@ -71,28 +51,6 @@ def geometric_mean(unsorted_x: uint256[N_COINS], sort: bool = True) -> uint256:
 
 @external
 @view
-def reduction_coefficient(x: uint256[N_COINS], fee_gamma: uint256) -> uint256:
-    """
-    fee_gamma / (fee_gamma + (1 - K))
-    where
-    K = prod(x) / (sum(x) / N)**N
-    (all normalized to 1e18)
-    """
-    K: uint256 = 10**18
-    S: uint256 = 0
-    for x_i in x:
-        S += x_i
-    # Could be good to pre-sort x, but it is used only for dynamic fee,
-    # so that is not so important
-    for x_i in x:
-        K = K * N_COINS * x_i / S
-    if fee_gamma > 0:
-        K = fee_gamma * 10**18 / (fee_gamma + 10**18 - K)
-    return K
-
-
-@external
-@view
 def newton_D(ANN: uint256, gamma: uint256, x_unsorted: uint256[N_COINS]) -> uint256:
     """
     Finding the invariant using Newton method.
@@ -106,24 +64,24 @@ def newton_D(ANN: uint256, gamma: uint256, x_unsorted: uint256[N_COINS]) -> uint
     assert gamma > MIN_GAMMA - 1 and gamma < MAX_GAMMA + 1  # dev: unsafe values gamma
 
     # Initial value of invariant D is that for constant-product invariant
-    x: uint256[N_COINS] = self.sort(x_unsorted)
+    x: uint256[N_COINS] = x_unsorted
+    if x[0] < x[1]:
+        x = [x_unsorted[1], x_unsorted[0]]
 
     assert x[0] > 10**9 - 1 and x[0] < 10**15 * 10**18 + 1  # dev: unsafe values x[0]
-    for i in range(1, N_COINS):
-        frac: uint256 = x[i] * 10**18 / x[0]
-        assert frac > 10**11-1  # dev: unsafe values x[i]
+    assert x[1] * 10**18 / x[0] > 10**14-1  # dev: unsafe values x[i] (input)
 
     D: uint256 = N_COINS * self._geometric_mean(x, False)
-    S: uint256 = 0
-    for x_i in x:
-        S += x_i
+    S: uint256 = x[0] + x[1]
 
     for i in range(255):
         D_prev: uint256 = D
 
-        K0: uint256 = 10**18
-        for _x in x:
-            K0 = K0 * _x * N_COINS / D
+        # K0: uint256 = 10**18
+        # for _x in x:
+        #     K0 = K0 * _x * N_COINS / D
+        # collapsed for 2 coins
+        K0: uint256 = (10**18 * N_COINS**2) * x[0] / D * x[1] / D
 
         _g1k0: uint256 = gamma + 10**18
         if _g1k0 > K0:
@@ -178,32 +136,27 @@ def newton_y(ANN: uint256, gamma: uint256, x: uint256[N_COINS], D: uint256, i: u
     assert ANN > MIN_A - 1 and ANN < MAX_A + 1  # dev: unsafe values A
     assert gamma > MIN_GAMMA - 1 and gamma < MAX_GAMMA + 1  # dev: unsafe values gamma
     assert D > 10**17 - 1 and D < 10**15 * 10**18 + 1 # dev: unsafe values D
-    for k in range(3):
-        if k != i:
-            frac: uint256 = x[k] * 10**18 / D
-            assert (frac > 10**16 - 1) and (frac < 10**20 + 1)  # dev: unsafe values x[i]
 
-    y: uint256 = D / N_COINS
-    K0_i: uint256 = 10**18
-    S_i: uint256 = 0
+    x_j: uint256 = x[1 - i]
+    y: uint256 = D**2 / (x_j * N_COINS**2)
+    K0_i: uint256 = (10**18 * N_COINS) * x_j / D
+    # S_i = x_j
 
-    x_sorted: uint256[N_COINS] = x
-    x_sorted[i] = 0
-    x_sorted = self.sort(x_sorted)  # From high to low
+    # frac = x_j * 1e18 / D => frac = K0_i / N_COINS
+    assert (K0_i > 10**16*N_COINS - 1) and (K0_i < 10**20*N_COINS + 1)  # dev: unsafe values x[i]
 
-    convergence_limit: uint256 = max(max(x_sorted[0] / 10**14, D / 10**14), 100)
-    for j in range(2, N_COINS+1):
-        _x: uint256 = x_sorted[N_COINS-j]
-        y = y * D / (_x * N_COINS)  # Small _x first
-        S_i += _x
-    for j in range(N_COINS-1):
-        K0_i = K0_i * x_sorted[j] * N_COINS / D  # Large _x first
+    # x_sorted: uint256[N_COINS] = x
+    # x_sorted[i] = 0
+    # x_sorted = self.sort(x_sorted)  # From high to low
+    # x[not i] instead of x_sorted since x_soted has only 1 element
+
+    convergence_limit: uint256 = max(max(x_j / 10**14, D / 10**14), 100)
 
     for j in range(255):
         y_prev: uint256 = y
 
         K0: uint256 = K0_i * y * N_COINS / D
-        S: uint256 = S_i + y
+        S: uint256 = x_j + y
 
         _g1k0: uint256 = gamma + 10**18
         if _g1k0 > K0:

@@ -24,7 +24,7 @@ describe('AMM Tests', function() {
                 '490000000000000', // adjustment_step
                 0, // admin_fee
                 600, // ma_half_time
-                [_1e18.mul(40000) /* btc initial rate */, _1e18.mul(500)]
+                _1e18.mul(500)
             )).to.be.revertedWith('Swap: contract is already initialized')
         })
 
@@ -32,22 +32,22 @@ describe('AMM Tests', function() {
             const baseAssetQuantity = _1e18.mul(5)
             const amount = _1e18.mul(5025) // ~5x leverage
             const initialUSDTBalance = await swap.balances(0, {gasLimit: 100000});
-            const initialETHBalance = await swap.balances(2, {gasLimit: 100000});
+            const initialETHBalance = await swap.balances(1, {gasLimit: 100000});
 
-            const tx = await swap.exchangeExactOut(0, 2, baseAssetQuantity, amount)
+            const tx = await swap.exchangeExactOut(0, 1, baseAssetQuantity, amount)
             transactionEvent = await filterEvent(tx, 'TokenExchange')
             const dx1 = transactionEvent.args[2];
             const vammFee = transactionEvent.args[5];
 
-            const dx2 = await swap.get_dy(2, 0, baseAssetQuantity, {gasLimit: 100000})
-            const fee = await swap.get_dy_fee(2, 0, baseAssetQuantity, {gasLimit: 100000})
+            const dx2 = await swap.get_dy(1, 0, baseAssetQuantity, {gasLimit: 100000})
+            const fee = await swap.get_dy_fee(1, 0, baseAssetQuantity, {gasLimit: 100000})
             const finalUSDTBalance = await swap.balances(0, {gasLimit: 100000})
             const latestSnapshot = await amm.reserveSnapshots(1)
 
             expect(dx2).lt(dx1) // amount received less than deposited, loss to trader because of fee, profit to maker
             expect(dx2.add(fee)).gt(dx1.sub(vammFee)) // little more vUSD in the pool because of fee, hence the received amount without fee be a little more than deposited amount-fee
             expect((finalUSDTBalance.sub(initialUSDTBalance)).lte(amount)).to.be.true
-            expect(initialETHBalance.sub((await swap.balances(2, {gasLimit: 100000})))).to.eq(baseAssetQuantity)
+            expect(initialETHBalance.sub((await swap.balances(1, {gasLimit: 100000})))).to.eq(baseAssetQuantity)
             expect(await amm.getSnapshotLen()).to.eq(2)
             expect(latestSnapshot.quoteAssetReserve).to.eq(finalUSDTBalance)
             expect(latestSnapshot.baseAssetReserve).to.eq(initialETHBalance.sub(baseAssetQuantity))
@@ -57,27 +57,27 @@ describe('AMM Tests', function() {
             const baseAssetQuantity = _1e18.mul(5)
             const amount = _1e18.mul(5500) // ~5x leverage
             const initialUSDTBalance = await swap.balances(0, {gasLimit: 100000});
-            const initialETHBalance = await swap.balances(2, {gasLimit: 100000});
+            const initialETHBalance = await swap.balances(1, {gasLimit: 100000});
 
             const numberOfTransactions = 10
             let dx1 = ZERO
             let vammFee = ZERO
             for (let i = 0; i < numberOfTransactions; i++) {
-                let tx = await swap.exchangeExactOut(0, 2, baseAssetQuantity, amount)
+                let tx = await swap.exchangeExactOut(0, 1, baseAssetQuantity, amount)
                 let transactionEvent = await filterEvent(tx, 'TokenExchange')
                 dx1 = dx1.add(transactionEvent.args[2]);
                 vammFee = vammFee.add(transactionEvent.args[5]);
             }
 
-            const dx2 = await swap.get_dy(2, 0, baseAssetQuantity.mul(numberOfTransactions), {gasLimit: 100000})
-            const fee = await swap.get_dy_fee(2, 0, baseAssetQuantity.mul(numberOfTransactions), {gasLimit: 100000})
+            const dx2 = await swap.get_dy(1, 0, baseAssetQuantity.mul(numberOfTransactions), {gasLimit: 100000})
+            const fee = await swap.get_dy_fee(1, 0, baseAssetQuantity.mul(numberOfTransactions), {gasLimit: 100000})
             const finalUSDTBalance = await swap.balances(0, {gasLimit: 100000})
             const latestSnapshot = await amm.reserveSnapshots(numberOfTransactions) // total snapshots = numberOfTransactions + 1 (add_liquidity)
 
             expect(dx2).lt(dx1) // amount received less than deposited, loss to trader because of fee, profit to maker
             expect(dx2.add(fee)).gt(dx1.sub(vammFee)) // little more vUSD in the pool because of fee, hence the received amount without fee be a little more than deposited amount-fee
             expect((finalUSDTBalance.sub(initialUSDTBalance)).lte(amount.mul(numberOfTransactions))).to.be.true
-            expect(initialETHBalance.sub((await swap.balances(2, {gasLimit: 100000})))).to.eq(baseAssetQuantity.mul(numberOfTransactions))
+            expect(initialETHBalance.sub((await swap.balances(1, {gasLimit: 100000})))).to.eq(baseAssetQuantity.mul(numberOfTransactions))
             expect(await amm.getSnapshotLen()).to.eq(numberOfTransactions+1)
             expect(latestSnapshot.quoteAssetReserve).to.eq(finalUSDTBalance)
             expect(latestSnapshot.baseAssetReserve).to.eq(initialETHBalance.sub(baseAssetQuantity.mul(numberOfTransactions)))
@@ -87,21 +87,21 @@ describe('AMM Tests', function() {
             const baseAssetQuantity = _1e18.mul(5)
             const amount = _1e18.mul(4950) // ~5x leverage
             const initialUSDTBalance = await swap.balances(0, {gasLimit: 100000});
-            const initialETHBalance = await swap.balances(2,{gasLimit: 100000});
+            const initialETHBalance = await swap.balances(1,{gasLimit: 100000});
 
-            let tx = await swap.exchange(2, 0, baseAssetQuantity, amount)
+            let tx = await swap.exchange(1, 0, baseAssetQuantity, amount)
             transactionEvent = await filterEvent(tx, 'TokenExchange')
             const dy1 = transactionEvent.args[4];
             const vammFee = transactionEvent.args[5];
 
-            const dy2 = await swap.get_dx(0, 2, baseAssetQuantity, {gasLimit: 100000})
-            const fee = await swap.get_dx_fee(0, 2, baseAssetQuantity, {gasLimit: 100000})
+            const dy2 = await swap.get_dx(0, 1, baseAssetQuantity, {gasLimit: 100000})
+            const fee = await swap.get_dx_fee(0, 1, baseAssetQuantity, {gasLimit: 100000})
             const latestSnapshot = await amm.reserveSnapshots(1)
 
             expect(dy2).gt(dy1) // amount to deposit greater than received, loss to trader, profit to maker
             expect(dy2.sub(fee)).gt(dy1.add(vammFee)) // higher amount because of fee accumulation
             expect((initialUSDTBalance.sub((await swap.balances(0, {gasLimit: 100000})))).gte(amount)).to.be.true
-            expect((await swap.balances(2, {gasLimit: 100000})).sub(initialETHBalance)).to.eq(baseAssetQuantity)
+            expect((await swap.balances(1, {gasLimit: 100000})).sub(initialETHBalance)).to.eq(baseAssetQuantity)
             expect(await amm.getSnapshotLen()).to.eq(2)
             expect(latestSnapshot.quoteAssetReserve).to.eq(initialUSDTBalance.sub(dy1))
             expect(latestSnapshot.baseAssetReserve).to.eq(initialETHBalance.add(baseAssetQuantity))
@@ -111,26 +111,26 @@ describe('AMM Tests', function() {
             const baseAssetQuantity = _1e18.mul(5)
             const amount = _1e18.mul(4700) // ~5x leverage
             const initialUSDTBalance = await swap.balances(0, {gasLimit: 100000});
-            const initialETHBalance = await swap.balances(2, {gasLimit: 100000});
+            const initialETHBalance = await swap.balances(1, {gasLimit: 100000});
 
             const numberOfTransactions = 10
             let dy1 = ZERO
             let vammFee = ZERO
             for (let i = 0; i < numberOfTransactions; i++) {
-                let tx = await swap.exchange(2, 0, baseAssetQuantity, amount)
+                let tx = await swap.exchange(1, 0, baseAssetQuantity, amount)
                 let transactionEvent = await filterEvent(tx, 'TokenExchange')
                 dy1 = dy1.add(transactionEvent.args[4]);
                 vammFee = vammFee.add(transactionEvent.args[5]);
             }
 
-            const dy2 = await swap.get_dx(0, 2, baseAssetQuantity.mul(numberOfTransactions), {gasLimit: 100000})
-            const fee = await swap.get_dx_fee(0, 2, baseAssetQuantity.mul(numberOfTransactions), {gasLimit: 100000})
+            const dy2 = await swap.get_dx(0, 1, baseAssetQuantity.mul(numberOfTransactions), {gasLimit: 100000})
+            const fee = await swap.get_dx_fee(0, 1, baseAssetQuantity.mul(numberOfTransactions), {gasLimit: 100000})
             const latestSnapshot = await amm.reserveSnapshots(numberOfTransactions)
 
             expect(dy2).gt(dy1) // amount to deposit greater than received, loss to trader, profit to maker
             expect(dy2.sub(fee)).gt(dy1.add(vammFee)) // higher amount because of fee accumulation
             expect((initialUSDTBalance.sub((await swap.balances(0, {gasLimit: 100000})))).gte(amount.mul(numberOfTransactions))).to.be.true
-            expect((await swap.balances(2, {gasLimit: 100000})).sub(initialETHBalance)).to.eq(baseAssetQuantity.mul(numberOfTransactions))
+            expect((await swap.balances(1, {gasLimit: 100000})).sub(initialETHBalance)).to.eq(baseAssetQuantity.mul(numberOfTransactions))
             expect(await amm.getSnapshotLen()).to.eq(numberOfTransactions+1)
             expect(latestSnapshot.quoteAssetReserve).to.eq(initialUSDTBalance.sub(dy1))
             expect(latestSnapshot.baseAssetReserve).to.eq(initialETHBalance.add(baseAssetQuantity.mul(numberOfTransactions)))
@@ -139,19 +139,19 @@ describe('AMM Tests', function() {
 
     describe('Repegging Check', async function() {
         it('inital setup', async function() {
-            expect(await swap.price_scale(1, {gasLimit: 100000})).to.eq(_1e18.mul(1000)) // internal prices
-            expect(await swap.price_oracle(1, {gasLimit: 100000})).to.eq(_1e18.mul(1000)) // EMA
+            expect(await swap.price_scale({gasLimit: 100000})).to.eq(_1e18.mul(1000)) // internal prices
+            expect(await swap.price_oracle({gasLimit: 100000})).to.eq(_1e18.mul(1000)) // EMA
             expect(await swap.balances(0, {gasLimit: 100000})).to.eq(_1e18.mul(_1e6))
-            expect(await swap.balances(2, {gasLimit: 100000})).to.eq(_1e18.mul(1000))
+            expect(await swap.balances(1, {gasLimit: 100000})).to.eq(_1e18.mul(1000))
         })
 
         it('move pegged price up', async function() {
             for (let i = 0; i < 10; i++) {
-                await swap.exchangeExactOut(0, 2, _1e18.mul(15), ethers.constants.MaxUint256)
+                await swap.exchangeExactOut(0, 1, _1e18.mul(15), ethers.constants.MaxUint256)
             }
 
-            expect(await swap.price_scale(1, {gasLimit: 100000})).to.gt(_1e18.mul(1000))
-            expect(await swap.price_oracle(1, {gasLimit: 100000})).to.gt(_1e18.mul(1000))
+            expect(await swap.price_scale({gasLimit: 100000})).to.gt(_1e18.mul(1000))
+            expect(await swap.price_oracle({gasLimit: 100000})).to.gt(_1e18.mul(1000))
         })
 
         it('pegged price should not move much while adding liquidity in the ratio of price', async function() {
@@ -160,10 +160,9 @@ describe('AMM Tests', function() {
             for (let i = 0; i < 10; i++) {
                await clearingHouse.addLiquidity(0, _1e18.mul(50), 0)
             }
-            expect((await swap.price_scale(1, {gasLimit: 100000})).div(_1e6)).to.eq(_1e12.mul(1000)) // little price movement to due fee accumulation
+            expect((await swap.price_scale({gasLimit: 100000})).div(_1e6)).to.eq(_1e12.mul(1000)) // little price movement to due fee accumulation
             expect(await swap.balances(0, {gasLimit: 100000})).to.eq(_1e18.mul(1500000))
-            expect(await swap.balances(2, {gasLimit: 100000})).to.eq(_1e18.mul(1500))
-
+            expect(await swap.balances(1, {gasLimit: 100000})).to.eq(_1e18.mul(1500))
         })
     })
 })
@@ -219,11 +218,11 @@ describe('TWAP Price', function() {
         await increaseEvmTime(timestamp.toNumber())
         for (let i = 0; i < 30; i++) {
             if (i % 3 == 0) {
-                await swap.exchangeExactOut(0, 2, baseAssetQuantity.mul(2), ethers.constants.MaxUint256)
+                await swap.exchangeExactOut(0, 1, baseAssetQuantity.mul(2), ethers.constants.MaxUint256)
                 timestamp = timestamp.add(14)
                 await increaseEvmTime(timestamp.toNumber())
             } else {
-                await swap.exchange(2, 0, baseAssetQuantity, ZERO)
+                await swap.exchange(1, 0, baseAssetQuantity, ZERO)
                 timestamp = timestamp.add(28)
                 await increaseEvmTime(timestamp.toNumber())
             }
@@ -236,17 +235,17 @@ describe('TWAP Price', function() {
         // ((1010196965+ 1010226777+ 1010255037+ 1010283315+ 1010311343+ 1010339389)*28 + (1020372865+1020404484+1020432937+1020461408+1020491231+1020519468)*14 + (1000112373+1000140684+1000168734+1000196802+1000223332+1000251170)*28)/420 = 1008269807
 
         const twap = await amm.getTwapPrice(420)
-        expect(twap).to.eq('1008225065')
+        expect(parseInt(twap.toNumber() / 1e6)).to.eq(1008)
     })
 
     it('the timestamp of latest snapshot is now, the latest snapshot wont have any effect', async () => {
         // price is 990 but time weighted is zero
-        await swap.exchange(2, 0, baseAssetQuantity, ZERO)
+        await swap.exchange(1, 0, baseAssetQuantity, ZERO)
 
         // Shaving off 20 secs from the 420s window would mean dropping the first 1020 snapshot and 6 secs off the 1010 reading.
         // twap = (1020 * 5 snapshots * 14 sec + 1010 * 22 sec + 1010*5*28 +  + 1000*6*28)/400 = 1007
         const twap = await amm.getTwapPrice(400)
-        expect(twap).to.eq('1007781059')
+        expect(parseInt(twap.toNumber() / 1e6)).to.eq(1007)
     })
 
     it('asking interval more than the snapshots', async () => {
@@ -254,16 +253,16 @@ describe('TWAP Price', function() {
         // twap = (1020 * 10 snapshots * 14 sec + 1010*10*28 + 1000*10*28 + 1000*14)/714 ~ 1008
 
         const twap = await amm.getTwapPrice(900)
-        expect(twap).to.eq('1008028583')
+        expect(parseInt(twap.toNumber() / 1e6)).to.eq(1008)
     })
 
     it('asking interval less than latest snapshot, return latest price directly', async () => {
         // price is 990
         await increaseEvmTime(Date.now() + 500)
-        await swap.exchange(2, 0, baseAssetQuantity, ZERO) // add a delay of 500 seconds
+        await swap.exchange(1, 0, baseAssetQuantity, ZERO) // add a delay of 500 seconds
 
         const twap = await amm.getTwapPrice(420)
-        expect(twap).to.eq('990273734')
+        expect(parseInt(twap.toNumber() / 1e6)).to.eq(990)
     })
 
     it('price with interval 0 should be the same as spot price', async () => {

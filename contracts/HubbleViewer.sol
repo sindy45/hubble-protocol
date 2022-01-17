@@ -235,11 +235,11 @@ contract HubbleViewer {
         IVAMM vamm = amm.vamm();
 
         if (baseAssetQuantity >= 0) {
-            return vamm.get_dx(0, 2, baseAssetQuantity.toUint256()) / 1e12 + 1;
+            return vamm.get_dx(0, 1, baseAssetQuantity.toUint256()) / 1e12 + 1;
         }
         // rounding-down while shorting is not a problem
         // because lower the min_dy, more permissible it is
-        return vamm.get_dy(2, 0, (-baseAssetQuantity).toUint256()) / 1e12;
+        return vamm.get_dy(1, 0, (-baseAssetQuantity).toUint256()) / 1e12;
     }
 
     /**
@@ -254,10 +254,10 @@ contract HubbleViewer {
 
         uint256 baseAssetQuantity;
         if (isLong) {
-            baseAssetQuantity = vamm.get_dy(0, 2, quoteAssetQuantity * 1e12);
+            baseAssetQuantity = vamm.get_dy(0, 1, quoteAssetQuantity * 1e12);
             return baseAssetQuantity.toInt256();
         }
-        baseAssetQuantity = vamm.get_dx(2, 0, quoteAssetQuantity * 1e12);
+        baseAssetQuantity = vamm.get_dx(1, 0, quoteAssetQuantity * 1e12);
         return -(baseAssetQuantity.toInt256());
     }
 
@@ -279,7 +279,7 @@ contract HubbleViewer {
         uint totalDTokenSupply = vamm.totalSupply();
         if (totalDTokenSupply > 0) {
             vUSD = vamm.balances(0) * dToken / totalDTokenSupply / 1e12;
-            vAsset = vamm.balances(2) * dToken / totalDTokenSupply;
+            vAsset = vamm.balances(1) * dToken / totalDTokenSupply;
         }
     }
 
@@ -293,7 +293,7 @@ contract HubbleViewer {
         uint totalDTokenSupply = vamm.totalSupply();
         if (totalDTokenSupply > 0) {
             quoteAsset = vamm.balances(0) * dToken / totalDTokenSupply / 1e12;
-            baseAsset = vamm.balances(2) * dToken / totalDTokenSupply;
+            baseAsset = vamm.balances(1) * dToken / totalDTokenSupply;
         }
     }
 
@@ -309,31 +309,26 @@ contract HubbleViewer {
         IAMM amm = clearingHouse.amms(idx);
         IVAMM vamm = amm.vamm();
 
-        uint bal1;
         if (isBase) {
             // calculate quoteAsset amount, fillAmount = quoteAsset, inputAmount = baseAsset
-            uint bal2 = vamm.balances(2);
-            if (bal2 == 0) {
-                fillAmount = inputAmount * vamm.price_scale(1) / 1e18;
-                bal1 = fillAmount * 1e8 / vamm.price_scale(0);
+            uint baseAssetBal = vamm.balances(1);
+            if (baseAssetBal == 0) {
+                fillAmount = inputAmount * vamm.price_scale() / 1e18;
             } else {
-                fillAmount = inputAmount * vamm.balances(0) / bal2;
-                bal1 = inputAmount * vamm.balances(1) / bal2;
+                fillAmount = inputAmount * vamm.balances(0) / baseAssetBal;
             }
-            dToken = vamm.calc_token_amount([fillAmount, bal1, inputAmount], deposit);
+            dToken = vamm.calc_token_amount([fillAmount, inputAmount], deposit);
             fillAmount /= 1e12;
         } else {
             uint bal0 = vamm.balances(0);
             // calculate quote asset amount, fillAmount = baseAsset, inputAmount = quoteAsset
             uint _inputAmount = inputAmount * 1e12; // inputAmount: 6 decimals
             if (bal0 == 0) {
-                fillAmount = _inputAmount * 1e18 / vamm.price_scale(1);
-                bal1 = _inputAmount * 1e8 / vamm.price_scale(0);
+                fillAmount = _inputAmount * 1e18 / vamm.price_scale();
             } else {
-                fillAmount = _inputAmount * vamm.balances(2) / bal0;
-                bal1 = _inputAmount * vamm.balances(1) / bal0;
+                fillAmount = _inputAmount * vamm.balances(1) / bal0;
             }
-            dToken = vamm.calc_token_amount([_inputAmount, bal1, fillAmount], deposit);
+            dToken = vamm.calc_token_amount([_inputAmount, fillAmount], deposit);
         }
     }
 

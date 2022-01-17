@@ -173,17 +173,14 @@ contract AMM is Governable, Pausable {
         onlyClearingHouse
     {
         uint quoteAsset;
-        uint bal1;
-        uint bal2 = vamm.balances(2);
-        if (bal2 == 0) {
-            quoteAsset = baseAssetQuantity * vamm.price_scale(1) / 1e18;
-            bal1 = quoteAsset * 1e8 / vamm.price_scale(0);
+        uint baseAssetBal = vamm.balances(1);
+        if (baseAssetBal == 0) {
+            quoteAsset = baseAssetQuantity * vamm.price_scale() / 1e18;
         } else {
-            quoteAsset = baseAssetQuantity * vamm.balances(0) / bal2;
-            bal1 = baseAssetQuantity * vamm.balances(1) / bal2;
+            quoteAsset = baseAssetQuantity * vamm.balances(0) / baseAssetBal;
         }
 
-        uint _dToken = vamm.add_liquidity([quoteAsset, bal1 /* to be added in same ratio as other coins */, baseAssetQuantity], minDToken);
+        uint _dToken = vamm.add_liquidity([quoteAsset, baseAssetQuantity], minDToken);
 
         // updates
         Maker storage _maker = makers[trader];
@@ -207,7 +204,7 @@ contract AMM is Governable, Pausable {
         // amount <= _maker.dToken will be asserted when updating maker.dToken
         (int256 makerPosition, uint256 totalOpenNotional, int256 feeAdjustedPnl) = vamm.remove_liquidity(
             amount,
-            [minQuote * 1e12 /* minimum QuoteAsset amount */, 0, minBase /* minimum BaseAsset amount */],
+            [minQuote * 1e12 /* minimum QuoteAsset amount */, minBase /* minimum BaseAsset amount */],
             _maker.vUSD,
             _maker.vAsset,
             _maker.dToken,
@@ -398,7 +395,7 @@ contract AMM is Governable, Pausable {
     }
 
     function getSpotPrice() public view returns (int256) {
-        return int256(vamm.balances(0) * 1e6 / vamm.balances(2));
+        return int256(vamm.balances(0) * 1e6 / vamm.balances(1));
     }
 
     function getNotionalPositionAndUnrealizedPnl(address trader)
@@ -455,9 +452,9 @@ contract AMM is Governable, Pausable {
 
     function getCloseQuote(int256 baseAssetQuantity) public view returns(uint256 quoteAssetQuantity) {
         if (baseAssetQuantity > 0) {
-            return vamm.get_dy(2, 0, baseAssetQuantity.toUint256()) / 1e12;
+            return vamm.get_dy(1, 0, baseAssetQuantity.toUint256()) / 1e12;
         } else if (baseAssetQuantity < 0) {
-            return vamm.get_dx(0, 2, (-baseAssetQuantity).toUint256()) / 1e12;
+            return vamm.get_dx(0, 1, (-baseAssetQuantity).toUint256()) / 1e12;
         }
         return 0;
     }
@@ -465,16 +462,16 @@ contract AMM is Governable, Pausable {
     function getTakerNotionalPositionAndUnrealizedPnl(address trader) public view returns(uint takerNotionalPosition, int256 unrealizedPnl) {
         Position memory position = positions[trader];
         if (position.size > 0) {
-            takerNotionalPosition = vamm.get_dy(2, 0, position.size.toUint256()) / 1e12;
+            takerNotionalPosition = vamm.get_dy(1, 0, position.size.toUint256()) / 1e12;
             unrealizedPnl = takerNotionalPosition.toInt256() - position.openNotional.toInt256();
         } else if (position.size < 0) {
-            takerNotionalPosition = vamm.get_dx(0, 2, (-position.size).toUint256()) / 1e12;
+            takerNotionalPosition = vamm.get_dx(0, 1, (-position.size).toUint256()) / 1e12;
             unrealizedPnl = position.openNotional.toInt256() - takerNotionalPosition.toInt256();
         }
     }
 
     function lastPrice() public view returns(uint256) {
-        return vamm.last_prices(1) / 1e12;
+        return vamm.last_prices() / 1e12;
     }
 
     function openInterestNotional() public view returns (uint256) {
@@ -497,7 +494,7 @@ contract AMM is Governable, Pausable {
         }
         qouteAssetQuantity = vamm.exchangeExactOut(
             0, // sell quote asset
-            2, // purchase base asset
+            1, // purchase base asset
             baseAssetQuantity.toUint256(), // long exactly. Note that statement asserts that baseAssetQuantity >= 0
             max_dx
         ) / 1e12; // 6 decimals precision
@@ -519,7 +516,7 @@ contract AMM is Governable, Pausable {
             min_dy *= 1e12;
         }
         qouteAssetQuantity = vamm.exchange(
-            2, // sell base asset
+            1, // sell base asset
             0, // get quote asset
             (-baseAssetQuantity).toUint256(), // short exactly. Note that statement asserts that baseAssetQuantity <= 0
             min_dy

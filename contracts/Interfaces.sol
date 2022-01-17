@@ -115,12 +115,12 @@ interface IVAMM {
     ) external returns (uint256 dx);
 
     function get_notional(uint256 makerDToken, uint256 vUSD, uint256 vAsset, int256 takerPosSize, uint256 takerOpenNotional) external view returns (uint256, int256, int256, uint256);
-    function last_prices(uint256 k) external view returns(uint256);
-    function price_oracle(uint256 k) external view returns(uint256);
-    function price_scale(uint256 k) external view returns(uint256);
-    function add_liquidity(uint256[3] calldata amounts, uint256 min_mint_amount) external returns (uint256);
-    function calc_token_amount(uint256[3] calldata amounts, bool deposit) external view returns (uint256);
-    function remove_liquidity(uint256 amount, uint256[3] calldata minAmounts, uint256 vUSD, uint256 vAsset, uint256 makerDToken, int256 takerPosSize, uint256 takerOpenNotional) external returns (int256, uint256, int256);
+    function last_prices() external view returns(uint256);
+    function price_oracle() external view returns(uint256);
+    function price_scale() external view returns(uint256);
+    function add_liquidity(uint256[2] calldata amounts, uint256 min_mint_amount) external returns (uint256);
+    function calc_token_amount(uint256[2] calldata amounts, bool deposit) external view returns (uint256);
+    function remove_liquidity(uint256 amount, uint256[2] calldata minAmounts, uint256 vUSD, uint256 vAsset, uint256 makerDToken, int256 takerPosSize, uint256 takerOpenNotional) external returns (int256, uint256, int256);
     function get_maker_position(uint256 amount, uint256 vUSD, uint256 vAsset, uint256 makerDToken) external view returns (int256, uint256, int256);
     function totalSupply() external view returns (uint256);
 }
