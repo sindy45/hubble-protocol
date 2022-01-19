@@ -54,6 +54,7 @@ module.exports = {
         currency: 'USD',
         gasPrice: 25,
         coinmarketcap: '554a6764-aae9-440e-852b-63e3c66c20d7',
-        token: 'AVAX'
+        token: 'AVAX',
+        enabled: process.env.REPORT_GAS ? true : false
     }
 };

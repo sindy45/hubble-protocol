@@ -45,3 +45,9 @@ Open `./docgen/index.html` in a browser.
 npx hardhat coverage
 ```
 Open `./coverage/index.html` in a browser.
+
+
+### Gas Reporter
+```
+npm run gas-reporter
+```

@@ -165,6 +165,9 @@ contract AMM is Governable, Pausable {
 
         // +: trader paid, -: trader received
         fundingPayment = takerFundingPayment + makerFundingPayment;
+        if (fundingPayment < 0) {
+            fundingPayment -= fundingPayment / 1e3; // receivers charged 0.1% to account for rounding-offs
+        }
     }
 
     function addLiquidity(address trader, uint baseAssetQuantity, uint minDToken)
@@ -222,7 +225,8 @@ contract AMM is Governable, Pausable {
             __maker.vUSD = 0;
             __maker.dToken = 0;
         } else {
-            __maker.pos = _maker.pos + (posAccumulator - _maker.posAccumulator) * _maker.dToken.toInt256() / 1e18;
+            // muitiply by diff because a taker position will also be opened while removing liquidity and its funding payment is calculated seperately
+            __maker.pos = _maker.pos + (posAccumulator - _maker.posAccumulator) * diff.toInt256() / 1e18;
             __maker.vAsset = _maker.vAsset * diff / _maker.dToken;
             __maker.vUSD = _maker.vUSD * diff / _maker.dToken;
             __maker.dToken = diff;

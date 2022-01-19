@@ -41,4 +41,4 @@ jobs:
     - name: Run Tests
       env:
         ALCHEMY: ${{ secrets.ALCHEMY }}
-      run: npm t
+      run: npm run gas-reporter

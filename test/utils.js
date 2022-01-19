@@ -333,6 +333,11 @@ async function signTransaction(signer, to, data, forwarder, value = 0, gas = 100
     return { sign, req }
 }
 
+async function assertBounds(v, lowerBound, upperBound) {
+    if (lowerBound) expect(v).gt(lowerBound)
+    if (upperBound) expect(v).lt(upperBound)
+}
+
 module.exports = {
     constants: { _1e6, _1e12, _1e18, ZERO },
     log,
@@ -349,5 +354,7 @@ module.exports = {
     setupAmm,
     signTransaction,
     addMargin,
-    parseRawEvent
+    parseRawEvent,
+    assertBounds,
+    BigNumber
 }

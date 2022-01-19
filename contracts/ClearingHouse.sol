@@ -82,10 +82,10 @@ contract ClearingHouse is VanillaGovernable, ERC2771ContextUpgradeable {
         emit PositionModified(trader, idx, baseAssetQuantity, quoteAsset);
     }
 
-    function addLiquidity(uint idx, uint256 baseAssetQuantity, uint quoteAssetLimit) external {
+    function addLiquidity(uint idx, uint256 baseAssetQuantity, uint minDToken) external {
         address maker = _msgSender();
         updatePositions(maker);
-        amms[idx].addLiquidity(maker, baseAssetQuantity, quoteAssetLimit);
+        amms[idx].addLiquidity(maker, baseAssetQuantity, minDToken);
         require(isAboveMaintenanceMargin(maker), "CH: Below Maintenance Margin");
     }
 

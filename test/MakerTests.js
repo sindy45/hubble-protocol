@@ -8,8 +8,9 @@ const {
     addMargin,
     assertions,
     gotoNextFundingTime,
-    getTwapPrice,
-    parseRawEvent
+    parseRawEvent,
+    assertBounds,
+    BigNumber
 } = utils
 
 const DEFAULT_TRADE_FEE = 0.0005 * 1e6 /* 0.05% */
@@ -866,7 +867,7 @@ describe('Maker Tests', async function() {
             ;([ alice ] = signers.map(s => s.address))
 
             contracts = await setupContracts(DEFAULT_TRADE_FEE, { addLiquidity: false })
-            ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, swap } = contracts)
+            ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, swap, hubbleViewer } = contracts)
 
             // add margin
             margin = _1e6.mul(1000)
@@ -878,7 +879,7 @@ describe('Maker Tests', async function() {
             const initialLiquidity = _1e18.mul(1000)
             await addMargin(maker1, makerMargin)
             await addMargin(maker2, makerMargin)
-            // epoch = 1
+
             await clearingHouse.connect(maker1).addLiquidity(0, initialLiquidity, 0)
             await clearingHouse.connect(maker2).addLiquidity(0, initialLiquidity, 0)
             await gotoNextFundingTime(amm)
@@ -898,19 +899,11 @@ describe('Maker Tests', async function() {
             const oracleTwap = _1e6.mul(900)
             await oracle.setUnderlyingTwapPrice(weth.address, oracleTwap)
 
-            tx = await clearingHouse.settleFunding() // epoch = 1
-            let fundingTimestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp;
-            let markTwap = await getTwapPrice(amm, 3600, fundingTimestamp)
-            let premium = markTwap.sub(oracleTwap).div(24)
+            await clearingHouse.settleFunding() // funding event - 1
             await gotoNextFundingTime(amm)
 
-            tx = await clearingHouse.settleFunding() // epoch = 2
-            fundingTimestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp;
-            markTwap = await getTwapPrice(amm, 3600, fundingTimestamp)
-            premium = premium.add(markTwap.sub(oracleTwap).div(24))
-
-            const premiumFraction = await amm.cumulativePremiumFraction()
-            expect(premiumFraction).to.eq(premium)
+            await clearingHouse.settleFunding() // funding event - 2
+            const premium = await amm.cumulativePremiumFraction()
 
             await Promise.all([
                 clearingHouse.updatePositions(maker1.address),
@@ -918,10 +911,231 @@ describe('Maker Tests', async function() {
                 clearingHouse.updatePositions(alice)
             ])
 
-            const fundingPaid = premiumFraction.mul(baseAssetQuantity.mul(-1)).div(_1e18)
-            expect(await marginAccount.getNormalizedMargin(alice)).to.eq(margin.add(fundingPaid).sub(fee))
-            expect(await marginAccount.getNormalizedMargin(maker1.address)).to.lt(makerMargin.sub(fundingPaid.mul(maker1Liquidity).div(totalSupply)))
-            expect(await marginAccount.getNormalizedMargin(maker2.address)).to.lt(makerMargin.sub(fundingPaid.mul(maker2Liquidity).div(totalSupply)))
+            const fundingPaid = premium.mul(baseAssetQuantity.mul(-1)).div(_1e18)
+            const fundingReceived = getAdjustedFunding(fundingPaid)
+
+            expect(await marginAccount.getNormalizedMargin(alice)).to.eq(margin.add(fundingReceived).sub(fee))
+
+            let upperBound = makerMargin.sub(fundingPaid.mul(maker1Liquidity).div(totalSupply))
+            let lowerBound = upperBound.sub(upperBound.div(1e7))
+            await assertBounds(await marginAccount.getNormalizedMargin(maker1.address), lowerBound, upperBound)
+            upperBound = makerMargin.sub(fundingPaid.mul(maker2Liquidity).div(totalSupply))
+            lowerBound = upperBound.sub(upperBound.div(1e7))
+            await assertBounds(await marginAccount.getNormalizedMargin(maker2.address), lowerBound, upperBound)
+            expect(fundingPaid).gte(fundingReceived)
+        })
+
+        it('alice pay and makers receive funding', async function() {
+            const baseAssetQuantity = _1e18.mul(-5)
+            let tx = await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity, _1e6.mul(4975))
+            ;({ quoteAsset, fee } = await getTradeDetails(tx))
+
+            // underlying
+            const oracleTwap = _1e6.mul(1100)
+            await oracle.setUnderlyingTwapPrice(weth.address, oracleTwap)
+
+            await clearingHouse.settleFunding() // funding event - 1
+            await gotoNextFundingTime(amm)
+
+            await clearingHouse.settleFunding() // funding event - 2
+            const premium = await amm.cumulativePremiumFraction()
+
+            await Promise.all([
+                clearingHouse.updatePositions(maker1.address),
+                clearingHouse.updatePositions(maker2.address),
+                clearingHouse.updatePositions(alice)
+            ])
+
+            const fundingPaid = premium.mul(baseAssetQuantity).div(_1e18)
+            expect(await marginAccount.getNormalizedMargin(alice)).to.eq(margin.sub(fundingPaid).sub(fee))
+            const fundingReceived = getAdjustedFunding(fundingPaid)
+
+            let upperBound = makerMargin.add(fundingReceived.mul(maker1Liquidity).div(totalSupply))
+            let lowerBound = upperBound.sub(upperBound.div(1e6))
+            const maker1Margin = await marginAccount.getNormalizedMargin(maker1.address)
+            await assertBounds(maker1Margin, lowerBound, upperBound)
+            upperBound = makerMargin.add(fundingReceived.mul(maker2Liquidity).div(totalSupply))
+            lowerBound = upperBound.sub(upperBound.div(1e6))
+            await assertBounds(await marginAccount.getNormalizedMargin(maker2.address), lowerBound, upperBound)
+            expect(fundingPaid).gte(fundingReceived)
+        })
+
+        it('maker+taker, makers pay', async function() {
+            // maker1, alice longs
+            const baseAssetQuantity = _1e18.mul(5)
+            await Promise.all([
+                clearingHouse.connect(maker1).openPosition(0, baseAssetQuantity, await hubbleViewer.getQuote(baseAssetQuantity, 0)),
+                clearingHouse.openPosition(0, baseAssetQuantity, await hubbleViewer.getQuote(baseAssetQuantity, 0)),
+            ])
+
+            // underlying, shorts pay longs
+            let oracleTwap = _1e6.mul(1100)
+            await oracle.setUnderlyingTwapPrice(weth.address, oracleTwap)
+
+            let tx = await clearingHouse.settleFunding() // funding event - 1
+            let premium = (await parseRawEvent(tx, amm, 'FundingRateUpdated')).args.premiumFraction
+            await gotoNextFundingTime(amm)
+
+            let [
+                {
+                    takerFundingPayment: maker1TakerFunding,
+                    makerFundingPayment: maker1MakerFunding
+                },
+                { makerFundingPayment: maker2Funding },
+                { takerFundingPayment: aliceFunding }
+            ] = await Promise.all([
+                amm.getPendingFundingPayment(maker1.address),
+                amm.getPendingFundingPayment(maker2.address),
+                amm.getPendingFundingPayment(alice)
+            ])
+
+            // let's assert for takers
+            let fundingPayment = premium.mul(baseAssetQuantity).div(_1e18) // -ve
+            expect(maker1TakerFunding).to.eq(fundingPayment)
+            expect(aliceFunding).to.eq(fundingPayment)
+
+            // let's assert for makers
+            let fundingPaymentAbs = fundingPayment.abs()
+            assertBounds(maker1MakerFunding, roundDown(fundingPaymentAbs), roundUp(fundingPaymentAbs))
+            assertBounds(maker2Funding, roundDown(fundingPaymentAbs), roundUp(fundingPaymentAbs))
+
+            // maker1's net position = 5 (as a taker) - 2.5 - 2.5 (as a maker) = 0
+            await assertBounds(maker1TakerFunding.abs(), maker1MakerFunding.sub(1e5), maker1MakerFunding.add(1e5)) // round-off quirk
+
+            // overall funding assertions
+            let netFundingPaid = maker1MakerFunding.add(maker2Funding).abs()
+            let netFundingReceived = aliceFunding.add(maker1TakerFunding).abs() // = 2 * fundingPayment
+            netFundingReceived = getAdjustedFunding(netFundingReceived) // 0.1% charged from receivers
+            expect(netFundingPaid).gte(netFundingReceived) // protocol shouldn't go in a deficit
+
+            // maker1 removes 1/3 liquidity
+            const { quoteAsset, baseAsset } = await hubbleViewer.calcWithdrawAmounts(maker1Liquidity.div(3), 0)
+            await clearingHouse.connect(maker1).removeLiquidity(0, maker1Liquidity.div(3), quoteAsset, baseAsset.sub(1))
+
+            tx = await clearingHouse.settleFunding() // funding event - 2
+            const premium2 = (await parseRawEvent(tx, amm, 'FundingRateUpdated')).args.premiumFraction
+
+            premium = await amm.cumulativePremiumFraction()
+
+            tx = await clearingHouse.updatePositions(maker1.address)
+            ;({
+                takerFundingPayment: maker1TakerFunding,
+                makerFundingPayment: maker1MakerFunding
+            } = (await parseRawEvent(tx, amm, 'FundingPaid')).args)
+
+            tx = await clearingHouse.updatePositions(maker2.address)
+            ;({ makerFundingPayment: maker2Funding } = (await parseRawEvent(tx, amm, 'FundingPaid')).args)
+
+            tx = await clearingHouse.updatePositions(alice)
+            ;({ takerFundingPayment: aliceFunding } = (await parseRawEvent(tx, amm, 'FundingPaid')).args)
+
+
+            // maker1 was 5 long as a taker and 5 short as a maker
+            // after removing a 3rd of their liquidity, their net taker position = 5 - 5/3 = ~3.33
+            const { size: maker1Pos } = await amm.positions(maker1.address)
+            expect(ethers.utils.formatUnits(maker1Pos, 18).slice(0, 4)).to.eq('3.33')
+
+            // let's assert for takers
+            expect(maker1TakerFunding).to.eq(premium2.mul(maker1Pos).div(_1e18))
+            expect(aliceFunding).to.eq(premium.mul(baseAssetQuantity).div(_1e18))
+
+            // maker1's net position is still ~0
+            await assertBounds(maker1TakerFunding.abs(), maker1MakerFunding.sub(1e5), maker1MakerFunding.add(1e5)) // round-off quirk
+
+            // overall funding assertions
+            netFundingPaid = maker1MakerFunding.add(maker2Funding).abs()
+            netFundingReceived = aliceFunding.add(maker1TakerFunding).abs() // = 2 * fundingPayment
+            netFundingReceived = getAdjustedFunding(netFundingReceived) // 0.1% charged from receivers
+
+            expect(netFundingPaid).gte(netFundingReceived) // protocol shouldn't go in a deficitt
+        })
+
+        it('maker+taker, takers pay', async function() {
+            // maker1, alice shorts
+            const baseAssetQuantity = _1e18.mul(-5)
+            await Promise.all([
+                clearingHouse.connect(maker1).openPosition(0, baseAssetQuantity, await hubbleViewer.getQuote(baseAssetQuantity, 0)),
+                clearingHouse.openPosition(0, baseAssetQuantity, await hubbleViewer.getQuote(baseAssetQuantity, 0)),
+            ])
+
+            // underlying, shorts pay longs
+            const oracleTwap = _1e6.mul(1100)
+            await oracle.setUnderlyingTwapPrice(weth.address, oracleTwap)
+
+            let tx = await clearingHouse.settleFunding() // funding event - 1
+            let premium = (await parseRawEvent(tx, amm, 'FundingRateUpdated')).args.premiumFraction
+            await gotoNextFundingTime(amm)
+
+            let [
+                {
+                    takerFundingPayment: maker1TakerFunding,
+                    makerFundingPayment: maker1MakerFunding
+                },
+                { makerFundingPayment: maker2Funding },
+                { takerFundingPayment: aliceFunding }
+            ] = await Promise.all([
+                amm.getPendingFundingPayment(maker1.address),
+                amm.getPendingFundingPayment(maker2.address),
+                amm.getPendingFundingPayment(alice)
+            ])
+
+            // let's assert for takers
+            let fundingPayment = premium.mul(baseAssetQuantity).div(_1e18) // +ve
+            expect(maker1TakerFunding).to.eq(fundingPayment)
+            expect(aliceFunding).to.eq(fundingPayment)
+
+            // let's assert for makers
+            assertBounds(maker1MakerFunding.abs(), roundDown(fundingPayment), roundUp(fundingPayment))
+            assertBounds(maker2Funding.abs(), roundDown(fundingPayment), roundUp(fundingPayment))
+
+            // maker1's net position = - 5 (as a taker) + 2.5 + 2.5 (as a maker) = 0
+            await assertBounds(maker1TakerFunding, maker1MakerFunding.abs().sub(1e5), maker1MakerFunding.abs().add(1e5)) // round-off quirk
+
+            // overall funding assertions
+            let netFundingReceived = maker1MakerFunding.add(maker2Funding).abs()
+            netFundingReceived = getAdjustedFunding(netFundingReceived) // 0.1% charged from receivers
+            let netFundingPaid = aliceFunding.add(maker1TakerFunding).abs() // = 2 * fundingPayment
+            expect(netFundingPaid).gte(netFundingReceived) // protocol shouldn't go in a deficit
+
+            // maker1 add more liquidity
+            const amount = _1e18.mul(10);
+            const { dToken } = await hubbleViewer.getMakerQuote(0, amount, true, true)
+            await clearingHouse.connect(maker1).addLiquidity(0, amount, dToken)
+
+            tx = await clearingHouse.settleFunding() // funding event - 2
+            const premium2 = (await parseRawEvent(tx, amm, 'FundingRateUpdated')).args.premiumFraction
+
+            premium = await amm.cumulativePremiumFraction()
+
+            tx = await clearingHouse.updatePositions(maker1.address)
+            ;({
+                takerFundingPayment: maker1TakerFunding,
+                makerFundingPayment: maker1MakerFunding
+            } = (await parseRawEvent(tx, amm, 'FundingPaid')).args)
+
+            tx = await clearingHouse.updatePositions(maker2.address)
+            ;({ makerFundingPayment: maker2Funding } = (await parseRawEvent(tx, amm, 'FundingPaid')).args)
+
+            tx = await clearingHouse.updatePositions(alice)
+            ;({ takerFundingPayment: aliceFunding } = (await parseRawEvent(tx, amm, 'FundingPaid')).args)
+
+            // maker1 was 5 short as a taker and 5 long as a maker, no change in position due to addLiquidity
+            const { size: maker1Pos } = await amm.positions(maker1.address)
+            expect(maker1Pos).to.eq(baseAssetQuantity)
+
+            // let's assert for takers
+            expect(maker1TakerFunding).to.eq(premium2.mul(maker1Pos).div(_1e18))
+            expect(aliceFunding).to.eq(premium.mul(baseAssetQuantity).div(_1e18))
+
+            // maker1's net position is still ~0
+            await assertBounds(maker1TakerFunding, maker1MakerFunding.abs().sub(1e5), maker1MakerFunding.abs().add(1e5)) // round-off quirk
+
+            // overall funding assertions
+            netFundingReceived = maker1MakerFunding.add(maker2Funding).abs()
+            netFundingReceived = getAdjustedFunding(netFundingReceived)
+            netFundingPaid = aliceFunding.add(maker1TakerFunding).abs() // = 2 * fundingPayment
+
+            expect(netFundingPaid).gte(netFundingReceived) // protocol shouldn't go in a deficitt
         })
 
         it('two makers pos against one another', async function() {
@@ -951,7 +1165,7 @@ describe('Maker Tests', async function() {
                 amm.getPendingFundingPayment(maker1.address),
                 amm.getPendingFundingPayment(maker2.address)
             ])
-            const maker1Funding = (await amm.cumulativePremiumPerDtoken()).mul(maker1Liquidity).div(_1e18)
+            let maker1Funding = (await amm.cumulativePremiumPerDtoken()).mul(maker1Liquidity).div(_1e18)
 
             await Promise.all([
                 clearingHouse.updatePositions(maker1.address),
@@ -960,6 +1174,8 @@ describe('Maker Tests', async function() {
 
             expect(fundingReceived).lt(ZERO)
             expect(fundingReceived).to.eq(maker1Funding)
+            // charge maker1 0.1%
+            maker1Funding = getAdjustedFunding(maker1Funding)
             // maker2 pays slightly more to account for rouding-off
             expect(fundingPaid).to.gt(maker1Funding.mul(-1))
             expect(await marginAccount.getNormalizedMargin(maker1.address)).to.eq(makerMargin.sub(maker1Funding))
@@ -968,7 +1184,23 @@ describe('Maker Tests', async function() {
     })
 })
 
-async function assertBounds(v, lowerBound, upperBound) {
-    if (lowerBound) expect(v).gt(lowerBound)
-    if (upperBound) expect(v).lt(upperBound)
+function roundUp(num, decimals = 6) {
+    const x = BigNumber.from(10).pow(decimals)
+    if (num.gte(0)) {
+        return num.div(x).add(1).mul(x)
+    }
+    throw 'not supported'
+}
+
+function roundDown(num, decimals = 6) {
+    const x = BigNumber.from(10).pow(decimals)
+    if (num.gte(0)) {
+        return num.div(x).mul(x)
+    }
+    throw 'not supported'
+}
+
+// charge 0.1% from the fundinga amount
+function getAdjustedFunding(fundingAmount) {
+    return fundingAmount.sub(fundingAmount.div(1e3))
 }

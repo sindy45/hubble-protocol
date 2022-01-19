@@ -7,7 +7,8 @@
     "compile": "npx hardhat compile",
     "test": "npx hardhat test",
     "vyper-compile": "vyper -f abi,bytecode vyper/Swap.vy > vyper/Swap.txt; vyper -f abi,bytecode vyper/MoonMath.vy > vyper/MoonMath.txt; vyper -f abi,bytecode vyper/Views.vy > vyper/Views.txt",
-    "coverage": "hardhat coverage"
+    "coverage": "hardhat coverage",
+    "gas-reporter": "REPORT_GAS=true npx hardhat test"
   },
   "author": "",
   "license": "MIT",

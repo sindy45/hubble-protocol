@@ -47,7 +47,8 @@ describe('Funding Tests', function() {
 
             await clearingHouse.updatePositions(alice)
 
-            const fundingReceived = premiumFraction.mul(baseAssetQuantity.mul(-1)).div(_1e18)
+            let fundingReceived = premiumFraction.mul(baseAssetQuantity.mul(-1)).div(_1e18)
+            fundingReceived = fundingReceived.sub(fundingReceived.div(1e3))
             const remainingMargin = margin.add(fundingReceived).sub(fee)
             expect(await marginAccount.margin(0, alice)).to.eq(remainingMargin)
             expect(await marginAccount.getNormalizedMargin(alice)).to.eq(remainingMargin)
@@ -142,7 +143,8 @@ describe('Funding Tests', function() {
 
             await clearingHouse.updatePositions(alice)
 
-            const fundingReceived = premiumFraction.mul(baseAssetQuantity).div(_1e18).mul(-1) // premiumFraction is -ve
+            let fundingReceived = premiumFraction.mul(baseAssetQuantity).div(_1e18).mul(-1) // premiumFraction is -ve
+            fundingReceived = fundingReceived.sub(fundingReceived.div(1e3))
             const remainingMargin = margin.add(fundingReceived).sub(fee)
             expect(await marginAccount.margin(0, alice)).to.eq(remainingMargin)
             expect(await marginAccount.getNormalizedMargin(alice)).to.eq(remainingMargin)

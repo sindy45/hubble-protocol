@@ -1,5 +1,5 @@
 const { expect } = require('chai')
-const { forkNetwork } = require('../utils')
+const { forkNetwork, assertBounds, constants: { _1e6 } } = require('../utils')
 
 const weth = '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'
 const EthUsdAggregator = '0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419'
@@ -30,8 +30,11 @@ describe('Oracle Unit Tests', function() {
         // blocktimestamp = 1632948142
         // twap for last 7200 seconds = ((1632948142-1632946674)*279755792457 + (1632946674-1632945322)*281283735224 + (1632945322-1632941715)*282303299782 + (7200 - (1632948142-1632941715))*282107330840) / 7200 = 281571400333
         // 281571726936 / 100 (6 decimals)
-        expect((await oracle.getUnderlyingTwapPrice(weth, 7200)).div(1e4)).to.eq('281571');
-        expect((await oracle.getUnderlyingTwapPrice(weth, 3601)).div(1e4)).to.eq('280881');
+        let price = await oracle.getUnderlyingTwapPrice(weth, 7200)
+        assertBounds(price, _1e6.mul(2815), _1e6.mul(2816))
+
+        price = await oracle.getUnderlyingTwapPrice(weth, 3600)
+        assertBounds(price, _1e6.mul(2808), _1e6.mul(2809))
     })
 
     it('asking interval less than latest snapshot, return latest price directly', async () => {
