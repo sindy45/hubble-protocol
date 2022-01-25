@@ -144,10 +144,10 @@ async function setupAmm(governance, args, initialRate, initialLiquidity, _pause 
             governance, // owner
             moonMath.address, // math
             views.address, // views
-            54000, // A
-            '3500000000000000', // gamma
-            11000000, 0, 0, 0, // mid_fee = 0.11%, out_fee, allowed_extra_profit, fee_gamma
-            '490000000000000', // adjustment_step
+            400000, // A
+            '145000000000000', // gamma
+            10000000, 0, 0, 0, // mid_fee = 0.1%, out_fee, allowed_extra_profit, fee_gamma
+            '146000000000000', // adjustment_step
             0, // admin_fee
             600, // ma_half_time
             _1e18.mul(initialRate)

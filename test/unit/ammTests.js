@@ -6,7 +6,7 @@ describe('AMM Tests', function() {
     beforeEach('contract factories', async function() {
         signers = await ethers.getSigners()
         alice = signers[0].address
-        ;({ swap, amm, clearingHouse } = await setupContracts(TRADE_FEE))
+        ;({ swap, amm, clearingHouse, hubbleViewer } = await setupContracts(TRADE_FEE))
     })
 
     describe('AMM Unit Tests', function() {
@@ -109,14 +109,15 @@ describe('AMM Tests', function() {
 
         it('exchange multiple transactions', async () => {
             const baseAssetQuantity = _1e18.mul(5)
-            const amount = _1e18.mul(4700) // ~5x leverage
             const initialUSDTBalance = await swap.balances(0, {gasLimit: 100000});
             const initialETHBalance = await swap.balances(1, {gasLimit: 100000});
 
             const numberOfTransactions = 10
             let dy1 = ZERO
             let vammFee = ZERO
+            let amount
             for (let i = 0; i < numberOfTransactions; i++) {
+                amount = await hubbleViewer.getQuote(baseAssetQuantity, 0)
                 let tx = await swap.exchange(1, 0, baseAssetQuantity, amount)
                 let transactionEvent = await filterEvent(tx, 'TokenExchange')
                 dy1 = dy1.add(transactionEvent.args[4]);
@@ -124,11 +125,9 @@ describe('AMM Tests', function() {
             }
 
             const dy2 = await swap.get_dx(0, 1, baseAssetQuantity.mul(numberOfTransactions), {gasLimit: 100000})
-            const fee = await swap.get_dx_fee(0, 1, baseAssetQuantity.mul(numberOfTransactions), {gasLimit: 100000})
             const latestSnapshot = await amm.reserveSnapshots(numberOfTransactions)
 
             expect(dy2).gt(dy1) // amount to deposit greater than received, loss to trader, profit to maker
-            expect(dy2.sub(fee)).gt(dy1.add(vammFee)) // higher amount because of fee accumulation
             expect((initialUSDTBalance.sub((await swap.balances(0, {gasLimit: 100000})))).gte(amount.mul(numberOfTransactions))).to.be.true
             expect((await swap.balances(1, {gasLimit: 100000})).sub(initialETHBalance)).to.eq(baseAssetQuantity.mul(numberOfTransactions))
             expect(await amm.getSnapshotLen()).to.eq(numberOfTransactions+1)

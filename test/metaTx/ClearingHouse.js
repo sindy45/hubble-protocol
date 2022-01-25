@@ -106,7 +106,7 @@ describe('Clearing House Meta Txs', async function() {
 
         const bob = signers[1]
         await addMargin(bob, _1e6.mul(20000))
-        await clearingHouse.connect(bob).openPosition(0, _1e18.mul(70), _1e6.mul(73000))
+        await clearingHouse.connect(bob).openPosition(0, _1e18.mul(70), ethers.constants.MaxUint256)
 
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
         try {

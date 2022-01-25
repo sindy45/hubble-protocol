@@ -5,6 +5,7 @@ const {
     constants: { _1e6, _1e18, ZERO },
     assertions,
     getTradeDetails,
+    assertBounds,
     setupContracts
 } = utils
 
@@ -65,7 +66,7 @@ describe('Position Tests', async function() {
                 expectedMarginFraction,
                 liquidationPrice
             } = await hubbleViewer.getTakerExpectedMFAndLiquidationPrice(alice, 0, baseAssetQuantity)
-            expect(parseInt(liquidationPrice.toNumber() / 1e6)).to.eq(979)
+            expect(parseInt(liquidationPrice.toNumber() / 1e6)).to.eq(978)
 
             const quote = await hubbleViewer.getQuote(baseAssetQuantity, 0)
             tx = await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* long exactly */, quote /* max_dx */)
@@ -133,7 +134,7 @@ describe('Position Tests', async function() {
                 quoteAssetQuantity,
                 liquidationPrice
             } = await hubbleViewer.getTakerExpectedMFAndLiquidationPrice(alice, 0, baseAssetQuantity)
-            expect(parseInt(liquidationPrice.toNumber() / 1e6)).to.eq(1019)
+            expect(parseInt(liquidationPrice.toNumber() / 1e6)).to.eq(1021)
 
             const quote = await hubbleViewer.getQuote(baseAssetQuantity, 0)
             tx = await clearingHouse.openPosition(0, baseAssetQuantity, quote)
@@ -239,7 +240,9 @@ describe('Position Tests', async function() {
             const trade2 = await getTradeDetails(tx, TRADE_FEE)
             expect(await amm.longOpenInterestNotional()).to.eq(ZERO)
             expect(await amm.shortOpenInterestNotional()).to.eq(_1e18.mul(2))
-            expect((await clearingHouse.getMarginFraction(alice)).div(1e4)).to.eq(expectedMarginFraction.div(1e4)) // slightly different because of vamm fee
+
+            const marginFraction = await clearingHouse.getMarginFraction(alice)
+            assertBounds(marginFraction, expectedMarginFraction.sub(expectedMarginFraction.div(1e2)), expectedMarginFraction)
             expect(trade2.quoteAsset).gt(quoteAssetQuantity) // slightly higher because less fee is paid while closing initial position
 
             let fee = trade1.fee.add(trade2.fee)
@@ -396,15 +399,15 @@ describe('Position Tests', async function() {
 
             // bob longs
             const bob = signers[1]
-            await addMargin(bob, margin)
-            await clearingHouse.connect(bob).openPosition(0 /* amm index */, _1e18.mul(3) /* exact base asset */, ethers.constants.MaxUint256)
+            await addMargin(bob, _1e6.mul(1600))
+            await clearingHouse.connect(bob).openPosition(0 /* amm index */, _1e18.mul(15) /* exact base asset */, ethers.constants.MaxUint256)
 
             expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.true
 
             ;({ unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(alice))
             expect(unrealizedPnl.lt(0)).to.be.true // loss
 
-            tx = await clearingHouse.openPosition(0, _1e18.mul(5), _1e6.mul(5100))
+            tx = await clearingHouse.openPosition(0, _1e18.mul(5), ethers.constants.MaxUint256)
             const trade2 = await getTradeDetails(tx, TRADE_FEE)
 
             let fee = trade1.fee.add(trade2.fee)
@@ -431,7 +434,7 @@ describe('Position Tests', async function() {
             // bob longs
             const bob = signers[1]
             await addMargin(bob, _1e6.mul(10000))
-            await clearingHouse.connect(bob).openPosition(0, _1e18.mul(35), _1e6.mul(40000))
+            await clearingHouse.connect(bob).openPosition(0, _1e18.mul(35), ethers.constants.MaxUint256)
 
             // console.log((await clearingHouse.getMarginFraction(alice)).toString())
             expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.true
@@ -466,7 +469,7 @@ describe('Position Tests', async function() {
             // bob longs
             const bob = signers[1]
             await addMargin(bob, _1e6.mul(20000))
-            await clearingHouse.connect(bob).openPosition(0, _1e18.mul(70), _1e6.mul(73000))
+            await clearingHouse.connect(bob).openPosition(0, _1e18.mul(70), ethers.constants.MaxUint256)
 
             // console.log((await clearingHouse.getMarginFraction(alice)).toString())
             expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
@@ -499,7 +502,7 @@ describe('Position Tests', async function() {
             // bob longs
             const bob = signers[1]
             await addMargin(bob, _1e6.mul(20000))
-            await clearingHouse.connect(bob).openPosition(0, _1e18.mul(70), _1e6.mul(73000))
+            await clearingHouse.connect(bob).openPosition(0, _1e18.mul(70), ethers.constants.MaxUint256)
 
             expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
 

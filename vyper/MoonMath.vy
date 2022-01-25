@@ -9,10 +9,10 @@ N_COINS: constant(int128) = 2  # <- change
 A_MULTIPLIER: constant(uint256) = 10000
 
 MIN_GAMMA: constant(uint256) = 10**10
-MAX_GAMMA: constant(uint256) = 5 * 10**16
+MAX_GAMMA: constant(uint256) = 2 * 10**16
 
-MIN_A: constant(uint256) = N_COINS**N_COINS * A_MULTIPLIER / 100
-MAX_A: constant(uint256) = N_COINS**N_COINS * A_MULTIPLIER * 1000
+MIN_A: constant(uint256) = N_COINS**N_COINS * A_MULTIPLIER / 10
+MAX_A: constant(uint256) = N_COINS**N_COINS * A_MULTIPLIER * 100000
 
 
 @internal

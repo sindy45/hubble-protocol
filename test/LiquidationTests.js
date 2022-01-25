@@ -43,7 +43,7 @@ describe('Liquidation Tests', async function() {
 
     it('bob makes a counter-trade', async function() {
         await addMargin(bob, _1e6.mul(20000))
-        await clearingHouse.connect(bob).openPosition(0, _1e18.mul(70), _1e6.mul(73000))
+        await clearingHouse.connect(bob).openPosition(0, _1e18.mul(70), ethers.constants.MaxUint256)
     })
 
     it('alice\'s position is liquidated', async function() {
@@ -74,12 +74,12 @@ describe('Liquidation Tests', async function() {
         expect(weighted.lt(ZERO)).to.be.true
         expect(spot.gt(ZERO)).to.be.true
         ;({ _isLiquidatable, incentivePerDollar } = await marginAccount.isLiquidatable(alice, true))
-        expect(incentivePerDollar.toNumber() / 1e6).to.eq(1.05)
+        expect(incentivePerDollar.toNumber() / 1e6).to.eq(1.032325)
         expect(_isLiquidatable).to.be.true
     })
 
     it('liquidateExactSeize (incentivePerDollar = 5%)', async function() {
-        // the alice's debt is ~ -761, whereas .5 eth at weight = 0.7 and price = 2k allows for $700 margin
+        // the alice's debt is ~ -968, whereas .5 eth at weight = 0.7 and price = 2k allows for $700 margin
         const seizeAmount = _1e18.div(10) // 0.1 ETH
 
         // .1 * 2000 / (1 + .05) = ~190
@@ -93,7 +93,7 @@ describe('Liquidation Tests', async function() {
     })
 
     it('liquidateFlexible (liquidateExactRepay branch, incentivePerDollar = 5%)', async function() {
-        // the vusd margin is -571.x, whereas .4 eth at weight = 0.7 and price = 2k allows for $560 (= .4*.7*2000) margin
+        // the vusd margin is -774.x, whereas .4 eth at weight = 0.7 and price = 2k allows for $560 (= .4*.7*2000) margin
         const [
             { weighted, spot },
             { _isLiquidatable, repayAmount, incentivePerDollar },
@@ -103,10 +103,10 @@ describe('Liquidation Tests', async function() {
             marginAccount.isLiquidatable(alice, true),
             marginAccount.margin(1, alice)
         ])
-        expect(parseInt(weighted.toNumber() / 1e6)).to.eq(-11) // .4 * 2000 * .7 - 571.x
-        expect(parseInt(spot.toNumber() / 1e6)).to.eq(228) // .4 * 2000 - 571.x
+        expect(parseInt(weighted.toNumber() / 1e6)).to.eq(-214) // .4 * 2000 * .7 - 774.x
+        expect(parseInt(spot.toNumber() / 1e6)).to.eq(25) // .4 * 2000 - 774.x
         expect(_isLiquidatable).to.be.true
-        expect(incentivePerDollar.toNumber() / 1e6).to.eq(1.05) // max incentive was (spot + repayAmount) / repayAmount
+        expect(incentivePerDollar.toNumber() / 1e6).to.eq(1.032326) // max incentive was (spot + repayAmount) / repayAmount
 
         await vusd.connect(admin).mint(liquidator3.address, repayAmount)
         await vusd.connect(liquidator3).approve(marginAccount.address, repayAmount)
@@ -178,7 +178,7 @@ describe('Multi-collateral Liquidation Tests', async function() {
 
         // bob makes a counter-trade
         await addMargin(bob, _1e6.mul(20000))
-        await clearingHouse.connect(bob).openPosition(0, _1e18.mul(84), ethers.constants.MaxUint256)
+        await clearingHouse.connect(bob).openPosition(0, _1e18.mul(70), ethers.constants.MaxUint256)
     })
 
     it('alice\'s position is liquidated', async function() {
@@ -213,7 +213,7 @@ describe('Multi-collateral Liquidation Tests', async function() {
     })
 
     it('liquidateFlexible (_liquidateExactSeize branch, incentivePerDollar < 5%)', async function() {
-        // the alice's debt is -936.x, margin = .25*2000*.7 + 10*50*.8 = $750, spot = .25*2000 + 10*50 = $1000
+        // the alice's debt is -968.x, margin = .25*2000*.7 + 10*50*.8 = $750, spot = .25*2000 + 10*50 = $1000
         const [
             { weighted, spot },
             { _isLiquidatable, repayAmount, incentivePerDollar },
@@ -223,10 +223,10 @@ describe('Multi-collateral Liquidation Tests', async function() {
             marginAccount.isLiquidatable(alice, true),
             marginAccount.margin(1, alice)
         ])
-        expect(parseInt(weighted.toNumber() / 1e6)).to.eq(-186) // 750 - 936.x
-        expect(parseInt(spot.toNumber() / 1e6)).to.eq(63) // 1000 - 936.x
+        expect(parseInt(weighted.toNumber() / 1e6)).to.eq(-218) // 750 - 968.x
+        expect(parseInt(spot.toNumber() / 1e6)).to.eq(31) // 1000 - 968.x
         expect(_isLiquidatable).to.be.true
-        expect(incentivePerDollar.toNumber() / 1e6).to.eq(1.05) // min(1.05, 1000/936.69)
+        expect(incentivePerDollar.toNumber() / 1e6).to.eq(1.032325) // min(1.05, 1000/968.48)
 
         await vusd.connect(admin).mint(liquidator3.address, repayAmount)
         await vusd.connect(liquidator3).approve(marginAccount.address, repayAmount)
@@ -240,7 +240,7 @@ describe('Multi-collateral Liquidation Tests', async function() {
     })
 
     it('liquidateExactRepay (incentivePerDollar < 5%)', async function() {
-        // the alice's debt is -460.x, margin = 10*50*.8 = $400, spot = 10*50 = $500
+        // the alice's debt is -484.x, margin = 10*50*.8 = $400, spot = 10*50 = $500
         const [
             { weighted, spot },
             { _isLiquidatable, repayAmount, incentivePerDollar },
@@ -250,12 +250,12 @@ describe('Multi-collateral Liquidation Tests', async function() {
             marginAccount.isLiquidatable(alice, true),
             marginAccount.margin(2, alice)
         ])
-        expect(parseInt(weighted.toNumber() / 1e6)).to.eq(-60) // 400 - 460.x
-        expect(parseInt(spot.toNumber() / 1e6)).to.eq(39) // 500 - 460.x
+        expect(parseInt(weighted.toNumber() / 1e6)).to.eq(-84) // 400 - 484.x
+        expect(parseInt(spot.toNumber() / 1e6)).to.eq(15) // 500 - 484.x
         expect(_isLiquidatable).to.be.true
-        expect(incentivePerDollar.toNumber() / 1e6).to.eq(1.05) // min(1.05, 500/492.29)
+        expect(incentivePerDollar.toNumber() / 1e6).to.eq(1.032326) // min(1.05, 500/484.34)
 
-        const repay = _1e6.mul(200) // < 460
+        const repay = _1e6.mul(200) // < 484
         await vusd.connect(admin).mint(liquidator2.address, repay)
         await vusd.connect(liquidator2).approve(marginAccount.address, repay)
 

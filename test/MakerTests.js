@@ -395,15 +395,26 @@ describe('Maker Tests', async function() {
             expect(realizedPnl).to.eq(ZERO) // no reducePosition, fee profit is less than market loss
             const maker1Position = await amm.positions(maker1.address)
             const _maker1 = await amm.makers(maker1.address)
-            expect(maker1Position.size).lt(ZERO)
-            expect(maker1Position.size).gt(baseAssetQuantity.div(-2))
-            expect(maker1Position.openNotional).gt(quoteAsset.div(2)) // higher openNotional, increase pnl
+
+            let lowerBound = baseAssetQuantity.div(-2)
+            let upperBound = lowerBound.sub(lowerBound.div(1e3))
+            await assertBounds(maker1Position.size, lowerBound, upperBound)
+
+            lowerBound = quoteAsset.div(2)
+            upperBound = lowerBound.add(lowerBound.mul(2).div(1e3))
+            await assertBounds(maker1Position.openNotional, lowerBound, upperBound) // higher openNotional, increase pnl
+
             expect(_maker1.dToken).eq(ZERO)
             expect(_maker1.pos).eq(ZERO)
             expect(_maker1.posAccumulator).eq(baseAssetQuantity.mul(_1e18).mul(-1).div(totalSupply))
+
             const { takerNotionalPosition, unrealizedPnl } = await amm.getTakerNotionalPositionAndUnrealizedPnl(maker1.address)
-            expect(takerNotionalPosition).gt(quoteAsset.div(2))
-            expect(unrealizedPnl).lt(ZERO)
+            lowerBound = quoteAsset.div(2)
+            upperBound = lowerBound.add(lowerBound.div(1e3))
+
+            await assertBounds(takerNotionalPosition, lowerBound, upperBound)
+            await assertBounds(unrealizedPnl, ZERO, _1e6.mul(10))
+
             expect(await marginAccount.getNormalizedMargin(maker1.address)).to.eq(maker1Margin)
         })
 
@@ -422,15 +433,26 @@ describe('Maker Tests', async function() {
             expect(realizedPnl).to.eq(ZERO) // no reducePosition, fee profit is less than market loss
             const maker1Position = await amm.positions(maker1.address)
             const _maker1 = await amm.makers(maker1.address)
-            expect(maker1Position.size).gt(baseAssetQuantity.div(-2))
-            expect(maker1Position.openNotional).gt(ZERO)
-            expect(maker1Position.openNotional).lt(quoteAsset.div(2)) // lower openNotional becaue of vamm fee, increase pnl
+
+            let lowerBound = baseAssetQuantity.div(-2)
+            let upperBound = lowerBound.add(lowerBound.mul(2).div(1e3))
+            await assertBounds(maker1Position.size, lowerBound, upperBound)
+
+            upperBound = quoteAsset.div(2)
+            lowerBound = upperBound.sub(upperBound.div(1e3))
+            await assertBounds(maker1Position.openNotional, lowerBound, upperBound) // lower openNotional becaue of vamm fee, increase pnl
+
             expect(_maker1.dToken).eq(ZERO)
             expect(_maker1.pos).eq(ZERO)
             expect(_maker1.posAccumulator).eq(baseAssetQuantity.mul(_1e18).mul(-1).div(totalSupply))
+
             const { takerNotionalPosition, unrealizedPnl } = await amm.getTakerNotionalPositionAndUnrealizedPnl(maker1.address)
-            expect(takerNotionalPosition).lt(quoteAsset.div(2))
-            expect(unrealizedPnl).lt(ZERO)
+            upperBound = quoteAsset.div(2)
+            lowerBound = upperBound.sub(upperBound.div(1e3))
+
+            await assertBounds(takerNotionalPosition, lowerBound, upperBound)
+            await assertBounds(unrealizedPnl, ZERO, _1e6.mul(10))
+
             expect(await marginAccount.getNormalizedMargin(maker1.address)).to.eq(maker1Margin)
         })
     })
@@ -481,7 +503,8 @@ describe('Maker Tests', async function() {
              // -10/2 + 5/2 - 5 + noise = -7.495. Maker takes a long position of 2.5 during trade as taker, hence reducing their position
             assertBounds(size, _1e18.mul(-75).div(10), _1e18.mul(-7))
             expect(openNotional).gt(takerQuote.add(quoteAsset.sub(takerQuote).div(2))) // makerOpenNotional = (quoteAsset - takerQuote) / 2, reducing impermanent position during trades, side remains same
-            assertBounds(unrealizedPnl, _1e6.mul(-10), _1e6.mul(-95).div(10)) // -9.7
+            //  maker +pnl < taker -pnl after removing maker1 liquidity
+            assertBounds(unrealizedPnl, _1e6.mul(-5), ZERO) // -3.33
 
             // maker1 removes all liquidity
             const { dToken: maker1Liquidity } = await amm.makers(maker1.address)
@@ -526,7 +549,8 @@ describe('Maker Tests', async function() {
             assertBounds(size, _1e18.mul(75).div(10), _1e18.mul(8))
             expect(openNotional).gt(ZERO)
             expect(openNotional).lt(takerQuote.add(quoteAsset.sub(takerQuote).div(2))) // makerOpenNotional = (quoteAsset - takerQuote) / 2, reducing impermanent position during trades, side remains same
-            assertBounds(unrealizedPnl, _1e6.mul(-10), _1e6.mul(-95).div(10)) // -9.7
+            //  maker +pnl < taker -pnl after removing maker1 liquidity
+            assertBounds(unrealizedPnl, _1e6.mul(-5), ZERO) // -3.30
             // maker1 removes all liquidity
             const { dToken: maker1Liquidity } = await amm.makers(maker1.address)
             await clearingHouse.connect(maker1).removeLiquidity(0, maker1Liquidity, _1e6.mul(997000), _1e18.mul(1000))
@@ -687,7 +711,7 @@ describe('Maker Tests', async function() {
             let { unrealizedPnl, size, openNotional } = await amm.getNotionalPositionAndUnrealizedPnl(maker1.address)
             // size = 15/2 + 5/2 - 5 + noise = 5.005
             assertBounds(size, _1e18.mul(5), _1e18.mul(55).div(10))
-            expect(unrealizedPnl).lt(ZERO) // due to vamm fee
+            assertBounds(unrealizedPnl, _1e6.mul(-30), _1e6.mul(-20)) // -25.43, due to vamm fee
             expect(openNotional).to.eq(maker1OpenNotional.sub(takerQuote))
 
             // maker1 removes all liquidity
@@ -743,7 +767,7 @@ describe('Maker Tests', async function() {
             let { unrealizedPnl, size, openNotional } = await amm.getNotionalPositionAndUnrealizedPnl(maker1.address)
             // sizr = -15/2 - 5/2 + 5 + noise = -4.995
             assertBounds(size, _1e18.mul(-5), _1e18.mul(-45).div(10))
-            expect(unrealizedPnl).lt(ZERO) // due to vamm fee
+            assertBounds(unrealizedPnl, _1e6.mul(-30), _1e6.mul(-20)) // -25.43, due to vamm fee
             expect(openNotional).to.eq(maker1OpenNotional.sub(takerQuote))
 
             // maker1 removes all liquidity
@@ -805,7 +829,7 @@ describe('Maker Tests', async function() {
             expect(await clearingHouse.isAboveMaintenanceMargin(maker3.address)).to.be.true // taker+maker marginFraction > MM
             await expect(clearingHouse.liquidateMaker(maker3.address)).to.be.revertedWith('CH: Above Maintenance Margin')
             // alice shorts
-            await clearingHouse.openPosition(0, _1e18.mul(-10), 0)
+            await clearingHouse.openPosition(0, _1e18.mul(-20), 0)
 
             expect(await clearingHouse.isAboveMaintenanceMargin(maker3.address)).to.be.false // taker+maker marginFraction < MM
 

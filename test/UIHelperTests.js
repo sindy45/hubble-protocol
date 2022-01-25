@@ -94,7 +94,7 @@ describe('UI Helpers', async function() {
             await clearingHouse.openPosition(0, baseAssetQuantity, quote)
 
             expect((await clearingHouse.getMarginFraction(alice)).div(1e4)).to.eq(expectedMarginFraction.div(1e4))
-            expect(parseInt(liquidationPrice.toNumber() / 1e6)).to.eq(904)
+            expect(parseInt(liquidationPrice.toNumber() / 1e6)).to.eq(903)
         })
 
         it('reduce taker position', async function() {
@@ -105,7 +105,7 @@ describe('UI Helpers', async function() {
             await clearingHouse.openPosition(0, baseAssetQuantity, quote)
 
             expect((await clearingHouse.getMarginFraction(alice)).div(1e4)).to.eq(expectedMarginFraction.div(1e4))
-            expect(parseInt(liquidationPrice.toNumber() / 1e6)).to.eq(705)
+            expect(parseInt(liquidationPrice.toNumber() / 1e6)).to.eq(702)
         })
 
         it('reverse taker position', async function() {
@@ -116,7 +116,7 @@ describe('UI Helpers', async function() {
             await clearingHouse.openPosition(0, baseAssetQuantity, quote)
 
             expect((await clearingHouse.getMarginFraction(alice)).div(1e4)).to.eq(expectedMarginFraction.div(1e4))
-            expect(parseInt(liquidationPrice.toNumber() / 1e6)).to.eq(1102)
+            expect(parseInt(liquidationPrice.toNumber() / 1e6)).to.eq(1100)
         })
 
         it('alice adds more liquidity', async function() {
@@ -128,7 +128,7 @@ describe('UI Helpers', async function() {
             await clearingHouse.addLiquidity(0, liquidity, dToken)
 
             expect((await clearingHouse.getMarginFraction(alice)).div(1e3)).to.eq(expectedMarginFraction.div(1e3))
-            expect(parseInt(liquidationPrice.toNumber() / 1e6)).to.eq(1095)
+            expect(parseInt(liquidationPrice.toNumber() / 1e6)).to.eq(1097)
         })
 
         it('alice removes liquidity', async function() {
@@ -140,7 +140,7 @@ describe('UI Helpers', async function() {
             await clearingHouse.removeLiquidity(0, dTokenAmount, 0, 0)
 
             expect((await clearingHouse.getMarginFraction(alice)).div(1e3)).to.eq(expectedMarginFraction.div(1e3))
-            expect(parseInt(liquidationPrice.toNumber() / 1e6)).to.eq(1194)
+            expect(parseInt(liquidationPrice.toNumber() / 1e6)).to.eq(1196)
         })
     })
 
