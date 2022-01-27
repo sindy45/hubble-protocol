@@ -184,9 +184,9 @@ contract HubbleViewer {
         (uint makerDebt,,,,,,) = amm.makers(trader);
         // calculate total value of deposited liquidity after the tx
         if (isRemove) {
-            makerDebt = 2 * (makerDebt / 1e12 - vUSD);
+            makerDebt = 2 * (makerDebt - vUSD);
         } else {
-            makerDebt = 2 * (makerDebt / 1e12 + vUSD);
+            makerDebt = 2 * (makerDebt + vUSD);
         }
 
         {
@@ -235,11 +235,11 @@ contract HubbleViewer {
         IVAMM vamm = amm.vamm();
 
         if (baseAssetQuantity >= 0) {
-            return vamm.get_dx(0, 1, baseAssetQuantity.toUint256()) / 1e12 + 1;
+            return vamm.get_dx(0, 1, baseAssetQuantity.toUint256()) + 1;
         }
         // rounding-down while shorting is not a problem
         // because lower the min_dy, more permissible it is
-        return vamm.get_dy(1, 0, (-baseAssetQuantity).toUint256()) / 1e12;
+        return vamm.get_dy(1, 0, (-baseAssetQuantity).toUint256());
     }
 
     /**
@@ -254,10 +254,10 @@ contract HubbleViewer {
 
         uint256 baseAssetQuantity;
         if (isLong) {
-            baseAssetQuantity = vamm.get_dy(0, 1, quoteAssetQuantity * 1e12);
+            baseAssetQuantity = vamm.get_dy(0, 1, quoteAssetQuantity);
             return baseAssetQuantity.toInt256();
         }
-        baseAssetQuantity = vamm.get_dx(1, 0, quoteAssetQuantity * 1e12);
+        baseAssetQuantity = vamm.get_dx(1, 0, quoteAssetQuantity);
         return -(baseAssetQuantity.toInt256());
     }
 
@@ -275,10 +275,10 @@ contract HubbleViewer {
         IVAMM vamm = amm.vamm();
         (vUSD,, dToken,,,,) = amm.makers(_maker);
 
-        totalDeposited = 2 * vUSD / 1e12;
+        totalDeposited = 2 * vUSD;
         uint totalDTokenSupply = vamm.totalSupply();
         if (totalDTokenSupply > 0) {
-            vUSD = vamm.balances(0) * dToken / totalDTokenSupply / 1e12;
+            vUSD = vamm.balances(0) * dToken / totalDTokenSupply;
             vAsset = vamm.balances(1) * dToken / totalDTokenSupply;
         }
     }
@@ -292,7 +292,7 @@ contract HubbleViewer {
 
         uint totalDTokenSupply = vamm.totalSupply();
         if (totalDTokenSupply > 0) {
-            quoteAsset = vamm.balances(0) * dToken / totalDTokenSupply / 1e12;
+            quoteAsset = vamm.balances(0) * dToken / totalDTokenSupply;
             baseAsset = vamm.balances(1) * dToken / totalDTokenSupply;
         }
     }
@@ -300,7 +300,7 @@ contract HubbleViewer {
     /**
     * @notice Get amount of token to add/remove given the amount of other token
     * @param inputAmount quote/base asset amount to add or remove, base - 18 decimal, quote - 6 decimal
-    * @param isBase true if amount is base asset
+    * @param isBase true if inputAmount is base asset
     * @param deposit true -> addLiquidity, false -> removeLiquidity
     * @return fillAmount base/quote asset amount to be added/removed
     *         dToken - equivalent dToken amount
@@ -313,22 +313,20 @@ contract HubbleViewer {
             // calculate quoteAsset amount, fillAmount = quoteAsset, inputAmount = baseAsset
             uint baseAssetBal = vamm.balances(1);
             if (baseAssetBal == 0) {
-                fillAmount = inputAmount * vamm.price_scale() / 1e18;
+                fillAmount = inputAmount * vamm.price_scale() / 1e30;
             } else {
                 fillAmount = inputAmount * vamm.balances(0) / baseAssetBal;
             }
             dToken = vamm.calc_token_amount([fillAmount, inputAmount], deposit);
-            fillAmount /= 1e12;
         } else {
             uint bal0 = vamm.balances(0);
             // calculate quote asset amount, fillAmount = baseAsset, inputAmount = quoteAsset
-            uint _inputAmount = inputAmount * 1e12; // inputAmount: 6 decimals
             if (bal0 == 0) {
-                fillAmount = _inputAmount * 1e18 / vamm.price_scale();
+                fillAmount = inputAmount * 1e30 / vamm.price_scale();
             } else {
-                fillAmount = _inputAmount * vamm.balances(1) / bal0;
+                fillAmount = inputAmount * vamm.balances(1) / bal0;
             }
-            dToken = vamm.calc_token_amount([_inputAmount, fillAmount], deposit);
+            dToken = vamm.calc_token_amount([inputAmount, fillAmount], deposit);
         }
     }
 
@@ -397,7 +395,7 @@ contract HubbleViewer {
             totalPosSize += baseAssetQuantity;
         }
 
-        int256 pnlForLiquidation = clearingHouse.maintenanceMargin() * notionalPosition.toInt256() / 1e6 - margin;
+        int256 pnlForLiquidation = clearingHouse.maintenanceMargin() * notionalPosition.toInt256() / PRECISION.toInt256() - margin;
         int256 _liquidationPrice;
         if (totalPosSize > 0) {
             _liquidationPrice = (openNotional.toInt256() + pnlForLiquidation) * 1e18 / totalPosSize;

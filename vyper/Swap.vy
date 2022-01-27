@@ -181,7 +181,7 @@ NOISE_FEE: constant(uint256) = 10**5  # 0.1 bps
 # N_COINS = 4 -> 10**8  (10**18 -> 10**10)
 # PRICE_PRECISION_MUL: constant(uint256) = 1
 PRECISIONS: constant(uint256[N_COINS]) = [
-    1,
+    10**12,
     1,
 ]
 
@@ -820,7 +820,7 @@ def _get_maker_position(amount: uint256, vUSD: uint256, vAsset: uint256, makerDT
         openNotional =  _vUSD - convert(d_balances[0], int256)
     elif position <= 0: # =0 when no position open but positive openNotional due to fee accumulation
         openNotional = convert(d_balances[0], int256) - _vUSD
-    openNotional /= convert(1e12, int256)
+
     feeAdjustedPnl, openNotional = self._get_fee_adjusted_pnl(position, openNotional)
     return position, convert(openNotional, uint256), feeAdjustedPnl, D, balances
 
@@ -893,7 +893,7 @@ def _get_taker_notional_and_pnl(position: int256, openNotional: uint256, balance
     unrealizedPnl: int256 = 0
     if D > 10**17 - 1:
         if position > 0:
-            notionalPosition = Views(self.views).get_dy(1, 0, convert(position, uint256), balances, D)[0] / convert(1e12, uint256)
+            notionalPosition = Views(self.views).get_dy(1, 0, convert(position, uint256), balances, D)[0]
             unrealizedPnl = convert(notionalPosition, int256) - convert(openNotional, int256)
         elif position < 0:
             _pos: uint256 = convert(-position, uint256)
@@ -901,7 +901,7 @@ def _get_taker_notional_and_pnl(position: int256, openNotional: uint256, balance
                 # @atul to think more deeply about this
                 notionalPosition = 0
             else:
-                notionalPosition = Views(self.views).get_dx(0, 1, _pos, balances, D)[0] / convert(1e12, uint256)
+                notionalPosition = Views(self.views).get_dx(0, 1, _pos, balances, D)[0]
                 unrealizedPnl =  convert(openNotional, int256) - convert(notionalPosition, int256)
     return notionalPosition, unrealizedPnl
 
@@ -949,7 +949,7 @@ def get_notional(
     (notionalPosition, unrealizedPnl) = self._get_taker_notional_and_pnl(takerPosSize, takerOpenNotional, balances, D)
 
     if makerDToken > 0:
-        makerDebt: uint256 = 2 * vUSD / convert(1e12, uint256)
+        makerDebt: uint256 = 2 * vUSD
         # notionalPos = Max(debt, maker impermanent notional pos [1]) + taker notional pos [2]
         # [1] and [2] are being calculated after removing the maker liquidity, reflected via (D, balances) returned from _get_maker_position
         notionalPosUpperBound: uint256 = notionalPosition + makerDebt

@@ -72,7 +72,7 @@ describe('Maker Tests', async function() {
                 size: ZERO,
                 notionalPosition: _1e6.mul(2e6),
                 openNotional: ZERO,
-                unrealizedPnl: feeAccumulated.div(_1e12) // positive pnl because of vamm fee
+                unrealizedPnl: feeAccumulated // positive pnl because of vamm fee
             })
         })
 
@@ -85,7 +85,7 @@ describe('Maker Tests', async function() {
 
             await assertions(contracts, maker.address, {
                 size: baseAssetQuantity.mul(-1),
-                openNotional: quoteAsset.sub(feeAccumulated.div(_1e12)).sub(1), // openNotional decreases, hence higher pnl
+                openNotional: quoteAsset.sub(feeAccumulated), // openNotional decreases, hence higher pnl
                 notionalPosition: _1e6.mul(2e6),
                 unrealizedPnl: ZERO
             })
@@ -98,7 +98,7 @@ describe('Maker Tests', async function() {
                 size: ZERO,
                 notionalPosition: _1e6.mul(2e6),
                 openNotional: ZERO,
-                unrealizedPnl: feeAccumulated.div(_1e12).add(feeAccumulated_2.div(_1e12)).add(1)
+                unrealizedPnl: feeAccumulated.add(feeAccumulated_2)
             })
         })
     })
@@ -289,7 +289,7 @@ describe('Maker Tests', async function() {
             // base balance in pool = 1000 + 500 - 50 = 1450
             expect(vAsset).to.eq(_1e18.mul(1450).mul(maker1Liquidity).div(totalSupply))
             // quote balance in pool = 1m + 0.5m + quoteAsset
-            expect(vUSD).to.eq(vUSDBalance.mul(maker1Liquidity).div(totalSupply).div(_1e12))
+            expect(vUSD).to.eq(vUSDBalance.mul(maker1Liquidity).div(totalSupply))
 
             let { notionalPosition, unrealizedPnl, size, openNotional } = await amm.getNotionalPositionAndUnrealizedPnl(maker1.address)
             expect(notionalPosition).eq(_1e6.mul(2e6))

@@ -243,7 +243,7 @@ async function getTwapPrice(amm, intervalInSeconds, blockTimestamp) {
     const len = await amm.getSnapshotLen()
     let snapshotIndex = len.sub(1)
     let currentSnapshot = await amm.reserveSnapshots(snapshotIndex)
-    let currentPrice = currentSnapshot.quoteAssetReserve.mul(_1e6).div(currentSnapshot.baseAssetReserve)
+    let currentPrice = currentSnapshot.quoteAssetReserve.mul(_1e18).div(currentSnapshot.baseAssetReserve)
     const baseTimestamp = blockTimestamp - intervalInSeconds
     let previousTimestamp = currentSnapshot.timestamp
     if (intervalInSeconds == 0 || len == 1 || previousTimestamp <= baseTimestamp) {
@@ -258,7 +258,7 @@ async function getTwapPrice(amm, intervalInSeconds, blockTimestamp) {
         }
         snapshotIndex = snapshotIndex.sub(1)
         currentSnapshot = await amm.reserveSnapshots(snapshotIndex)
-        currentPrice = currentSnapshot.quoteAssetReserve.mul(_1e6).div(currentSnapshot.baseAssetReserve)
+        currentPrice = currentSnapshot.quoteAssetReserve.mul(_1e18).div(currentSnapshot.baseAssetReserve)
         if (currentSnapshot.timestamp <= baseTimestamp) {
             weightedPrice = weightedPrice.add(currentPrice.mul(previousTimestamp.sub(baseTimestamp)))
             break

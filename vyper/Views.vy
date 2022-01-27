@@ -24,7 +24,7 @@ interface Math:
 N_COINS: constant(int128) = 2  # <- change
 PRECISION: constant(uint256) = 10 ** 18  # The precision to convert to
 PRECISIONS: constant(uint256[N_COINS]) = [
-    1,
+    10**12,
     1,
 ]
 

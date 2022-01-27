@@ -12,7 +12,7 @@ describe('AMM Tests', function() {
     describe('AMM Unit Tests', function() {
         it('check initial setup', async () => {
             expect(await amm.getSnapshotLen()).to.eq(1)
-            expect((await amm.reserveSnapshots(0)).quoteAssetReserve).to.eq(_1e18.mul(_1e6))
+            expect((await amm.reserveSnapshots(0)).quoteAssetReserve).to.eq(_1e6.mul(_1e6))
             expect((await amm.reserveSnapshots(0)).baseAssetReserve).to.eq(_1e18.mul(1000))
             await expect(swap.initialize(
                 alice, // owner
@@ -30,7 +30,7 @@ describe('AMM Tests', function() {
 
         it('exchangeExactOut', async () => {
             const baseAssetQuantity = _1e18.mul(5)
-            const amount = _1e18.mul(5025) // ~5x leverage
+            const amount = _1e6.mul(5025) // ~5x leverage
             const initialUSDTBalance = await swap.balances(0, {gasLimit: 100000});
             const initialETHBalance = await swap.balances(1, {gasLimit: 100000});
 
@@ -55,7 +55,7 @@ describe('AMM Tests', function() {
 
         it('exchangeExactOut multiple transactions', async () => {
             const baseAssetQuantity = _1e18.mul(5)
-            const amount = _1e18.mul(5500) // ~5x leverage
+            const amount = _1e6.mul(5500) // ~5x leverage
             const initialUSDTBalance = await swap.balances(0, {gasLimit: 100000});
             const initialETHBalance = await swap.balances(1, {gasLimit: 100000});
 
@@ -85,7 +85,7 @@ describe('AMM Tests', function() {
 
         it('exchange', async () => {
             const baseAssetQuantity = _1e18.mul(5)
-            const amount = _1e18.mul(4950) // ~5x leverage
+            const amount = _1e6.mul(4950) // ~5x leverage
             const initialUSDTBalance = await swap.balances(0, {gasLimit: 100000});
             const initialETHBalance = await swap.balances(1,{gasLimit: 100000});
 
@@ -117,7 +117,7 @@ describe('AMM Tests', function() {
             let vammFee = ZERO
             let amount
             for (let i = 0; i < numberOfTransactions; i++) {
-                amount = await hubbleViewer.getQuote(baseAssetQuantity, 0)
+                amount = await hubbleViewer.getQuote(baseAssetQuantity.mul(-1), 0)
                 let tx = await swap.exchange(1, 0, baseAssetQuantity, amount)
                 let transactionEvent = await filterEvent(tx, 'TokenExchange')
                 dy1 = dy1.add(transactionEvent.args[4]);
@@ -140,7 +140,7 @@ describe('AMM Tests', function() {
         it('inital setup', async function() {
             expect(await swap.price_scale({gasLimit: 100000})).to.eq(_1e18.mul(1000)) // internal prices
             expect(await swap.price_oracle({gasLimit: 100000})).to.eq(_1e18.mul(1000)) // EMA
-            expect(await swap.balances(0, {gasLimit: 100000})).to.eq(_1e18.mul(_1e6))
+            expect(await swap.balances(0, {gasLimit: 100000})).to.eq(_1e6.mul(_1e6))
             expect(await swap.balances(1, {gasLimit: 100000})).to.eq(_1e18.mul(1000))
         })
 
@@ -160,7 +160,7 @@ describe('AMM Tests', function() {
                await clearingHouse.addLiquidity(0, _1e18.mul(50), 0)
             }
             expect((await swap.price_scale({gasLimit: 100000})).div(_1e6)).to.eq(_1e12.mul(1000)) // little price movement to due fee accumulation
-            expect(await swap.balances(0, {gasLimit: 100000})).to.eq(_1e18.mul(1500000))
+            expect(await swap.balances(0, {gasLimit: 100000})).to.eq(_1e6.mul(1500000))
             expect(await swap.balances(1, {gasLimit: 100000})).to.eq(_1e18.mul(1500))
         })
     })
