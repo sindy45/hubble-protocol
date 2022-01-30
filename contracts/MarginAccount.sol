@@ -2,14 +2,22 @@
 
 pragma solidity 0.8.4;
 
-import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
-
 import { ERC2771ContextUpgradeable } from "@openzeppelin/contracts-upgradeable/metatx/ERC2771ContextUpgradeable.sol";
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
+import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+
 import { VanillaGovernable } from "./Governable.sol";
-import { ERC20Detailed, IClearingHouse, IInsuranceFund, IOracle, IRegistry, IMarginAccount } from "./Interfaces.sol";
-import { VUSD } from "./VUSD.sol";
+import {
+    ERC20Detailed,
+    IClearingHouse,
+    IInsuranceFund,
+    IOracle,
+    IRegistry,
+    IMarginAccount,
+    IERC20FlexibleSupply
+} from "./Interfaces.sol";
 
 /**
 * @title This contract is used for posting margin (collateral), realizing PnL etc.
@@ -57,7 +65,8 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, ERC2771ContextUpgra
     IClearingHouse public clearingHouse;
     IOracle public oracle;
     IInsuranceFund public insuranceFund;
-    VUSD public vusd;
+    IERC20FlexibleSupply public vusd;
+    uint public credit;
 
     /// @notice Array of supported collateral
     Collateral[] public supportedCollateral;
@@ -109,7 +118,7 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, ERC2771ContextUpgra
     event SettledBadDebt(address indexed trader, uint badDebt, uint[] seized);
 
     modifier onlyClearingHouse() {
-        require(msg.sender == address(clearingHouse), "Only clearingHouse");
+        require(_msgSender() == address(clearingHouse), "Only clearingHouse");
         _;
     }
 
@@ -117,7 +126,7 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, ERC2771ContextUpgra
         __ERC2771Context_init(_trustedForwarder); // has the initializer modifier
         _setGovernace(_governance);
         _addCollateral(_vusd, PRECISION); // weight = 1 * PRECISION
-        vusd = VUSD(_vusd);
+        vusd = IERC20FlexibleSupply(_vusd);
     }
 
     /* ****************** */
@@ -142,7 +151,11 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, ERC2771ContextUpgra
     function addMarginFor(uint idx, uint amount, address to) public {
         require(amount > 0, "Add non-zero margin");
         // will revert for idx >= supportedCollateral.length
-        supportedCollateral[idx].token.safeTransferFrom(_msgSender(), address(this), amount);
+        if (idx == VUSD_IDX) {
+            _transferInVusd(_msgSender(), amount);
+        } else {
+            supportedCollateral[idx].token.safeTransferFrom(_msgSender(), address(this), amount);
+        }
         margin[idx][to] += amount.toInt256();
         emit MarginAdded(to, idx, amount);
     }
@@ -169,16 +182,10 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, ERC2771ContextUpgra
         require(clearingHouse.isAboveMaintenanceMargin(trader), "MA.removeMargin.Below_MM");
 
         if (idx == VUSD_IDX) {
-            uint bal = vusd.balanceOf(address(this));
-            if (bal < amount) {
-                // Say there are 2 traders, Alice and Bob.
-                // Alice has a profitable position and realizes their PnL in form of vusd margin.
-                // But bob has not yet realized their -ve PnL.
-                // In that case we'll take a credit from vusd contract, which will eventually be returned when Bob pays their debt back.
-                vusd.mint(address(this), amount - bal);
-            }
+            _transferOutVusd(trader, amount);
+        } else {
+            supportedCollateral[idx].token.safeTransfer(trader, amount);
         }
-        supportedCollateral[idx].token.safeTransfer(trader, amount);
         emit MarginRemoved(trader, idx, amount);
     }
 
@@ -189,12 +196,24 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, ERC2771ContextUpgra
     * @param trader Account to realize PnL for
     * @param realizedPnl Amount to credit/debit
     */
-    function realizePnL(address trader, int256 realizedPnl) onlyClearingHouse override external {
+    function realizePnL(address trader, int256 realizedPnl)
+        override
+        external
+        onlyClearingHouse
+    {
         // -ve PnL will reduce balance
         if (realizedPnl != 0) {
             margin[VUSD_IDX][trader] += realizedPnl;
             emit PnLRealized(trader, realizedPnl);
         }
+    }
+
+    function transferOutVusd(address recipient, uint amount)
+        override
+        external
+        onlyClearingHouse
+    {
+        _transferOutVusd(recipient, amount);
     }
 
     /* ****************** */
@@ -455,11 +474,11 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, ERC2771ContextUpgra
         internal
         returns (uint /* left over repayable */)
     {
-        supportedCollateral[VUSD_IDX].token.safeTransferFrom(msg.sender, address(this), repay);
+        _transferInVusd(_msgSender(), repay);
         margin[VUSD_IDX][trader] += repay.toInt256();
 
         margin[idx][trader] -= seize.toInt256();
-        supportedCollateral[idx].token.safeTransfer(msg.sender, seize);
+        supportedCollateral[idx].token.safeTransfer(_msgSender(), seize);
 
         emit MarginAccountLiquidated(trader, idx, seize, repay);
         return repayAble - repay; // will ensure that the liquidator isn't repaying more than user's debt (and seizing a bigger amount of their collateral)
@@ -543,6 +562,29 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, ERC2771ContextUpgra
         return a < b ? a : b;
     }
 
+    function _transferInVusd(address from, uint amount) internal {
+        IERC20(address(vusd)).safeTransferFrom(from, address(this), amount);
+        if (credit > 0) {
+            uint toBurn = Math.min(vusd.balanceOf(address(this)), credit);
+            credit -= toBurn;
+            vusd.burn(toBurn);
+        }
+    }
+
+    function _transferOutVusd(address recipient, uint amount) internal {
+        uint bal = vusd.balanceOf(address(this));
+        if (bal < amount) {
+            // Say there are 2 traders, Alice and Bob.
+            // Alice has a profitable position and realizes their PnL in form of vusd margin.
+            // But bob has not yet realized their -ve PnL.
+            // In that case we'll take a credit from vusd contract, which will eventually be returned when Bob pays their debt back.
+            uint _credit = amount - bal;
+            credit += _credit;
+            vusd.mint(address(this), _credit);
+        }
+        IERC20(address(vusd)).safeTransfer(recipient, amount);
+    }
+
     /* ****************** */
     /*   onlyGovernance   */
     /* ****************** */
@@ -550,8 +592,9 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, ERC2771ContextUpgra
     function syncDeps(address _registry, uint _liquidationIncentive) public onlyGovernance {
         // protecting against setting a very high liquidation incentive. Max 10%
         require(_liquidationIncentive <= PRECISION / 10, "MA.syncDeps.LI_GT_10_percent");
-
         IRegistry registry = IRegistry(_registry);
+        require(registry.marginAccount() == address(this), "Incorrect setup");
+
         clearingHouse = IClearingHouse(registry.clearingHouse());
         oracle = IOracle(registry.oracle());
         insuranceFund = IInsuranceFund(registry.insuranceFund());

@@ -2,6 +2,8 @@
 
 pragma solidity 0.8.4;
 
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
 interface IRegistry {
     function oracle() external view returns(address);
     function clearingHouse() external view returns(address);
@@ -83,6 +85,7 @@ interface IMarginAccount {
     function isLiquidatable(address trader, bool includeFunding) external view returns(bool, uint, uint);
     function supportedAssetsLen() external view returns(uint);
     function margin(uint idx, address trader) external view returns(int256);
+    function transferOutVusd(address recipient, uint amount) external;
 }
 
 interface IVAMM {
@@ -154,4 +157,9 @@ interface AggregatorV3Interface {
             uint256 updatedAt,
             uint80 answeredInRound
         );
+}
+
+interface IERC20FlexibleSupply is IERC20 {
+    function mint(address to, uint256 amount) external;
+    function burn(uint256 amount) external;
 }

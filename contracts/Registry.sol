@@ -3,11 +3,11 @@
 pragma solidity 0.8.4;
 
 contract Registry {
-    address public oracle;
-    address public clearingHouse;
-    address public insuranceFund;
-    address public marginAccount;
-    address public vusd;
+    address public immutable oracle;
+    address public immutable clearingHouse;
+    address public immutable insuranceFund;
+    address public immutable marginAccount;
+    address public immutable vusd;
 
     constructor(
         address _oracle,

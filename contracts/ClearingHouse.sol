@@ -74,7 +74,7 @@ contract ClearingHouse is VanillaGovernable, ERC2771ContextUpgradeable {
 
         (int realizedPnl, uint quoteAsset, bool isPositionIncreased) = amms[idx].openPosition(trader, baseAssetQuantity, quoteAssetLimit);
         uint _tradeFee = _chargeFeeAndRealizePnL(trader, realizedPnl, quoteAsset, false /* isLiquidation */);
-        vusd.mint(address(insuranceFund), _tradeFee);
+        marginAccount.transferOutVusd(address(insuranceFund), _tradeFee);
 
         if (isPositionIncreased) {
             require(isAboveMaintenanceMargin(trader), "CH: Below Maintenance Margin");
@@ -153,8 +153,8 @@ contract ClearingHouse is VanillaGovernable, ERC2771ContextUpgradeable {
         uint _liquidationFee = _chargeFeeAndRealizePnL(trader, realizedPnl, quoteAsset, true /* isLiquidation */);
         if (_liquidationFee > 0) {
             uint _toInsurance = _liquidationFee / 2;
-            vusd.mint(address(insuranceFund), _toInsurance);
-            vusd.mint(_msgSender(), _liquidationFee - _toInsurance);
+            marginAccount.transferOutVusd(address(insuranceFund), _toInsurance);
+            marginAccount.transferOutVusd(_msgSender(), _liquidationFee - _toInsurance);
         }
     }
 

@@ -6,7 +6,7 @@ describe('Margin Account Tests', function() {
     before('contract factories', async function() {
         signers = await ethers.getSigners()
         alice = signers[0].address
-        ;({ swap, marginAccount, marginAccountHelper, clearingHouse, amm, vUSD, usdc, oracle } = await setupContracts())
+        ;({ swap, marginAccount, marginAccountHelper, clearingHouse, amm, usdc, oracle } = await setupContracts())
     })
 
     it('addVUSDMarginWithReserve', async () => {
@@ -70,3 +70,4 @@ describe('Margin Account Tests', function() {
         expect(supportedCollateral.weight).to.eq(weight)
     })
 })
+

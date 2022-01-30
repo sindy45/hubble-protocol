@@ -116,7 +116,7 @@ async function setupContracts(tradeFee = DEFAULT_TRADE_FEE, options = { addLiqui
         ]
     )
     await sleep(2)
-    await vusd.grantRole(await vusd.MINTER_ROLE(), clearingHouse.address)
+    await vusd.grantRole(await vusd.MINTER_ROLE(), marginAccount.address)
     await sleep(2)
 
     registry = await Registry.deploy(oracle.address, clearingHouse.address, insuranceFund.address, marginAccount.address, vusd.address)

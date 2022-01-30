@@ -78,7 +78,7 @@ async function setupContracts(tradeFee = DEFAULT_TRADE_FEE, options = { addLiqui
             0.05 * 1e6, // liquidationPenalty = 5%])
         ]
     )
-    await vusd.grantRole(await vusd.MINTER_ROLE(), clearingHouse.address)
+    await vusd.grantRole(await vusd.MINTER_ROLE(), marginAccount.address)
 
     registry = await Registry.deploy(oracle.address, clearingHouse.address, insuranceFund.address, marginAccount.address, vusd.address)
     await Promise.all([
@@ -128,7 +128,7 @@ async function setupUpgradeableProxy(contract, admin, initArgs, deployArgs) {
         admin,
         initArgs
             ? impl.interface.encodeFunctionData(
-                contract === 'InsuranceFund' || contract === 'VUSD' ? 'init' : 'initialize',
+                contract === 'VUSD' ? 'init' : 'initialize',
                 initArgs
             )
             : '0x'
