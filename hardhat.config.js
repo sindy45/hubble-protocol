@@ -12,9 +12,6 @@ const PRIVATE_KEY = `0x${process.env.PRIVATE_KEY || 'ac0974bec39a17e36ba4a6b4d23
  */
 module.exports = {
     solidity: "0.8.4",
-    vyper: {
-        version: "0.2.12",
-    },
     networks: {
         /*** When forking fuji locally ***/
         // local: {

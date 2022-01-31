@@ -72,8 +72,8 @@ contract AMM is Governable, Pausable {
     event PositionChanged(address indexed trader, int256 size, uint256 openNotional);
     event FundingRateUpdated(int256 premiumFraction, int256 rate, uint256 underlyingPrice, uint256 timestamp, uint256 blockNumber);
     event FundingPaid(address indexed trader, int256 takerPosSize, int256 takerFundingPayment, int256 makerFundingPayment, int256 latestCumulativePremiumFraction, int256 latestPremiumPerDtoken);
-    event Swap(int256 baseAssetQuantity, uint256 qouteAssetQuantity, uint256 lastPrice, uint256 openInterestNotional);
-    event ReserveSnapshotted(uint256 quoteAssetReserve, uint256 baseAssetReserve, uint256 timestamp, uint256 blockNumber);
+    event Swap(int256 baseAsset, uint256 qouteAsset, uint256 lastPrice, uint256 openInterestNotional);
+    event ReserveSnapshotted(uint256 quoteAssetReserve, uint256 baseAssetReserve);
     event LiquidityAdded(address indexed maker, uint baseAssetQuantity, uint quoteAsset);
     event LiquidityRemoved(address indexed maker, int256 realizedPnl);
 
@@ -610,7 +610,7 @@ contract AMM is Governable, Pausable {
     {
         uint256 currentBlock = block.number;
         uint256 blockTimestamp = _blockTimestamp();
-        emit ReserveSnapshotted(_quoteAssetReserve, _baseAssetReserve, blockTimestamp, currentBlock);
+        emit ReserveSnapshotted(_quoteAssetReserve, _baseAssetReserve);
 
         if (reserveSnapshots.length == 0) {
             reserveSnapshots.push(

@@ -4,6 +4,7 @@ const {
     constants: { _1e6, _1e18, ZERO },
     getTradeDetails,
     setupContracts,
+    setupRestrictedTestToken
 } = require('./utils')
 
 describe('Liquidation Tests', async function() {
@@ -141,13 +142,10 @@ describe('Multi-collateral Liquidation Tests', async function() {
         ;([ _, bob, liquidator1, liquidator2, liquidator3, admin ] = signers)
         alice = signers[0].address
         ;({ swap, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, oracle, weth, insuranceFund } = await setupContracts())
-
         await vusd.grantRole(await vusd.MINTER_ROLE(), admin.address) // will mint vusd to liquidators account
 
         // addCollateral
-        const ERC20Mintable = await ethers.getContractFactory('ERC20Mintable')
-        avax = await ERC20Mintable.deploy('AVAX', 'AVAX', 6)
-
+        avax = await setupRestrictedTestToken('AVAX', 'AVAX', 6)
         oraclePrice = 1e6 * 2000 // $2k
         avaxOraclePrice = 1e6 * 50 // $50
         await Promise.all([

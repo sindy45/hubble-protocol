@@ -6,7 +6,8 @@ const {
     assertions,
     getTradeDetails,
     assertBounds,
-    setupContracts
+    setupContracts,
+    setupRestrictedTestToken
 } = utils
 
 const TRADE_FEE = 0.000567 * _1e6
@@ -529,8 +530,7 @@ describe('Position Tests', async function() {
 
     describe('two amms', async function() {
         beforeEach(async function() {
-            const ERC20Mintable = await ethers.getContractFactory('ERC20Mintable')
-            const avax = await ERC20Mintable.deploy('avax', 'avax', 6)
+            const avax = await setupRestrictedTestToken('avax', 'avax', 6)
             const secondAmm = await utils.setupAmm(
                 alice,
                 [ registry.address, avax.address, 'AVAX-Perp' ],

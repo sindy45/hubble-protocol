@@ -1,17 +1,11 @@
 // SPDX-License-Identifier: MIT
 
-/**
- *Submitted for verification at Etherscan.io on 2018-10-22
-*/
-
 pragma solidity 0.8.4;
-
 
 interface IERC20 {
     function transfer(address to, uint256 value) external returns (bool);
     function transferFrom(address from, address to, uint256 value) external returns (bool);
 }
-
 
 contract Disperse {
     function disperseEther(address[] calldata recipients, uint256[] calldata values) external payable {

@@ -21,21 +21,24 @@ function log(position, notionalPosition, unrealizedPnl, marginFraction, size, op
     })
 }
 
-async function setupContracts(tradeFee = DEFAULT_TRADE_FEE, options = { addLiquidity: true }) {
+async function setupContracts(
+    tradeFee = DEFAULT_TRADE_FEE,
+    options = { addLiquidity: true, restrictedVUSD: true }
+) {
     governance = alice
 
     // Vyper
-    let abiAndBytecode = fs.readFileSync('./vyper/MoonMath.txt').toString().split('\n').filter(Boolean)
-    const MoonMath = new ethers.ContractFactory(JSON.parse(abiAndBytecode[0]), abiAndBytecode[1], signers[0])
+    let abiAndBytecode = fs.readFileSync('./contracts/curve-v2/CurveMath.txt').toString().split('\n').filter(Boolean)
+    const CurveMath = new ethers.ContractFactory(JSON.parse(abiAndBytecode[0]), abiAndBytecode[1], signers[0])
 
-    abiAndBytecode = fs.readFileSync('./vyper/Views.txt').toString().split('\n').filter(Boolean)
+    abiAndBytecode = fs.readFileSync('./contracts/curve-v2/Views.txt').toString().split('\n').filter(Boolean)
     const Views = new ethers.ContractFactory(JSON.parse(abiAndBytecode[0]), abiAndBytecode[1], signers[0])
 
-    vammAbiAndBytecode = fs.readFileSync('./vyper/Swap.txt').toString().split('\n').filter(Boolean)
+    vammAbiAndBytecode = fs.readFileSync('./contracts/curve-v2/Swap.txt').toString().split('\n').filter(Boolean)
     Swap = new ethers.ContractFactory(JSON.parse(vammAbiAndBytecode[0]), vammAbiAndBytecode[1], signers[0])
 
-    moonMath = await MoonMath.deploy()
-    views = await Views.deploy(moonMath.address)
+    curveMath = await CurveMath.deploy()
+    views = await Views.deploy(curveMath.address)
     // vyper deployment complete
     ;([ MarginAccountHelper, Registry, ERC20Mintable, MinimalForwarder, TransparentUpgradeableProxy, ProxyAdmin ] = await Promise.all([
         ethers.getContractFactory('MarginAccountHelper'),
@@ -46,23 +49,27 @@ async function setupContracts(tradeFee = DEFAULT_TRADE_FEE, options = { addLiqui
         ethers.getContractFactory('ProxyAdmin')
     ]))
 
-    ;([ proxyAdmin, usdc, weth ] = await Promise.all([
+    ;([ proxyAdmin, forwarder, usdc ] = await Promise.all([
         ProxyAdmin.deploy(),
+        MinimalForwarder.deploy(),
         ERC20Mintable.deploy('USD Coin', 'USDC', 6),
-        ERC20Mintable.deploy('WETH', 'WETH', 18)
     ]))
-
-    const vusd = await setupUpgradeableProxy('VUSD', proxyAdmin.address, [ governance ], [ usdc.address ])
-
-    oracle = await setupUpgradeableProxy('TestOracle', proxyAdmin.address, [ governance ])
-    await oracle.setStablePrice(vusd.address, 1e6) // $1
-
-    forwarder = await MinimalForwarder.deploy()
     await forwarder.intialize()
+
+    const vusd = await setupUpgradeableProxy(options.restrictedVUSD ? 'RestrictedVusd' : 'VUSD', proxyAdmin.address, [ governance ], [ usdc.address ])
 
     marginAccount = await setupUpgradeableProxy('MarginAccount', proxyAdmin.address, [ forwarder.address, governance, vusd.address ])
     marginAccountHelper = await MarginAccountHelper.deploy(marginAccount.address, vusd.address)
     insuranceFund = await setupUpgradeableProxy('InsuranceFund', proxyAdmin.address, [ governance ])
+
+    if (options.restrictedVUSD) {
+        await vusd.grantRole(await vusd.TRANSFER_ROLE(), marginAccountHelper.address)
+        await vusd.grantRole(await vusd.TRANSFER_ROLE(), marginAccount.address)
+    }
+
+    weth = await setupRestrictedTestToken('WETH', 'WETH', 18)
+    oracle = await setupUpgradeableProxy('TestOracle', proxyAdmin.address, [ governance ])
+    await oracle.setStablePrice(vusd.address, 1e6) // $1
 
     clearingHouse = await setupUpgradeableProxy(
         'ClearingHouse',
@@ -79,7 +86,6 @@ async function setupContracts(tradeFee = DEFAULT_TRADE_FEE, options = { addLiqui
         ]
     )
     await vusd.grantRole(await vusd.MINTER_ROLE(), marginAccount.address)
-
     registry = await Registry.deploy(oracle.address, clearingHouse.address, insuranceFund.address, marginAccount.address, vusd.address)
     await Promise.all([
         marginAccount.syncDeps(registry.address, 5e4), // liquidationIncentive = 5% = .05 scaled 6 decimals
@@ -93,10 +99,8 @@ async function setupContracts(tradeFee = DEFAULT_TRADE_FEE, options = { addLiqui
         1000, // initialRate,
         options.addLiquidity ? 1000 : 0 // initialLiquidity
     ))
-
     const HubbleViewer = await ethers.getContractFactory('HubbleViewer')
     const hubbleViewer = await HubbleViewer.deploy(clearingHouse.address, marginAccount.address)
-
     return {
         swap: vamm,
         amm,
@@ -128,7 +132,7 @@ async function setupUpgradeableProxy(contract, admin, initArgs, deployArgs) {
         admin,
         initArgs
             ? impl.interface.encodeFunctionData(
-                contract === 'VUSD' ? 'init' : 'initialize',
+                contract === 'VUSD' || contract === 'RestrictedVusd' ? 'init' : 'initialize',
                 initArgs
             )
             : '0x'
@@ -142,7 +146,7 @@ async function setupAmm(governance, args, initialRate, initialLiquidity, _pause 
         proxyAdmin.address,
         vammImpl.interface.encodeFunctionData('initialize', [
             governance, // owner
-            moonMath.address, // math
+            curveMath.address, // math
             views.address, // views
             400000, // A
             '145000000000000', // gamma
@@ -169,6 +173,13 @@ async function setupAmm(governance, args, initialRate, initialLiquidity, _pause 
         await clearingHouse.connect(maker).addLiquidity(index, _1e18.mul(initialLiquidity), 0)
     }
     return { amm, vamm }
+}
+
+async function setupRestrictedTestToken(name, symbol, decimals) {
+    const RestrictedErc20 = await ethers.getContractFactory('RestrictedErc20')
+    const tok = await RestrictedErc20.deploy(name, symbol, decimals)
+    await tok.grantRole(await tok.TRANSFER_ROLE(), marginAccount.address)
+    return tok
 }
 
 async function addMargin(trader, margin) {
@@ -352,6 +363,7 @@ module.exports = {
     gotoNextFundingTime,
     forkNetwork,
     setupAmm,
+    setupRestrictedTestToken,
     signTransaction,
     addMargin,
     parseRawEvent,

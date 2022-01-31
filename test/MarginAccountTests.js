@@ -1,6 +1,10 @@
 const { expect } = require('chai');
 
-const { setupContracts, constants: { _1e6, _1e18, ZERO } } = require('./utils')
+const {
+    setupContracts,
+    setupRestrictedTestToken,
+    constants: { _1e6, _1e18 }
+} = require('./utils')
 
 describe('Margin Account Tests', function() {
     before('contract factories', async function() {
@@ -28,7 +32,7 @@ describe('Margin Account Tests', function() {
     })
 
     it('addCollateral', async () => {
-        weth = await ERC20Mintable.deploy('weth', 'weth', 18)
+        weth = await setupRestrictedTestToken('weth', 'weth', 18)
         await oracle.setUnderlyingPrice(weth.address, 1e6 * 2000) // $2k
 
         await marginAccount.whitelistCollateral(weth.address, 1e6) // weight = 1

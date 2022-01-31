@@ -88,17 +88,17 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, ERC2771ContextUpgra
     /* ****************** */
 
     /// @notice Emitted when user adds margin for any of the supported collaterals
-    event MarginAdded(address indexed trader, uint256 indexed idx, uint amount);
+    event MarginAdded(address indexed trader, uint256 indexed idx, uint amount, uint256 timestamp);
 
     /// @notice Emitted when user removes margin for any of the supported collaterals
-    event MarginRemoved(address indexed trader, uint256 indexed idx, uint256 amount);
+    event MarginRemoved(address indexed trader, uint256 indexed idx, uint256 amount, uint256 timestamp);
 
     /**
     * @notice Mutates trader's vUSD balance
     * @param trader Account who is realizing PnL
     * @param realizedPnl Increase or decrease trader's vUSD balace by. +ve/-ve value means vUSD is added/removed respectively from trader's margin
     */
-    event PnLRealized(address indexed trader, int256 realizedPnl);
+    event PnLRealized(address indexed trader, int256 realizedPnl, uint256 timestamp);
 
     /**
     * @notice Emitted when a trader's margin account is liquidated i.e. their vUSD debt is repayed in exchange for their collateral
@@ -107,15 +107,15 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, ERC2771ContextUpgra
     * @param seizeAmount Amount of the collateral that was seized during the liquidation
     * @param repayAmount The debt that was repayed
     */
-    event MarginAccountLiquidated(address indexed trader, uint indexed idx, uint seizeAmount, uint repayAmount);
+    event MarginAccountLiquidated(address indexed trader, uint indexed idx, uint seizeAmount, uint repayAmount, uint256 timestamp);
 
     /**
     * @notice Emitted when funds from insurance fund are tasked to settle system's bad debt
     * @param trader Account for which the bad debt was settled
-    * @param badDebt Debt that was settled. it's exactly equal to -vUSD when vUSD < 0
     * @param seized Collateral amounts that were seized
+    * @param repayAmount Debt that was settled. it's exactly equal to -vUSD when vUSD < 0
     */
-    event SettledBadDebt(address indexed trader, uint badDebt, uint[] seized);
+    event SettledBadDebt(address indexed trader, uint[] seized, uint repayAmount, uint256 timestamp);
 
     modifier onlyClearingHouse() {
         require(_msgSender() == address(clearingHouse), "Only clearingHouse");
@@ -157,7 +157,7 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, ERC2771ContextUpgra
             supportedCollateral[idx].token.safeTransferFrom(_msgSender(), address(this), amount);
         }
         margin[idx][to] += amount.toInt256();
-        emit MarginAdded(to, idx, amount);
+        emit MarginAdded(to, idx, amount, block.timestamp);
     }
 
     /**
@@ -186,7 +186,7 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, ERC2771ContextUpgra
         } else {
             supportedCollateral[idx].token.safeTransfer(trader, amount);
         }
-        emit MarginRemoved(trader, idx, amount);
+        emit MarginRemoved(trader, idx, amount, block.timestamp);
     }
 
     /**
@@ -204,7 +204,7 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, ERC2771ContextUpgra
         // -ve PnL will reduce balance
         if (realizedPnl != 0) {
             margin[VUSD_IDX][trader] += realizedPnl;
-            emit PnLRealized(trader, realizedPnl);
+            emit PnLRealized(trader, realizedPnl, block.timestamp);
         }
     }
 
@@ -368,7 +368,7 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, ERC2771ContextUpgra
                 seized[i] = amount.toUint256();
             }
         }
-        emit SettledBadDebt(trader, badDebt, seized);
+        emit SettledBadDebt(trader, seized, badDebt, block.timestamp);
     }
 
     /* ********************* */
@@ -480,7 +480,7 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, ERC2771ContextUpgra
         margin[idx][trader] -= seize.toInt256();
         supportedCollateral[idx].token.safeTransfer(_msgSender(), seize);
 
-        emit MarginAccountLiquidated(trader, idx, seize, repay);
+        emit MarginAccountLiquidated(trader, idx, seize, repay, block.timestamp);
         return repayAble - repay; // will ensure that the liquidator isn't repaying more than user's debt (and seizing a bigger amount of their collateral)
     }
 

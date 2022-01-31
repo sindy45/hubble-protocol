@@ -183,15 +183,15 @@ describe('UI Helpers', async function() {
         const tradingInfo = []
 
         for (let i = 0; i < positionModifiedEvent.length; i++) {
-            const { baseAssetQuantity, quoteAsset: quoteAssetQuantity } = positionModifiedEvent[i].args
+            const { baseAsset, quoteAsset } = positionModifiedEvent[i].args
             tradingInfo.push({
                 timestamp : (await positionModifiedEvent[i].getBlock()).timestamp,
                 market: positionModifiedEvent[i].args.idx,
-                side: baseAssetQuantity.gt(ZERO) ? 'Buy' : 'Sell',
-                size: baseAssetQuantity.abs(),
-                price: quoteAssetQuantity.mul(_1e12).div(baseAssetQuantity.abs()),
-                total: quoteAssetQuantity,
-                fee: quoteAssetQuantity.mul(tradeFee).div(_1e6) // scaled by 6 decimals,
+                side: baseAsset.gt(ZERO) ? 'Buy' : 'Sell',
+                size: baseAsset.abs(),
+                price: quoteAsset.mul(_1e12).div(baseAsset.abs()),
+                total: quoteAsset,
+                fee: quoteAsset.mul(tradeFee).div(_1e6) // scaled by 6 decimals,
             })
         }
         return tradingInfo

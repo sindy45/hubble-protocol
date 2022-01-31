@@ -24,9 +24,9 @@ contract ClearingHouse is VanillaGovernable, ERC2771ContextUpgradeable {
     IMarginAccount public marginAccount;
     IAMM[] public amms;
 
-    event PositionModified(address indexed trader, uint indexed idx, int256 baseAssetQuantity, uint quoteAsset);
-    event PositionLiquidated(address indexed trader, address indexed amm, int256 size, uint256 quoteAsset, int256 realizedPnl);
-    event MarketAdded(address indexed amm);
+    event PositionModified(address indexed trader, uint indexed idx, int256 baseAsset, uint quoteAsset, uint256 timestamp);
+    event PositionLiquidated(address indexed trader, uint indexed idx, int256 baseAsset, uint256 quoteAsset, uint256 timestamp);
+    event MarketAdded(uint indexed idx, address indexed amm);
 
     function initialize(
         address _trustedForwarder,
@@ -79,7 +79,7 @@ contract ClearingHouse is VanillaGovernable, ERC2771ContextUpgradeable {
         if (isPositionIncreased) {
             require(isAboveMaintenanceMargin(trader), "CH: Below Maintenance Margin");
         }
-        emit PositionModified(trader, idx, baseAssetQuantity, quoteAsset);
+        emit PositionModified(trader, idx, baseAssetQuantity, quoteAsset, _blockTimestamp());
     }
 
     function addLiquidity(uint idx, uint256 baseAssetQuantity, uint minDToken) external {
@@ -146,7 +146,7 @@ contract ClearingHouse is VanillaGovernable, ERC2771ContextUpgradeable {
                 (int _realizedPnl, uint _quoteAsset) = _amm.liquidatePosition(trader);
                 realizedPnl += _realizedPnl;
                 quoteAsset += _quoteAsset;
-                emit PositionLiquidated(trader, address(_amm), size, _quoteAsset, _realizedPnl);
+                emit PositionLiquidated(trader, i, size, _quoteAsset, _blockTimestamp());
             }
         }
         // extra liquidation penalty
@@ -256,6 +256,10 @@ contract ClearingHouse is VanillaGovernable, ERC2771ContextUpgradeable {
         }
     }
 
+    function _blockTimestamp() internal view virtual returns (uint256) {
+        return block.timestamp;
+    }
+
     // Pure
 
     function _getMarginFraction(int256 accountValue, uint notionalPosition) private pure returns(int256) {
@@ -268,7 +272,7 @@ contract ClearingHouse is VanillaGovernable, ERC2771ContextUpgradeable {
     // Governance
 
     function whitelistAmm(address _amm) external onlyGovernance {
+        emit MarketAdded(amms.length, _amm);
         amms.push(IAMM(_amm));
-        emit MarketAdded(_amm);
     }
 }

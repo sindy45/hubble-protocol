@@ -6,7 +6,7 @@ cache
 artifacts
 
 venv
-vyper/*.txt
+contracts/curve-v2/*.txt
 
 test/debug.js
 coverage/
