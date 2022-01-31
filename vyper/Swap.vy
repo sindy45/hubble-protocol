@@ -32,8 +32,6 @@ interface WETH:
     def deposit(): payable
     def withdraw(_amount: uint256): nonpayable
 
-interface IAMM:
-    def addReserveSnapshot(_quoteAssetReserve: uint256, _baseAssetReserve: uint256): nonpayable
 
 # Events
 event TokenExchange:
@@ -205,7 +203,7 @@ def initialize (
     ma_half_time: uint256,
     initial_price: uint256
 ):
-    assert not self.isInitialized, "Swap: contract is already initialized"
+    assert not self.isInitialized, "VAMM: contract is already initialized"
     self.math = math
     self.views = views
     self.totalSupply = 0
@@ -319,9 +317,6 @@ def get_xcp(D: uint256) -> uint256:
 def get_virtual_price() -> uint256:
     return 10**18 * self.get_xcp(self.D) / self.totalSupply
 
-@external
-def setAMM(_address: address):
-    self.amm = _address
 
 @internal
 def tweak_price(A_gamma: uint256[2],
@@ -437,7 +432,8 @@ def tweak_price(A_gamma: uint256[2],
 # @payable
 @external
 @nonreentrant('lock')
-def exchange(i: uint256, j: uint256, dx: uint256, min_dy: uint256) -> uint256:
+def exchange(i: uint256, j: uint256, dx: uint256, min_dy: uint256) -> (uint256, uint256[N_COINS]):
+    assert msg.sender == self.amm, 'VAMM: OnlyAMM'
     assert not self.is_killed  # dev: the pool is killed
     assert i != j  # dev: coin index out of range
     assert i < N_COINS  # dev: coin index out of range
@@ -525,15 +521,15 @@ def exchange(i: uint256, j: uint256, dx: uint256, min_dy: uint256) -> uint256:
                 p = _dy * 10**18 / _dx
 
     self.tweak_price(A_gamma, xp, p, 0)
-    IAMM(self.amm).addReserveSnapshot(self.balances[0], self.balances[1])
 
     log TokenExchange(msg.sender, i, dx, j, dy, trade_fee)
-    return dy
+    return dy, self.balances
 
 # @payable
 @external
 @nonreentrant('lock')
-def exchangeExactOut(i: uint256, j: uint256, dy: uint256, max_dx: uint256) -> uint256:
+def exchangeExactOut(i: uint256, j: uint256, dy: uint256, max_dx: uint256) -> (uint256, uint256[N_COINS]):
+    assert msg.sender == self.amm, 'VAMM: OnlyAMM'
     assert not self.is_killed  # dev: the pool is killed
     assert i != j  # dev: coin index out of range
     assert i < N_COINS  # dev: coin index out of range
@@ -621,10 +617,9 @@ def exchangeExactOut(i: uint256, j: uint256, dy: uint256, max_dx: uint256) -> ui
                 p = _dy * 10**18 / _dx
 
     self.tweak_price(A_gamma, xp, p, 0)
-    IAMM(self.amm).addReserveSnapshot(self.balances[0], self.balances[1])
 
     log TokenExchange(msg.sender, i, dx, j, dy, trade_fee)
-    return dx
+    return dx, self.balances
 
 @external
 @view
@@ -670,7 +665,8 @@ def calc_token_fee(amounts: uint256[N_COINS], xp: uint256[N_COINS]) -> uint256:
 
 @external
 @nonreentrant('lock')
-def add_liquidity(amounts: uint256[N_COINS], min_mint_amount: uint256) -> uint256:
+def add_liquidity(amounts: uint256[N_COINS], min_mint_amount: uint256) -> (uint256, uint256[N_COINS]):
+    assert msg.sender == self.amm, 'VAMM: OnlyAMM'
     assert not self.is_killed  # dev: the pool is killed
     assert msg.sender == self.amm
 
@@ -764,10 +760,8 @@ def add_liquidity(amounts: uint256[N_COINS], min_mint_amount: uint256) -> uint25
 
     assert d_token >= min_mint_amount, "Slippage"
 
-    IAMM(self.amm).addReserveSnapshot(self.balances[0], self.balances[1])
     log AddLiquidity(msg.sender, amounts, d_token_fee, self.totalSupply)
-
-    return d_token
+    return d_token, self.balances
 
 @internal
 @pure
@@ -862,7 +856,7 @@ def remove_liquidity(
     """
     This withdrawal method is very safe, does no complex math
     """
-    assert msg.sender == self.amm
+    assert msg.sender == self.amm, 'VAMM: OnlyAMM'
 
     makerPosSize: int256 = 0
     makerOpenNotional: uint256 = 0
@@ -932,6 +926,7 @@ def get_notional(
         takerPosSize: int256,
         takerOpenNotional: uint256
     ) -> (uint256, int256, int256, uint256):
+    assert msg.sender == self.amm, 'VAMM: OnlyAMM'
     makerPosSize: int256 = 0
     makerOpenNotional: uint256 = 0
     D: uint256 = 0
@@ -968,109 +963,13 @@ def calc_token_amount(amounts: uint256[N_COINS], deposit: bool) -> uint256:
     return Views(self.views).calc_token_amount(amounts, deposit)
 
 
-# @internal
-# @view
-# def _calc_withdraw_one_coin(A_gamma: uint256[2], token_amount: uint256, i: uint256, update_D: bool,
-#                             calc_price: bool) -> (uint256, uint256, uint256, uint256[N_COINS]):
-#     token_supply: uint256 = self.totalSupply
-#     assert token_amount <= token_supply  # dev: token amount more than supply
-#     assert i < N_COINS  # dev: coin out of range
-
-#     xx: uint256[N_COINS] = self.balances
-#     xp: uint256[N_COINS] = PRECISIONS
-#     D0: uint256 = 0
-
-#     price_scale_i: uint256 = PRECISION * PRECISIONS[0]
-#     if True:  # To remove packed_prices from memory
-#         packed_prices: uint256 = self.price_scale_packed
-#         xp[0] *= xx[0]
-#         for k in range(1, N_COINS):
-#             p: uint256 = bitwise_and(packed_prices, PRICE_MASK)  # * PRICE_PRECISION_MUL
-#             if i == k:
-#                 price_scale_i = p * xp[i]
-#             xp[k] = xp[k] * xx[k] * p / PRECISION
-#             packed_prices = shift(packed_prices, -PRICE_SIZE)
-
-#     if update_D:
-#         D0 = Math(self.math).newton_D(A_gamma[0], A_gamma[1], xp)
-#     else:
-#         D0 = self.D
-
-#     D: uint256 = D0
-
-#     # Charge the fee on D, not on y, e.g. reducing invariant LESS than charging the user
-#     fee: uint256 = self._fee(xp)
-#     dD: uint256 = token_amount * D / token_supply
-#     D -= (dD - (fee * dD / (2 * 10**10) + 1))
-#     y: uint256 = Math(self.math).newton_y(A_gamma[0], A_gamma[1], xp, D, i)
-#     dy: uint256 = (xp[i] - y) * PRECISION / price_scale_i
-#     xp[i] = y
-
-#     # Price calc
-#     p: uint256 = 0
-#     if calc_price and dy > 10**5 and token_amount > 10**5:
-#         # p_i = dD / D0 * sum'(p_k * x_k) / (dy - dD / D0 * y0)
-#         S: uint256 = 0
-#         precisions: uint256[N_COINS] = PRECISIONS
-#         last_prices: uint256[N_COINS-1] = empty(uint256[N_COINS-1])
-#         packed_prices: uint256 = self.last_prices_packed
-#         for k in range(N_COINS-1):
-#             last_prices[k] = bitwise_and(packed_prices, PRICE_MASK)  # * PRICE_PRECISION_MUL
-#             packed_prices = shift(packed_prices, -PRICE_SIZE)
-#         for k in range(N_COINS):
-#             if k != i:
-#                 if k == 0:
-#                     S += xx[0] * PRECISIONS[0]
-#                 else:
-#                     S += xx[k] * last_prices[k-1] * precisions[k] / PRECISION
-#         S = S * dD / D0
-#         p = S * PRECISION / (dy * precisions[i] - dD * xx[i] * precisions[i] / D0)
-
-#     return dy, p, D, xp
-
-
-# @view
-# @external
-# def calc_withdraw_one_coin(token_amount: uint256, i: uint256) -> uint256:
-#     return self._calc_withdraw_one_coin(self._A_gamma(), token_amount, i, True, False)[0]
-
-
-# @external
-# @nonreentrant('lock')
-# def remove_liquidity_one_coin(token_amount: uint256, i: uint256, min_amount: uint256):
-#     assert not self.is_killed  # dev: the pool is killed
-
-#     A_gamma: uint256[2] = self._A_gamma()
-
-#     dy: uint256 = 0
-#     D: uint256 = 0
-#     p: uint256 = 0
-#     xp: uint256[N_COINS] = empty(uint256[N_COINS])
-#     future_A_gamma_time: uint256 = self.future_A_gamma_time
-#     dy, p, D, xp = self._calc_withdraw_one_coin(A_gamma, token_amount, i, (future_A_gamma_time > 0), True)
-#     assert dy >= min_amount, "Slippage"
-
-#     if block.timestamp >= future_A_gamma_time:
-#         self.future_A_gamma_time = 1
-
-#     self.balances[i] -= dy
-#     CurveToken(token).burnFrom(msg.sender, token_amount)
-#     self.tweak_price(A_gamma, xp, i, p, D)
-
-#     _coins: address[N_COINS] = coins
-#     # assert might be needed for some tokens - removed one to save bytespace
-#     ERC20(_coins[i]).transfer(msg.sender, dy)
-
-#     log RemoveLiquidityOne(msg.sender, token_amount, i, dy)
-
-
-# @external
-# @nonreentrant('lock')
-# def claim_admin_fees():
-#     self._claim_admin_fees()
-
-
 # # Admin parameters
+@external
+def setAMM(_address: address):
+    assert msg.sender == self.owner, 'VAMM: OnlyOwner'
+    self.amm = _address
+
+
 # @external
 # def ramp_A_gamma(future_A: uint256, future_gamma: uint256, future_time: uint256):
 #     assert msg.sender == self.owner  # dev: only owner

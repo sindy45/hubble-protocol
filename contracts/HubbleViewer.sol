@@ -399,7 +399,7 @@ contract HubbleViewer {
         int256 _liquidationPrice;
         if (totalPosSize > 0) {
             _liquidationPrice = (openNotional.toInt256() + pnlForLiquidation) * 1e18 / totalPosSize;
-        } else {
+        } else if (totalPosSize < 0) {
             _liquidationPrice = (openNotional.toInt256() - pnlForLiquidation) * 1e18 / (-totalPosSize);
         }
 

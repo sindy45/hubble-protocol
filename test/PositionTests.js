@@ -53,6 +53,11 @@ describe('Position Tests', async function() {
             expect(pos.openNotional).to.eq(quoteAsset)
             expect(pos.unrealizedPnl).lt(ZERO)
             expect(pos.avgOpen).to.eq(quoteAsset.mul(_1e18).div(baseAssetQuantity))
+
+            expect(await amm.getSnapshotLen()).to.eq(2)
+            const latestSnapshot = await amm.reserveSnapshots(1)
+            expect(latestSnapshot.quoteAssetReserve).to.eq(await swap.balances(0, {gasLimit: 1e6}))
+            expect(latestSnapshot.baseAssetReserve).to.eq(await swap.balances(1, {gasLimit: 1e6}))
         })
 
         it('two longs', async () => {
@@ -120,6 +125,11 @@ describe('Position Tests', async function() {
             expect(pos.openNotional).to.eq(quoteAsset)
             expect(pos.unrealizedPnl).lt(ZERO)
             expect(pos.avgOpen).to.eq(quoteAsset.mul(_1e18).div(baseAssetQuantity.mul(-1)))
+
+            expect(await amm.getSnapshotLen()).to.eq(2)
+            const latestSnapshot = await amm.reserveSnapshots(1)
+            expect(latestSnapshot.quoteAssetReserve).to.eq(await swap.balances(0, {gasLimit: 1e6}))
+            expect(latestSnapshot.baseAssetReserve).to.eq(await swap.balances(1, {gasLimit: 1e6}))
         })
 
         it('two shorts', async () => {

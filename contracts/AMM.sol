@@ -74,6 +74,7 @@ contract AMM is Governable, Pausable {
     event FundingPaid(address indexed trader, int256 takerPosSize, int256 takerFundingPayment, int256 makerFundingPayment, int256 latestCumulativePremiumFraction, int256 latestPremiumPerDtoken);
     event Swap(int256 baseAssetQuantity, uint256 qouteAssetQuantity, uint256 lastPrice, uint256 openInterestNotional);
     event ReserveSnapshotted(uint256 quoteAssetReserve, uint256 baseAssetReserve, uint256 timestamp, uint256 blockNumber);
+    event LiquidityAdded(address indexed maker, uint baseAssetQuantity, uint quoteAsset);
     event LiquidityRemoved(address indexed maker, int256 realizedPnl);
 
     modifier onlyClearingHouse() {
@@ -171,7 +172,7 @@ contract AMM is Governable, Pausable {
         }
     }
 
-    function addLiquidity(address trader, uint baseAssetQuantity, uint minDToken)
+    function addLiquidity(address maker, uint baseAssetQuantity, uint minDToken)
         external
         whenNotPaused
         onlyClearingHouse
@@ -184,10 +185,11 @@ contract AMM is Governable, Pausable {
             quoteAsset = baseAssetQuantity * vamm.balances(0) / baseAssetBal;
         }
 
-        uint _dToken = vamm.add_liquidity([quoteAsset, baseAssetQuantity], minDToken);
+        (uint _dToken, uint[2] memory balances) = vamm.add_liquidity([quoteAsset, baseAssetQuantity], minDToken);
+        _addReserveSnapshot(balances[0], balances[1]);
 
         // updates
-        Maker storage _maker = makers[trader];
+        Maker storage _maker = makers[maker];
         if (_maker.dToken > 0) { // Maker only accumulates position when they had non-zero liquidity
             _maker.pos += (posAccumulator - _maker.posAccumulator) * _maker.dToken.toInt256() / 1e18;
         }
@@ -195,6 +197,7 @@ contract AMM is Governable, Pausable {
         _maker.vAsset += baseAssetQuantity;
         _maker.dToken += _dToken;
         _maker.posAccumulator = posAccumulator;
+        emit LiquidityAdded(maker, baseAssetQuantity, quoteAsset);
     }
 
     function removeLiquidity(address maker, uint amount, uint minQuote, uint minBase)
@@ -308,35 +311,6 @@ contract AMM is Governable, Pausable {
             * Hence remainOpenNotional >= 0
             */
             remainOpenNotional = (newNotionalPosition.toInt256() + unrealizedPnlAfter).toUint256();  // will assert that remainOpenNotional >= 0
-        }
-    }
-
-
-    function addReserveSnapshot(uint256 _quoteAssetReserve, uint256 _baseAssetReserve)
-        onlyVamm
-        whenNotPaused
-        external
-    {
-        uint256 currentBlock = block.number;
-        uint256 blockTimestamp = _blockTimestamp();
-        emit ReserveSnapshotted(_quoteAssetReserve, _baseAssetReserve, blockTimestamp, currentBlock);
-
-        if (reserveSnapshots.length == 0) {
-            reserveSnapshots.push(
-                ReserveSnapshot(_quoteAssetReserve, _baseAssetReserve, blockTimestamp, currentBlock)
-            );
-            return;
-        }
-
-        ReserveSnapshot storage latestSnapshot = reserveSnapshots[reserveSnapshots.length - 1];
-        // update values in snapshot if in the same block
-        if (currentBlock == latestSnapshot.blockNumber) {
-            latestSnapshot.quoteAssetReserve = _quoteAssetReserve;
-            latestSnapshot.baseAssetReserve = _baseAssetReserve;
-        } else {
-            reserveSnapshots.push(
-                ReserveSnapshot(_quoteAssetReserve, _baseAssetReserve, blockTimestamp, currentBlock)
-            );
         }
     }
 
@@ -492,12 +466,15 @@ contract AMM is Governable, Pausable {
     function _long(int256 baseAssetQuantity, uint max_dx) internal returns (uint256 qouteAssetQuantity) {
         require(baseAssetQuantity > 0, "VAMM._long: baseAssetQuantity is <= 0");
 
-        qouteAssetQuantity = vamm.exchangeExactOut(
+        uint[2] memory balances;
+        (qouteAssetQuantity, balances) = vamm.exchangeExactOut(
             0, // sell quote asset
             1, // purchase base asset
             baseAssetQuantity.toUint256(), // long exactly. Note that statement asserts that baseAssetQuantity >= 0
             max_dx
         ); // 6 decimals precision
+
+        _addReserveSnapshot(balances[0], balances[1]);
         // since maker position will be opposite of the trade
         posAccumulator -= baseAssetQuantity * 1e18 / vamm.totalSupply().toInt256();
         emit Swap(baseAssetQuantity, qouteAssetQuantity, lastPrice(), openInterestNotional());
@@ -513,12 +490,15 @@ contract AMM is Governable, Pausable {
     function _short(int256 baseAssetQuantity, uint min_dy) internal returns (uint256 qouteAssetQuantity) {
         require(baseAssetQuantity < 0, "VAMM._short: baseAssetQuantity is >= 0");
 
-        qouteAssetQuantity = vamm.exchange(
+        uint[2] memory balances;
+        (qouteAssetQuantity, balances) = vamm.exchange(
             1, // sell base asset
             0, // get quote asset
             (-baseAssetQuantity).toUint256(), // short exactly. Note that statement asserts that baseAssetQuantity <= 0
             min_dy
         );
+
+        _addReserveSnapshot(balances[0], balances[1]);
         // since maker position will be opposite of the trade
         posAccumulator -= baseAssetQuantity * 1e18 / vamm.totalSupply().toInt256();
         emit Swap(baseAssetQuantity, qouteAssetQuantity, lastPrice(), openInterestNotional());
@@ -623,6 +603,32 @@ contract AMM is Governable, Pausable {
         uint256 notionalPosition = getCloseQuote(position.size + baseAssetQuantity);
         (position.openNotional, realizedPnl) = getOpenNotionalWhileReducingPosition(position.size, notionalPosition, unrealizedPnl, baseAssetQuantity);
         position.size += baseAssetQuantity;
+    }
+
+    function _addReserveSnapshot(uint256 _quoteAssetReserve, uint256 _baseAssetReserve)
+        internal
+    {
+        uint256 currentBlock = block.number;
+        uint256 blockTimestamp = _blockTimestamp();
+        emit ReserveSnapshotted(_quoteAssetReserve, _baseAssetReserve, blockTimestamp, currentBlock);
+
+        if (reserveSnapshots.length == 0) {
+            reserveSnapshots.push(
+                ReserveSnapshot(_quoteAssetReserve, _baseAssetReserve, blockTimestamp, currentBlock)
+            );
+            return;
+        }
+
+        ReserveSnapshot storage latestSnapshot = reserveSnapshots[reserveSnapshots.length - 1];
+        // update values in snapshot if in the same block
+        if (currentBlock == latestSnapshot.blockNumber) {
+            latestSnapshot.quoteAssetReserve = _quoteAssetReserve;
+            latestSnapshot.baseAssetReserve = _baseAssetReserve;
+        } else {
+            reserveSnapshots.push(
+                ReserveSnapshot(_quoteAssetReserve, _baseAssetReserve, blockTimestamp, currentBlock)
+            );
+        }
     }
 
     function _blockTimestamp() internal view virtual returns (uint256) {
