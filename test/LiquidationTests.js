@@ -15,6 +15,12 @@ describe('Liquidation Tests', async function() {
         ;({ swap, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, oracle, weth, insuranceFund, hubbleViewer } = await setupContracts())
 
         await vusd.grantRole(await vusd.MINTER_ROLE(), admin.address) // will mint vusd to liquidators account
+        await clearingHouse.setParams(
+            1e5 /** maintenance margin */,
+            1e5 /** minimum allowable margin */,
+            5e2 /** tradeFee */,
+            5e4 /** liquidationPenalty */
+        )
     })
 
     it('addCollateral', async () => {
@@ -143,6 +149,12 @@ describe('Multi-collateral Liquidation Tests', async function() {
         alice = signers[0].address
         ;({ swap, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, oracle, weth, insuranceFund } = await setupContracts())
         await vusd.grantRole(await vusd.MINTER_ROLE(), admin.address) // will mint vusd to liquidators account
+        await clearingHouse.setParams(
+            1e5 /** maintenance margin */,
+            1e5 /** minimum allowable margin */,
+            5e2 /** tradeFee */,
+            5e4 /** liquidationPenalty */
+        )
 
         // addCollateral
         avax = await setupRestrictedTestToken('AVAX', 'AVAX', 6)

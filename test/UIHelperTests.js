@@ -16,6 +16,12 @@ describe('UI Helpers', async function() {
 
             contracts = await setupContracts()
             ;({ swap, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, oracle, weth } = contracts)
+            await clearingHouse.setParams(
+                1e5 /** maintenance margin */,
+                1e5 /** minimum allowable margin */,
+                5e2 /** tradeFee */,
+                5e4 /** liquidationPenalty */
+            )
 
             // add margin
             margin = _1e6.mul(2000)
@@ -74,6 +80,12 @@ describe('UI Helpers', async function() {
 
             contracts = await setupContracts()
             ;({ swap, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, oracle, weth, hubbleViewer } = contracts)
+            await clearingHouse.setParams(
+                1e5 /** maintenance margin */,
+                1e5 /** minimum allowable margin */,
+                5e2 /** tradeFee */,
+                5e4 /** liquidationPenalty */
+            )
 
             // add margin
             margin = _1e6.mul(4000)

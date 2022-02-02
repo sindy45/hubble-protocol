@@ -22,7 +22,7 @@ describe('Funding Tests', function() {
             ;({ swap, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, oracle, weth } = contracts)
 
             // add margin
-            margin = _1e6.mul(1000)
+            margin = _1e6.mul(2000)
             await addMargin(signers[0], margin)
 
             await gotoNextFundingTime(amm)
@@ -165,8 +165,8 @@ describe('Funding Tests', function() {
             let tx = await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity, _1e6.mul(4900))
             ;({ quoteAsset, fee } = await getTradeDetails(tx))
 
-            // $1k margin, ~$5k in notional position, < $500 margin will put them underwater => $100 funding/unit
-            const oracleTwap = _1e6.mul(3400)
+            // $2k margin, ~$5k in notional position, < $500 margin will put them underwater => $300 funding/unit
+            const oracleTwap = _1e6.mul(8200)
             await oracle.setUnderlyingTwapPrice(weth.address, oracleTwap)
             tx = await clearingHouse.settleFunding()
             const fundingTimestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp;
@@ -194,7 +194,7 @@ describe('Funding Tests', function() {
             expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
             await expect(
                 clearingHouse.openPosition(0, _1e18.mul(-1), 0)
-            ).to.be.revertedWith('CH: Below Maintenance Margin')
+            ).to.be.revertedWith('CH: Below Minimum Allowable Margin')
 
             // Liquidate
             ;({ unrealizedPnl, notionalPosition } = await amm.getNotionalPositionAndUnrealizedPnl(alice))

@@ -80,7 +80,8 @@ async function setupContracts(
             insuranceFund.address,
             marginAccount.address,
             vusd.address,
-            0.1 * 1e6 /* 10% maintenance margin */,
+            0.1 * 1e6 /* 10% maintenance margin, 10x */,
+            0.2 * 1e6 /* 20% minimum allowable margin, 5x */,
             tradeFee,
             0.05 * 1e6, // liquidationPenalty = 5%])
         ]

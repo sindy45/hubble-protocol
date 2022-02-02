@@ -20,6 +20,12 @@ describe('Clearing House Meta Txs', async function() {
     beforeEach(async function() {
         contracts = await setupContracts()
         ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, forwarder, tradeFee, hubbleViewer } = contracts)
+        await clearingHouse.setParams(
+            1e5 /** maintenance margin */,
+            1e5 /** minimum allowable margin */,
+            5e2 /** tradeFee */,
+            5e4 /** liquidationPenalty */
+        )
         // add margin
         margin = _1e6.mul(1000)
         await addMargin(signers[0], margin)
@@ -112,7 +118,7 @@ describe('Clearing House Meta Txs', async function() {
         try {
             await forwarder.connect(relayer).metaExecute(req, sign)
         } catch (error) {
-            expect(error.message).to.contain('META_EXEC_FAILED:').and.contain('CH: Below Maintenance Margin')
+            expect(error.message).to.contain('META_EXEC_FAILED:').and.contain('CH: Below Minimum Allowable Margin')
         }
     })
 

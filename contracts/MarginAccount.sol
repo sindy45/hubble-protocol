@@ -178,8 +178,8 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, ERC2771ContextUpgra
 
         margin[idx][trader] -= amount.toInt256();
 
-        // Check maintenance margin requirement after withdrawal
-        require(clearingHouse.isAboveMaintenanceMargin(trader), "MA.removeMargin.Below_MM");
+        // Check minimum margin requirement after withdrawal
+        require(clearingHouse.isAboveMinAllowableMargin(trader), "MA.removeMargin.Below_MM");
 
         if (idx == VUSD_IDX) {
             _transferOutVusd(trader, amount);

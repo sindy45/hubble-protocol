@@ -25,7 +25,7 @@ describe('Maker Tests', async function() {
             ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, swap } = contracts)
 
             // add margin
-            margin = _1e6.mul(1000)
+            margin = _1e6.mul(2000)
             await addMargin(signers[0], margin)
         })
 
@@ -33,10 +33,12 @@ describe('Maker Tests', async function() {
             let initialLiquidity = _1e18.mul(1000)
             maker = signers[9]
             // adding $2m liquidity in next step, adding $200k margin
-            await addMargin(maker, _1e6.mul(2e5).sub(1))
+            const amount = _1e6.mul(4e5)
+            await addMargin(maker, amount.sub(1))
             await expect(
                 clearingHouse.connect(maker).addLiquidity(0, initialLiquidity, 0)
-            ).to.be.revertedWith('CH: Below Maintenance Margin')
+            ).to.be.revertedWith('CH: Below Minimum Allowable Margin')
+
             await addMargin(maker, 1)
             await clearingHouse.connect(maker).addLiquidity(0, initialLiquidity, 0)
             await assertions(contracts, maker.address, {
@@ -50,7 +52,7 @@ describe('Maker Tests', async function() {
 
         it('maker takes a short counter-position', async () => {
             const baseAssetQuantity = _1e18.mul(5)
-            amount = _1e6.mul(5025) // ~5x leverage
+            amount = _1e6.mul(5025)
 
             const tx = await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* long exactly */, amount /* max_dx */)
             let { quoteAsset } = await getTradeDetails(tx, DEFAULT_TRADE_FEE)
@@ -112,7 +114,7 @@ describe('Maker Tests', async function() {
             ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, swap, hubbleViewer } = contracts)
 
             // add margin
-            margin = _1e6.mul(10000)
+            margin = _1e6.mul(20000)
             await addMargin(signers[0], margin)
         })
 
@@ -121,11 +123,11 @@ describe('Maker Tests', async function() {
             maker1 = signers[9]
             maker2 = signers[8]
             // adding $2m liquidity in next step, adding $200k margin
-            await addMargin(maker1, _1e6.mul(2e5))
+            await addMargin(maker1, _1e6.mul(4e5))
             await clearingHouse.connect(maker1).addLiquidity(0, initialLiquidity, 0)
 
             const { dToken } = await hubbleViewer.getMakerQuote(0, initialLiquidity, true, true)
-            await addMargin(maker2, _1e6.mul(2.1e5))
+            await addMargin(maker2, _1e6.mul(4.1e5))
             const tx = await clearingHouse.connect(maker2).addLiquidity(0, initialLiquidity, dToken)
 
             const addLiquidityEvent = (await parseRawEvent(tx, swap, 'AddLiquidity')).args
@@ -239,7 +241,7 @@ describe('Maker Tests', async function() {
             ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, swap, hubbleViewer } = contracts)
 
             // add margin
-            margin = _1e6.mul(10000)
+            margin = _1e6.mul(20000)
             await addMargin(signers[0], margin)
         })
 
@@ -248,12 +250,12 @@ describe('Maker Tests', async function() {
             maker1 = signers[9]
             maker2 = signers[8]
             // adding $2m liquidity in next step, adding $200k margin
-            await addMargin(maker1, _1e6.mul(2e5))
+            await addMargin(maker1, _1e6.mul(4e5))
             await clearingHouse.connect(maker1).addLiquidity(0, initialLiquidity, 0)
 
             // maker2 adds $1m liquidity, adding $100k margin
             const { dToken } = await hubbleViewer.getMakerQuote(0, initialLiquidity.div(2), true, true)
-            await addMargin(maker2, _1e6.mul(1.1e5))
+            await addMargin(maker2, _1e6.mul(2.1e5))
             const tx = await clearingHouse.connect(maker2).addLiquidity(0, initialLiquidity.div(2), dToken)
 
             const addLiquidityEvent = (await parseRawEvent(tx, swap, 'AddLiquidity')).args
@@ -366,15 +368,15 @@ describe('Maker Tests', async function() {
             ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, swap, hubbleViewer } = contracts)
 
             // add margin
-            margin = _1e6.mul(1100)
+            margin = _1e6.mul(2100)
             await addMargin(signers[0], margin)
             // add liquidity
             maker1 = signers[9]
             maker2 = signers[8]
-            maker1Margin = _1e6.mul(2e5)
+            maker1Margin = _1e6.mul(4e5)
             const initialLiquidity = _1e18.mul(1000)
             await addMargin(maker1, maker1Margin)
-            await addMargin(maker2, _1e6.mul(2.1e5))
+            await addMargin(maker2, _1e6.mul(4.1e5))
             await clearingHouse.connect(maker1).addLiquidity(0, initialLiquidity, 0)
             await clearingHouse.connect(maker2).addLiquidity(0, initialLiquidity, 0)
             totalSupply = await swap.totalSupply({gasLimit: 100000})
@@ -466,12 +468,12 @@ describe('Maker Tests', async function() {
             ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, swap, hubbleViewer } = contracts)
 
             // add margin
-            margin = _1e6.mul(1100)
+            margin = _1e6.mul(2200)
             await addMargin(signers[0], margin)
             // add liquidity
             maker1 = signers[9]
             maker2 = signers[8]
-            maker1Margin = _1e6.mul(2.1e5)
+            maker1Margin = _1e6.mul(4.1e5)
             const initialLiquidity = _1e18.mul(1000)
             await addMargin(maker1, maker1Margin)
             await addMargin(maker2, maker1Margin)
@@ -684,7 +686,7 @@ describe('Maker Tests', async function() {
 
         it('reduce net position - short -> long', async function () {
             // alice shorts
-            await addMargin(signers[0], _1e6.mul(500))
+            await addMargin(signers[0], _1e6.mul(1000))
             let baseAssetQuantity = _1e18.mul(-15)
             let amount = await hubbleViewer.getQuote(baseAssetQuantity, 0)
             let tx = await clearingHouse.openPosition(0, baseAssetQuantity, amount)
@@ -740,7 +742,7 @@ describe('Maker Tests', async function() {
 
         it('reduce net position - long -> short', async function () {
             // alice longs
-            await addMargin(signers[0], _1e6.mul(500))
+            await addMargin(signers[0], _1e6.mul(1000))
             let baseAssetQuantity = _1e18.mul(15)
             let amount = await hubbleViewer.getQuote(baseAssetQuantity, 0)
             let tx = await clearingHouse.openPosition(0, baseAssetQuantity, amount)
@@ -801,14 +803,14 @@ describe('Maker Tests', async function() {
             ;([ alice ] = signers.map(s => s.address))
 
             contracts = await setupContracts(DEFAULT_TRADE_FEE, { addLiquidity: false })
-            ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, swap, hubbleViewer } = contracts)
+            ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, insuranceFund, usdc, swap, hubbleViewer } = contracts)
 
             // add margin
-            margin = _1e6.mul(22000)
+            margin = _1e6.mul(42000)
             await addMargin(signers[0], margin)
             // add liquidity
             ;([ maker3, maker2, maker1 ] = signers.slice(7))
-            maker1Margin = _1e6.mul(2.1e5)
+            maker1Margin = _1e6.mul(4.1e5)
             const initialLiquidity = _1e18.mul(1000)
             await addMargin(maker1, maker1Margin)
             await addMargin(maker2, maker1Margin)
@@ -819,24 +821,35 @@ describe('Maker Tests', async function() {
 
         it('taker-notLiquidable, maker-Liquidable', async function() {
             // maker3 adds Liquidity
-            await addMargin(maker3, _1e6.mul(2520))
-            const amount = _1e18.mul(10)
+            const maker3Margin = _1e6.mul(8150)
+            await addMargin(maker3, maker3Margin)
+            const amount = _1e18.mul(5)
             const { dToken } = await hubbleViewer.getMakerQuote(0, amount, true, true)
-            await clearingHouse.connect(maker3).addLiquidity(0, _1e18.mul(10), dToken)
+            await clearingHouse.connect(maker3).addLiquidity(0, amount, dToken)
             // maker3 longs
-            const baseAssetQuantity = _1e18.mul(5)
-            await clearingHouse.connect(maker3).openPosition(0, baseAssetQuantity, ethers.constants.MaxUint256)
+            const baseAssetQuantity = _1e18.mul(30)
+            let tx = await clearingHouse.connect(maker3).openPosition(0, baseAssetQuantity, ethers.constants.MaxUint256)
+            const { fee } = await getTradeDetails(tx)
+
             expect(await clearingHouse.isAboveMaintenanceMargin(maker3.address)).to.be.true // taker+maker marginFraction > MM
             await expect(clearingHouse.liquidateMaker(maker3.address)).to.be.revertedWith('CH: Above Maintenance Margin')
             // alice shorts
-            await clearingHouse.openPosition(0, _1e18.mul(-20), 0)
+            await clearingHouse.openPosition(0, _1e18.mul(-200), 0)
 
             expect(await clearingHouse.isAboveMaintenanceMargin(maker3.address)).to.be.false // taker+maker marginFraction < MM
+            const initialIFBalance = await vusd.balanceOf(insuranceFund.address)
 
             // liquidate maker position
             await expect(clearingHouse.liquidate(maker3.address)).to.be.revertedWith('CH: Remove Liquidity First')
             const { position: maker3Pos } = await hubbleViewer.getMakerPositionAndUnrealizedPnl(maker3.address, 0)
-            await clearingHouse.liquidateMaker(maker3.address)
+            tx = await clearingHouse.connect(signers[2]).liquidateMaker(maker3.address)
+            const { realizedPnl, quoteAsset } = (await parseRawEvent(tx, amm, 'LiquidityRemoved')).args
+
+            const liquidationPenalty = quoteAsset.mul(2).mul(5e4).div(_1e6)
+            const toInsurance = liquidationPenalty.div(2)
+            expect(await vusd.balanceOf(signers[2].address)).to.eq(liquidationPenalty.sub(toInsurance)) // liquidation penalty
+            expect(await vusd.balanceOf(insuranceFund.address)).to.eq(toInsurance.add(initialIFBalance))
+            expect(await marginAccount.margin(0, maker3.address)).eq(maker3Margin.sub(fee).add(realizedPnl).sub(liquidationPenalty))
 
             const makerPosition = await amm.makers(maker3.address)
             expect(makerPosition.vAsset).to.eq(ZERO)
@@ -850,21 +863,32 @@ describe('Maker Tests', async function() {
 
         it('taker-Liquidable, maker-notLiquidable', async function() {
             // maker3 adds Liquidity
-            await addMargin(maker3, _1e6.mul(1250))
+            const maker3Margin = _1e6.mul(4500)
+            await addMargin(maker3, maker3Margin)
             const { dToken } = await hubbleViewer.getMakerQuote(0, _1e18, true, true)
             await clearingHouse.connect(maker3).addLiquidity(0, _1e18, dToken)
             // maker3 longs
-            const baseAssetQuantity = _1e18.mul(10)
-            await clearingHouse.connect(maker3).openPosition(0, baseAssetQuantity, ethers.constants.MaxUint256)
+            const baseAssetQuantity = _1e18.mul(20)
+            let tx = await clearingHouse.connect(maker3).openPosition(0, baseAssetQuantity, ethers.constants.MaxUint256)
+            const { fee } = await getTradeDetails(tx)
+
             expect(await clearingHouse.isAboveMaintenanceMargin(maker3.address)).to.be.true // taker+maker marginFraction > MM
             // alice shorts
-            await clearingHouse.openPosition(0, _1e18.mul(-65), 0)
+            await clearingHouse.openPosition(0, _1e18.mul(-200), 0)
 
             expect(await clearingHouse.isAboveMaintenanceMargin(maker3.address)).to.be.false // taker+maker marginFraction < MM
+            const initialIFBalance = await vusd.balanceOf(insuranceFund.address)
 
             await expect(clearingHouse.liquidate(maker3.address)).to.be.revertedWith('CH: Remove Liquidity First')
             const { position: maker3Pos } = await hubbleViewer.getMakerPositionAndUnrealizedPnl(maker3.address, 0)
-            await clearingHouse.liquidateMaker(maker3.address)
+            tx = await clearingHouse.connect(signers[3]).liquidateMaker(maker3.address)
+            const { realizedPnl, quoteAsset } = (await parseRawEvent(tx, amm, 'LiquidityRemoved')).args
+
+            let liquidationPenalty = quoteAsset.mul(2).mul(5e4).div(_1e6)
+            let toInsurance = liquidationPenalty.div(2)
+            expect(await vusd.balanceOf(signers[3].address)).to.eq(liquidationPenalty.sub(toInsurance)) // liquidation penalty
+            expect(await vusd.balanceOf(insuranceFund.address)).to.eq(toInsurance.add(initialIFBalance))
+            expect(await marginAccount.margin(0, maker3.address)).eq(maker3Margin.sub(fee).add(realizedPnl).sub(liquidationPenalty))
 
             const makerPosition = await amm.makers(maker3.address)
             expect(makerPosition.vAsset).to.eq(ZERO)
@@ -878,8 +902,8 @@ describe('Maker Tests', async function() {
             // liquidate taker
             await clearingHouse.connect(signers[2]).liquidate(maker3.address)
 
-            const liquidationPenalty = notionalPosition.mul(5e4).div(_1e6)
-            const toInsurance = liquidationPenalty.div(2)
+            liquidationPenalty = notionalPosition.mul(5e4).div(_1e6)
+            toInsurance = liquidationPenalty.div(2)
             expect(await vusd.balanceOf(signers[2].address)).to.eq(liquidationPenalty.sub(toInsurance)) // liquidation penalty
             expect((await amm.positions(maker3.address)).size).to.eq(ZERO)
         })
@@ -894,12 +918,12 @@ describe('Maker Tests', async function() {
             ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, swap, hubbleViewer } = contracts)
 
             // add margin
-            margin = _1e6.mul(1000)
+            margin = _1e6.mul(2000)
             await addMargin(signers[0], margin)
             // add liquidity
             maker1 = signers[9]
             maker2 = signers[8]
-            makerMargin = _1e6.mul(2.1e5)
+            makerMargin = _1e6.mul(4.1e5)
             const initialLiquidity = _1e18.mul(1000)
             await addMargin(maker1, makerMargin)
             await addMargin(maker2, makerMargin)

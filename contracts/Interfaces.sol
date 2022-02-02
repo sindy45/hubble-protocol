@@ -23,6 +23,7 @@ interface IClearingHouse {
         view
         returns(int256 notionalPosition, int256 unrealizedPnl);
     function isAboveMaintenanceMargin(address trader) external view returns(bool);
+    function isAboveMinAllowableMargin(address trader) external view returns(bool);
     function updatePositions(address trader) external;
     function getMarginFraction(address trader) external view returns(uint256);
     function getTotalFunding(address trader) external view returns(int256 totalFunding);
@@ -49,7 +50,7 @@ interface IAMM {
         external
         returns (int realizedPnl, uint quoteAsset, bool isPositionIncreased);
     function addLiquidity(address trader, uint baseAssetQuantity, uint minDToken) external;
-    function removeLiquidity(address maker, uint amount, uint minQuote, uint minBase) external returns (int256 realizedPnl);
+    function removeLiquidity(address maker, uint amount, uint minQuote, uint minBase) external returns (int256 realizedPnl, uint quoteAsset);
     function getUnrealizedPnL(address trade) external returns(int256);
     function getNotionalPositionAndUnrealizedPnl(address trader)
         external
@@ -123,7 +124,15 @@ interface IVAMM {
     function price_scale() external view returns(uint256);
     function add_liquidity(uint256[2] calldata amounts, uint256 min_mint_amount) external returns (uint256, uint[2] calldata);
     function calc_token_amount(uint256[2] calldata amounts, bool deposit) external view returns (uint256);
-    function remove_liquidity(uint256 amount, uint256[2] calldata minAmounts, uint256 vUSD, uint256 vAsset, uint256 makerDToken, int256 takerPosSize, uint256 takerOpenNotional) external returns (int256, uint256, int256);
+    function remove_liquidity(
+        uint256 amount,
+        uint256[2] calldata minAmounts,
+        uint256 vUSD,
+        uint256 vAsset,
+        uint256 makerDToken,
+        int256 takerPosSize,
+        uint256 takerOpenNotional
+        ) external returns (int256, uint256, int256, uint[2] calldata);
     function get_maker_position(uint256 amount, uint256 vUSD, uint256 vAsset, uint256 makerDToken) external view returns (int256, uint256, int256);
     function totalSupply() external view returns (uint256);
 }

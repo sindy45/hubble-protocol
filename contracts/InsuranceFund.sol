@@ -24,6 +24,10 @@ contract InsuranceFund is VanillaGovernable, ERC20Upgradeable {
     address public marginAccount;
     uint public pendingObligation;
 
+    event FundsAdded(address indexed insurer, uint amount, uint timestamp);
+    event FundsWithdrawn(address indexed insurer, uint amount, uint timestamp);
+    event BadDebtAccumulated(uint amount, uint timestamp);
+
     modifier onlyMarginAccount() {
         require(msg.sender == address(marginAccount), "IF.only_margin_account");
         _;
@@ -54,18 +58,21 @@ contract InsuranceFund is VanillaGovernable, ERC20Upgradeable {
             shares = _amount * _totalSupply / _pool;
         }
         _mint(msg.sender, shares);
+        emit FundsAdded(msg.sender, _amount, block.timestamp);
     }
 
     function withdraw(uint _shares) external {
         settlePendingObligation();
         require(pendingObligation == 0, "IF.withdraw.pending_obligations");
-        uint r = balance() * _shares / totalSupply();
+        uint amount = balance() * _shares / totalSupply();
         _burn(msg.sender, _shares);
-        vusd.safeTransfer(msg.sender, r);
+        vusd.safeTransfer(msg.sender, amount);
+        emit FundsWithdrawn(msg.sender, amount, block.timestamp);
     }
 
     function seizeBadDebt(uint amount) external onlyMarginAccount {
         pendingObligation += amount;
+        emit BadDebtAccumulated(amount, block.timestamp);
         settlePendingObligation();
     }
 

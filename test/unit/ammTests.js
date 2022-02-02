@@ -32,7 +32,7 @@ describe('AMM Tests', function() {
 
         it('exchangeExactOut', async () => {
             const baseAssetQuantity = _1e18.mul(5)
-            const amount = _1e6.mul(5025) // ~5x leverage
+            const amount = _1e6.mul(5025)
             const initialUSDTBalance = await swap.balances(0, {gasLimit: 100000});
             const initialETHBalance = await swap.balances(1, {gasLimit: 100000});
 
@@ -54,7 +54,7 @@ describe('AMM Tests', function() {
 
         it('exchangeExactOut multiple transactions', async () => {
             const baseAssetQuantity = _1e18.mul(5)
-            const amount = _1e6.mul(5500) // ~5x leverage
+            const amount = _1e6.mul(5500)
             const initialUSDTBalance = await swap.balances(0, {gasLimit: 100000});
             const initialETHBalance = await swap.balances(1, {gasLimit: 100000});
 
@@ -80,7 +80,7 @@ describe('AMM Tests', function() {
 
         it('exchange', async () => {
             const baseAssetQuantity = _1e18.mul(5)
-            const amount = _1e6.mul(4950) // ~5x leverage
+            const amount = _1e6.mul(4950)
             const initialUSDTBalance = await swap.balances(0, {gasLimit: 100000});
             const initialETHBalance = await swap.balances(1,{gasLimit: 100000});
 
@@ -144,7 +144,7 @@ describe('AMM Tests', function() {
         it('pegged price should not move much while adding liquidity in the ratio of price', async function() {
             await swap.setAMM(amm.address)
             // add a total of 500K usd and ~500 eth to the pool
-            await addMargin(signers[0], _1e6.mul(2e5))
+            await addMargin(signers[0], _1e6.mul(4e5))
             for (let i = 0; i < 10; i++) {
                await clearingHouse.addLiquidity(0, _1e18.mul(50), 0)
             }

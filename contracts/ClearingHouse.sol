@@ -16,6 +16,7 @@ contract ClearingHouse is VanillaGovernable, ERC2771ContextUpgradeable {
     uint256 constant PRECISION = 1e6;
 
     int256 public maintenanceMargin;
+    int256 public minAllowableMargin;
     uint public tradeFee;
     uint public liquidationPenalty;
 
@@ -35,6 +36,7 @@ contract ClearingHouse is VanillaGovernable, ERC2771ContextUpgradeable {
         address _marginAccount,
         address _vusd,
         int256 _maintenanceMargin,
+        int256 _minAllowableMargin,
         uint _tradeFee,
         uint _liquidationPenalty
     ) external {
@@ -47,6 +49,7 @@ contract ClearingHouse is VanillaGovernable, ERC2771ContextUpgradeable {
 
         require(_maintenanceMargin > 0, "_maintenanceMargin < 0");
         maintenanceMargin = _maintenanceMargin;
+        minAllowableMargin = _minAllowableMargin;
         tradeFee = _tradeFee;
         liquidationPenalty = _liquidationPenalty;
     }
@@ -77,7 +80,7 @@ contract ClearingHouse is VanillaGovernable, ERC2771ContextUpgradeable {
         marginAccount.transferOutVusd(address(insuranceFund), _tradeFee);
 
         if (isPositionIncreased) {
-            require(isAboveMaintenanceMargin(trader), "CH: Below Maintenance Margin");
+            require(isAboveMinAllowableMargin(trader), "CH: Below Minimum Allowable Margin");
         }
         emit PositionModified(trader, idx, baseAssetQuantity, quoteAsset, _blockTimestamp());
     }
@@ -86,13 +89,13 @@ contract ClearingHouse is VanillaGovernable, ERC2771ContextUpgradeable {
         address maker = _msgSender();
         updatePositions(maker);
         amms[idx].addLiquidity(maker, baseAssetQuantity, minDToken);
-        require(isAboveMaintenanceMargin(maker), "CH: Below Maintenance Margin");
+        require(isAboveMinAllowableMargin(maker), "CH: Below Minimum Allowable Margin");
     }
 
     function removeLiquidity(uint idx, uint256 amount, uint minQuoteValue, uint minBaseValue) external {
         address maker = _msgSender();
         updatePositions(maker);
-        int256 realizedPnl = amms[idx].removeLiquidity(maker, amount, minQuoteValue, minBaseValue);
+        (int256 realizedPnl,) = amms[idx].removeLiquidity(maker, amount, minQuoteValue, minBaseValue);
         marginAccount.realizePnL(maker, realizedPnl);
     }
 
@@ -105,11 +108,26 @@ contract ClearingHouse is VanillaGovernable, ERC2771ContextUpgradeable {
         );
 
         int256 realizedPnl;
+        uint quote;
         for (uint i = 0; i < amms.length; i++) {
             (,, uint dToken,,,,) = amms[i].makers(maker);
-            realizedPnl += amms[i].removeLiquidity(maker, dToken, 0, 0);
+            (int256 _realizedPnl, uint _quote) = amms[i].removeLiquidity(maker, dToken, 0, 0);
+            realizedPnl += _realizedPnl;
+            quote += _quote;
         }
-        marginAccount.realizePnL(maker, realizedPnl);
+
+        // extra liquidation penalty
+        uint _liquidationFee = _chargeFeeAndRealizePnL(
+            maker,
+            realizedPnl,
+            2*quote /* total liquidity value = 2 * quote value */,
+            true /* isLiquidation */
+        );
+        if (_liquidationFee > 0) {
+            uint _toInsurance = _liquidationFee / 2;
+            marginAccount.transferOutVusd(address(insuranceFund), _toInsurance);
+            marginAccount.transferOutVusd(_msgSender(), _liquidationFee - _toInsurance);
+        }
     }
 
     function updatePositions(address trader) public {
@@ -182,8 +200,12 @@ contract ClearingHouse is VanillaGovernable, ERC2771ContextUpgradeable {
 
     // View
 
-    function isAboveMaintenanceMargin(address trader) public view returns(bool) {
+    function isAboveMaintenanceMargin(address trader) external view returns(bool) {
         return getMarginFraction(trader) >= maintenanceMargin;
+    }
+
+    function isAboveMinAllowableMargin(address trader) public view returns(bool) {
+        return getMarginFraction(trader) >= minAllowableMargin;
     }
 
     function getMarginFraction(address trader) public view returns(int256) {
@@ -274,5 +296,17 @@ contract ClearingHouse is VanillaGovernable, ERC2771ContextUpgradeable {
     function whitelistAmm(address _amm) external onlyGovernance {
         emit MarketAdded(amms.length, _amm);
         amms.push(IAMM(_amm));
+    }
+
+    function setParams(
+        int _maintenanceMargin,
+        int _minAllowableMargin,
+        uint _tradeFee,
+        uint _liquidationPenality
+    ) external onlyGovernance {
+        tradeFee = _tradeFee;
+        liquidationPenalty = _liquidationPenality;
+        maintenanceMargin = _maintenanceMargin;
+        minAllowableMargin = _minAllowableMargin;
     }
 }

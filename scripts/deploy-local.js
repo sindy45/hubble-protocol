@@ -3,6 +3,7 @@ const utils = require('../test/utils')
 
 const { constants: { _1e6, _1e18 } } = utils
 const _1e8 = BigNumber.from(10).pow(8)
+const DEFAULT_TRADE_FEE = 0.0005 * 1e6 /* 0.05% */
 
 /**
  * After deployment
@@ -16,7 +17,7 @@ async function main() {
     signers = await ethers.getSigners()
     alice = signers[0].address
 
-    const { marginAccount, clearingHouse, vusd, usdc, oracle } = await utils.setupContracts()
+    const { marginAccount, clearingHouse, vusd, usdc, oracle, hubbleViewer, insuranceFund } = await utils.setupContracts(DEFAULT_TRADE_FEE, { restrictedVUSD: false })
 
     // provide some vusd to signers[1], signers[2]
     const initialVusdAmount = _1e6.mul(1000)
@@ -43,17 +44,15 @@ async function main() {
     )
 
     // maker2 adds liquidity
-    await utils.addMargin(signers[8], _1e6.mul(2.1e5))
+    await utils.addMargin(signers[8], _1e6.mul(4.1e5))
     await clearingHouse.connect(signers[8]).addLiquidity(0, _1e18.mul(500), 0)
     await clearingHouse.connect(signers[8]).addLiquidity(1, _1e18.mul(10), 0)
-
-    const HubbleViewer = await ethers.getContractFactory('HubbleViewer')
-    const hubbleViewer = await HubbleViewer.deploy(clearingHouse.address, marginAccount.address)
 
     const contracts = {
         marginAccount: marginAccount.address,
         clearingHouse: clearingHouse.address,
         hubbleViewer: hubbleViewer.address,
+        insuranceFund: insuranceFund.address,
         vusd: vusd.address,
         avax: avax.address,
         oracle: oracle.address

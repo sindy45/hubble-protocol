@@ -852,7 +852,7 @@ def remove_liquidity(
         makerDToken: uint256,
         takerPosSize: int256,
         takerOpenNotional: uint256
-    ) -> (int256, uint256, int256):
+    ) -> (int256, uint256, int256, uint256[N_COINS]):
     """
     This withdrawal method is very safe, does no complex math
     """
@@ -878,7 +878,7 @@ def remove_liquidity(
     self.totalSupply -= amount
 
     log RemoveLiquidity(msg.sender, d_balances, self.totalSupply)
-    return makerPosSize, totalOpenNotional, feeAdjustedPnl
+    return makerPosSize, totalOpenNotional, feeAdjustedPnl, d_balances
 
 @internal
 @view
