@@ -526,7 +526,7 @@ describe('Position Tests', async function() {
             ;({ notionalPosition, unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(alice))
             expect(unrealizedPnl.lt(0)).to.be.true // loss
 
-            await clearingHouse.connect(signers[2]).liquidate(alice)
+            await clearingHouse.connect(signers[2]).liquidateTaker(alice)
 
             const liquidationPenalty = notionalPosition.mul(5e4).div(_1e6)
             const toInsurance = liquidationPenalty.div(2)

@@ -21,20 +21,25 @@ interface IClearingHouse {
     function getTotalNotionalPositionAndUnrealizedPnl(address trader)
         external
         view
-        returns(int256 notionalPosition, int256 unrealizedPnl);
+        returns(uint256 notionalPosition, int256 unrealizedPnl);
     function isAboveMaintenanceMargin(address trader) external view returns(bool);
     function isAboveMinAllowableMargin(address trader) external view returns(bool);
     function updatePositions(address trader) external;
-    function getMarginFraction(address trader) external view returns(uint256);
+    function getMarginFraction(address trader) external view returns(int256);
     function getTotalFunding(address trader) external view returns(int256 totalFunding);
     function getAmmsLength() external view returns(uint);
     function amms(uint idx) external view returns(IAMM);
     function maintenanceMargin() external view returns(int256);
     function tradeFee() external view returns(uint256);
+    function liquidationPenalty() external view returns(uint256);
     function getNotionalPositionAndMargin(address trader, bool includeFundingPayments)
         external
         view
         returns(uint256 notionalPosition, int256 margin);
+    function isMaker(address trader) external view returns(bool);
+    function liquidate(address trader) external;
+    function liquidateMaker(address trader) external;
+    function liquidateTaker(address trader) external;
 }
 
 interface ERC20Detailed {
@@ -51,7 +56,6 @@ interface IAMM {
         returns (int realizedPnl, uint quoteAsset, bool isPositionIncreased);
     function addLiquidity(address trader, uint baseAssetQuantity, uint minDToken) external;
     function removeLiquidity(address maker, uint amount, uint minQuote, uint minBase) external returns (int256 realizedPnl, uint quoteAsset);
-    function getUnrealizedPnL(address trade) external returns(int256);
     function getNotionalPositionAndUnrealizedPnl(address trader)
         external
         view
@@ -76,11 +80,12 @@ interface IAMM {
         external
         pure
         returns(uint256 remainOpenNotional, int realizedPnl);
-    function makers(address maker) external view returns(uint,uint,uint,int,int,uint,uint);
+    function makers(address maker) external view returns(uint,uint,uint,int,int,int,int);
     function vamm() external view returns(IVAMM);
 }
 
 interface IMarginAccount {
+    function getSpotCollateralValue(address trader) external view returns(int256 spot);
     function getNormalizedMargin(address trader) external view returns(int256);
     function realizePnL(address trader, int256 realizedPnl) external;
     function isLiquidatable(address trader, bool includeFunding) external view returns(bool, uint, uint);

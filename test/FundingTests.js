@@ -198,7 +198,7 @@ describe('Funding Tests', function() {
 
             // Liquidate
             ;({ unrealizedPnl, notionalPosition } = await amm.getNotionalPositionAndUnrealizedPnl(alice))
-            await clearingHouse.connect(liquidator1).liquidate(alice)
+            await clearingHouse.connect(liquidator1).liquidateTaker(alice)
 
             const liquidationPenalty = notionalPosition.mul(5e4).div(_1e6)
             remainingMargin = remainingMargin.sub(liquidationPenalty).add(unrealizedPnl)
@@ -235,13 +235,13 @@ describe('Funding Tests', function() {
         await oracle.setUnderlyingTwapPrice(weth.address, oracleTwap) // +ve funding rate
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
 
-        await clearingHouse.connect(liquidator1).callStatic.liquidate(alice) // doesn't throw exception
+        await clearingHouse.connect(liquidator1).callStatic.liquidateTaker(alice) // doesn't throw exception
 
         // funding settled
         await clearingHouse.settleFunding()
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.true
         await expect(
-            clearingHouse.connect(liquidator1).liquidate(alice)
+            clearingHouse.connect(liquidator1).liquidateTaker(alice)
         ).to.be.revertedWith('Above Maintenance Margin')
     })
 

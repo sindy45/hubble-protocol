@@ -221,7 +221,7 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, ERC2771ContextUpgra
     /* ****************** */
 
     /**
-    * @notice Determines if a trader's margin account can be liquadated now
+    * @notice Determines if a trader's margin account can be liquidated now
     * @param trader Account to check liquidation status for
     * @param includeFunding whether to include funding payments before checking liquidation status
     * @return _isLiquidatable Whether the account can be liquidated
@@ -243,7 +243,7 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, ERC2771ContextUpgra
             return (false, 0, 0);
         }
 
-        (int256 notionalPosition,) = clearingHouse.getTotalNotionalPositionAndUnrealizedPnl(trader);
+        (uint256 notionalPosition,) = clearingHouse.getTotalNotionalPositionAndUnrealizedPnl(trader);
         if (notionalPosition != 0) { // Liquidate positions before liquidating margin account
             return (false, 0, 0);
         }
@@ -340,7 +340,7 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, ERC2771ContextUpgra
     * @param trader Account for which the bad debt needs to be settled
     */
     function settleBadDebt(address trader) external {
-        (int256 notionalPosition,) = clearingHouse.getTotalNotionalPositionAndUnrealizedPnl(trader);
+        (uint256 notionalPosition,) = clearingHouse.getTotalNotionalPositionAndUnrealizedPnl(trader);
         require(notionalPosition == 0, "Liquidate positions before settling bad debt");
 
         // The spot value of their collateral minus their vUSD obligation is a negative value
@@ -439,12 +439,11 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, ERC2771ContextUpgra
         uint seize
     )
         internal
-        returns (uint /* repayed */)
+        returns (uint repay)
     {
-        uint repay = _seizeToRepay(buffer, seize);
+        repay = _seizeToRepay(buffer, seize);
         require(repay <= maxRepay, "Need to repay more to seize that much");
         _executeLiquidation(trader, repay, idx, seize, buffer.repayAble);
-        return repay;
     }
 
     /**
@@ -474,6 +473,10 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, ERC2771ContextUpgra
         internal
         returns (uint /* left over repayable */)
     {
+        if (repay == 0 || seize == 0) { // provides more flexibility, so prefer not reverting
+            return repayAble;
+        }
+
         _transferInVusd(_msgSender(), repay);
         margin[VUSD_IDX][trader] += repay.toInt256();
 
@@ -495,7 +498,7 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, ERC2771ContextUpgra
     /*        View        */
     /* ****************** */
 
-    function getSpotCollateralValue(address trader) public view returns(int256 spot) {
+    function getSpotCollateralValue(address trader) override public view returns(int256 spot) {
         (,spot) = weightedAndSpotCollateral(trader);
     }
 

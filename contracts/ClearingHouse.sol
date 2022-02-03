@@ -6,24 +6,24 @@ import { ERC2771ContextUpgradeable } from "@openzeppelin/contracts-upgradeable/m
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 import { VanillaGovernable } from "./Governable.sol";
-import { IAMM, IInsuranceFund, IMarginAccount } from "./Interfaces.sol";
+import { IAMM, IInsuranceFund, IMarginAccount, IClearingHouse } from "./Interfaces.sol";
 import { VUSD } from "./VUSD.sol";
 
-contract ClearingHouse is VanillaGovernable, ERC2771ContextUpgradeable {
+contract ClearingHouse is IClearingHouse, VanillaGovernable, ERC2771ContextUpgradeable {
     using SafeCast for uint256;
     using SafeCast for int256;
 
     uint256 constant PRECISION = 1e6;
 
-    int256 public maintenanceMargin;
+    int256 override public maintenanceMargin;
+    uint override public tradeFee;
+    uint override public liquidationPenalty;
     int256 public minAllowableMargin;
-    uint public tradeFee;
-    uint public liquidationPenalty;
 
     VUSD public vusd;
     IInsuranceFund public insuranceFund;
     IMarginAccount public marginAccount;
-    IAMM[] public amms;
+    IAMM[] override public amms;
 
     event PositionModified(address indexed trader, uint indexed idx, int256 baseAsset, uint quoteAsset, uint256 timestamp);
     event PositionLiquidated(address indexed trader, uint indexed idx, int256 baseAsset, uint256 quoteAsset, uint256 timestamp);
@@ -99,38 +99,7 @@ contract ClearingHouse is VanillaGovernable, ERC2771ContextUpgradeable {
         marginAccount.realizePnL(maker, realizedPnl);
     }
 
-    function liquidateMaker(address maker) external {
-        updatePositions(maker);
-
-        require(
-            _calcMarginFraction(maker, false) < maintenanceMargin,
-            "CH: Above Maintenance Margin"
-        );
-
-        int256 realizedPnl;
-        uint quote;
-        for (uint i = 0; i < amms.length; i++) {
-            (,, uint dToken,,,,) = amms[i].makers(maker);
-            (int256 _realizedPnl, uint _quote) = amms[i].removeLiquidity(maker, dToken, 0, 0);
-            realizedPnl += _realizedPnl;
-            quote += _quote;
-        }
-
-        // extra liquidation penalty
-        uint _liquidationFee = _chargeFeeAndRealizePnL(
-            maker,
-            realizedPnl,
-            2*quote /* total liquidity value = 2 * quote value */,
-            true /* isLiquidation */
-        );
-        if (_liquidationFee > 0) {
-            uint _toInsurance = _liquidationFee / 2;
-            marginAccount.transferOutVusd(address(insuranceFund), _toInsurance);
-            marginAccount.transferOutVusd(_msgSender(), _liquidationFee - _toInsurance);
-        }
-    }
-
-    function updatePositions(address trader) public {
+    function updatePositions(address trader) override public {
         require(address(trader) != address(0), 'CH: 0x0 trader Address');
         int256 fundingPayment;
         for (uint i = 0; i < amms.length; i++) {
@@ -146,12 +115,55 @@ contract ClearingHouse is VanillaGovernable, ERC2771ContextUpgradeable {
         }
     }
 
-    /**
-    @notice Wooosh, you are now liquidate
-    */
-    function liquidate(address trader) public {
-        require(!hasLiquidity(trader), 'CH: Remove Liquidity First');
+    /* ****************** */
+    /*    Liquidations    */
+    /* ****************** */
+
+    function liquidate(address trader) override external {
         updatePositions(trader);
+        if (isMaker(trader)) {
+            _liquidateMaker(trader);
+        } else {
+            _liquidateTaker(trader);
+        }
+    }
+
+    function liquidateMaker(address maker) override public {
+        updatePositions(maker);
+        _liquidateMaker(maker);
+    }
+
+    function liquidateTaker(address trader) override public {
+        require(!isMaker(trader), 'CH: Remove Liquidity First');
+        updatePositions(trader);
+        _liquidateTaker(trader);
+    }
+
+    function _liquidateMaker(address maker) internal {
+        require(
+            _calcMarginFraction(maker, false) < maintenanceMargin,
+            "CH: Above Maintenance Margin"
+        );
+        int256 realizedPnl;
+        uint quoteAsset;
+        for (uint i = 0; i < amms.length; i++) {
+            (,, uint dToken,,,,) = amms[i].makers(maker);
+            // @todo put checks on slippage
+            (int256 _realizedPnl, uint _quote) = amms[i].removeLiquidity(maker, dToken, 0, 0);
+            realizedPnl += _realizedPnl;
+            quoteAsset += _quote;
+        }
+
+        _disperseLiquidationFee(
+            _chargeFeeAndRealizePnL(
+                maker,
+                realizedPnl,
+                2 * quoteAsset,  // total liquidity value = 2 * quote value
+                true /* isLiquidation */)
+        );
+    }
+
+    function _liquidateTaker(address trader) internal {
         require(_calcMarginFraction(trader, false /* check funding payments again */) < maintenanceMargin, "Above Maintenance Margin");
         int realizedPnl;
         uint quoteAsset;
@@ -167,18 +179,17 @@ contract ClearingHouse is VanillaGovernable, ERC2771ContextUpgradeable {
                 emit PositionLiquidated(trader, i, size, _quoteAsset, _blockTimestamp());
             }
         }
-        // extra liquidation penalty
-        uint _liquidationFee = _chargeFeeAndRealizePnL(trader, realizedPnl, quoteAsset, true /* isLiquidation */);
-        if (_liquidationFee > 0) {
-            uint _toInsurance = _liquidationFee / 2;
-            marginAccount.transferOutVusd(address(insuranceFund), _toInsurance);
-            marginAccount.transferOutVusd(_msgSender(), _liquidationFee - _toInsurance);
-        }
+
+        _disperseLiquidationFee(
+            _chargeFeeAndRealizePnL(trader, realizedPnl, quoteAsset, true /* isLiquidation */)
+        );
     }
 
-    function liquidateMany(address[] calldata traders) external {
-        for (uint i = 0; i < traders.length; i++) {
-            liquidate(traders[i]);
+    function _disperseLiquidationFee(uint liquidationFee) internal {
+        if (liquidationFee > 0) {
+            uint toInsurance = liquidationFee / 2;
+            marginAccount.transferOutVusd(address(insuranceFund), toInsurance);
+            marginAccount.transferOutVusd(_msgSender(), liquidationFee - toInsurance);
         }
     }
 
@@ -200,19 +211,19 @@ contract ClearingHouse is VanillaGovernable, ERC2771ContextUpgradeable {
 
     // View
 
-    function isAboveMaintenanceMargin(address trader) external view returns(bool) {
+    function isAboveMaintenanceMargin(address trader) override external view returns(bool) {
         return getMarginFraction(trader) >= maintenanceMargin;
     }
 
-    function isAboveMinAllowableMargin(address trader) public view returns(bool) {
+    function isAboveMinAllowableMargin(address trader) override public view returns(bool) {
         return getMarginFraction(trader) >= minAllowableMargin;
     }
 
-    function getMarginFraction(address trader) public view returns(int256) {
+    function getMarginFraction(address trader) override public view returns(int256) {
         return _calcMarginFraction(trader, true /* includeFundingPayments */);
     }
 
-    function hasLiquidity(address trader) public view returns(bool) {
+    function isMaker(address trader) override public view returns(bool) {
         for (uint i = 0; i < amms.length; i++) {
             (,, uint dToken,,,,) = amms[i].makers(trader);
             if (dToken > 0) {
@@ -222,7 +233,7 @@ contract ClearingHouse is VanillaGovernable, ERC2771ContextUpgradeable {
         return false;
     }
 
-    function getTotalFunding(address trader) public view returns(int256 totalFunding) {
+    function getTotalFunding(address trader) override public view returns(int256 totalFunding) {
         int256 takerFundingPayment;
         int256 makerFundingPayment;
         for (uint i = 0; i < amms.length; i++) {
@@ -232,6 +243,7 @@ contract ClearingHouse is VanillaGovernable, ERC2771ContextUpgradeable {
     }
 
     function getTotalNotionalPositionAndUnrealizedPnl(address trader)
+        override
         public
         view
         returns(uint256 notionalPosition, int256 unrealizedPnl)
@@ -245,7 +257,22 @@ contract ClearingHouse is VanillaGovernable, ERC2771ContextUpgradeable {
         }
     }
 
-    function getAmmsLength() external view returns(uint) {
+    function getNotionalPositionAndMargin(address trader, bool includeFundingPayments)
+        override
+        public
+        view
+        returns(uint256 notionalPosition, int256 margin)
+    {
+        int256 unrealizedPnl;
+        (notionalPosition, unrealizedPnl) = getTotalNotionalPositionAndUnrealizedPnl(trader);
+        margin = marginAccount.getNormalizedMargin(trader);
+        margin += unrealizedPnl;
+        if (includeFundingPayments) {
+            margin -= getTotalFunding(trader); // -ve fundingPayment means trader should receive funds
+        }
+    }
+
+    function getAmmsLength() override external view returns(uint) {
         return amms.length;
     }
 
@@ -262,20 +289,6 @@ contract ClearingHouse is VanillaGovernable, ERC2771ContextUpgradeable {
     function _calcMarginFraction(address trader, bool includeFundingPayments) internal view returns(int256) {
         (uint256 notionalPosition, int256 margin) = getNotionalPositionAndMargin(trader, includeFundingPayments);
         return _getMarginFraction(margin, notionalPosition);
-    }
-
-    function getNotionalPositionAndMargin(address trader, bool includeFundingPayments)
-        public
-        view
-        returns(uint256 notionalPosition, int256 margin)
-    {
-        int256 unrealizedPnl;
-        (notionalPosition, unrealizedPnl) = getTotalNotionalPositionAndUnrealizedPnl(trader);
-        margin = marginAccount.getNormalizedMargin(trader);
-        margin += unrealizedPnl;
-        if (includeFundingPayments) {
-            margin -= getTotalFunding(trader); // -ve fundingPayment means trader should receive funds
-        }
     }
 
     function _blockTimestamp() internal view virtual returns (uint256) {

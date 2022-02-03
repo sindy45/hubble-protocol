@@ -9,10 +9,11 @@ contract HubbleViewer {
     using SafeCast for uint256;
     using SafeCast for int256;
 
-    IClearingHouse public clearingHouse;
-    IMarginAccount public marginAccount;
     uint256 constant PRECISION = 1e6;
     uint constant VUSD_IDX = 0;
+
+    IClearingHouse public immutable clearingHouse;
+    IMarginAccount public immutable marginAccount;
 
     struct Position {
         int256 size;
@@ -35,10 +36,17 @@ contract HubbleViewer {
         marginAccount = _marginAccount;
     }
 
-    function getMarginFraction(address[] calldata traders) external view returns(uint256[] memory fractions) {
-        fractions = new uint256[](traders.length);
-        for (uint i = 0; i < traders.length; i++) {
+    function getMarginFractionAndMakerStatus(address[] calldata traders)
+        external
+        view
+        returns(int256[] memory fractions, bool[] memory isMaker)
+    {
+        uint len = traders.length;
+        fractions = new int256[](len);
+        isMaker = new bool[](len);
+        for (uint i = 0; i < len; i++) {
             fractions[i] = clearingHouse.getMarginFraction(traders[i]);
+            isMaker[i] = clearingHouse.isMaker(traders[i]);
         }
     }
 
@@ -54,7 +62,7 @@ contract HubbleViewer {
         }
     }
 
-    function liquidatationStatus(address[] calldata traders)
+    function marginAccountLiquidatationStatus(address[] calldata traders)
         external
         view
         returns(bool[] memory isLiquidatable, uint[] memory repayAmount, uint[] memory incentivePerDollar)
@@ -114,6 +122,63 @@ contract HubbleViewer {
                 positions[i].avgOpen = 0;
             } else {
                 positions[i].avgOpen = positions[i].openNotional * 1e18 / _abs(positions[i].size).toUint256();
+            }
+        }
+    }
+
+    function leaderboard(address[] calldata traders)
+        external
+        view
+        returns(int[] memory makerMargins, int[] memory takerMargins)
+    {
+        uint numTraders = traders.length;
+        makerMargins = new int[](numTraders);
+        takerMargins = new int[](numTraders);
+        uint l = clearingHouse.getAmmsLength();
+
+        // local vars
+        IAMM amm;
+        address trader;
+        uint dToken;
+        int margin;
+        int unrealizedPnl;
+        int takerFundingPayment;
+        int makerFundingPayment;
+        bool isMaker;
+        bool isTaker;
+
+        // loop over traders and amms
+        for (uint i = 0; i < numTraders; i++) {
+            trader = traders[i];
+            for (uint j = 0; j < l; j++) {
+                amm = clearingHouse.amms(j);
+                (takerFundingPayment,makerFundingPayment,,) = amm.getPendingFundingPayment(trader);
+
+                // maker
+                (,,dToken,,,,) = amm.makers(trader);
+                if (dToken > 0) {
+                    isMaker = true;
+                    (,,unrealizedPnl) = getMakerPositionAndUnrealizedPnl(trader, j);
+                    makerMargins[i] += (unrealizedPnl - makerFundingPayment);
+                }
+
+                // taker. using dToken to save a variable
+                (dToken,unrealizedPnl) = amm.getTakerNotionalPositionAndUnrealizedPnl(trader);
+                if (dToken > 0) {
+                    isTaker = true;
+                    takerMargins[i] += (unrealizedPnl - takerFundingPayment);
+                }
+            }
+
+            margin = marginAccount.getSpotCollateralValue(trader);
+            if (isMaker) {
+                makerMargins[i] += margin;
+                isMaker = false;
+            }
+
+            if (isTaker) {
+                takerMargins[i] += margin;
+                isTaker = false;
             }
         }
     }
@@ -217,7 +282,11 @@ contract HubbleViewer {
     * @param _maker maker address
     * @param idx amm index
     */
-    function getMakerPositionAndUnrealizedPnl(address _maker, uint idx) public view returns (int256 position, uint openNotional, int256 unrealizedPnl) {
+    function getMakerPositionAndUnrealizedPnl(address _maker, uint idx)
+        public
+        view
+        returns (int256 position, uint openNotional, int256 unrealizedPnl)
+    {
         IAMM amm = clearingHouse.amms(idx);
         IVAMM vamm = amm.vamm();
 

@@ -840,7 +840,7 @@ describe('Maker Tests', async function() {
             const initialIFBalance = await vusd.balanceOf(insuranceFund.address)
 
             // liquidate maker position
-            await expect(clearingHouse.liquidate(maker3.address)).to.be.revertedWith('CH: Remove Liquidity First')
+            await expect(clearingHouse.liquidateTaker(maker3.address)).to.be.revertedWith('CH: Remove Liquidity First')
             const { position: maker3Pos } = await hubbleViewer.getMakerPositionAndUnrealizedPnl(maker3.address, 0)
             tx = await clearingHouse.connect(signers[2]).liquidateMaker(maker3.address)
             const { realizedPnl, quoteAsset } = (await parseRawEvent(tx, amm, 'LiquidityRemoved')).args
@@ -858,7 +858,7 @@ describe('Maker Tests', async function() {
             expect(makerPosition.pos).to.eq(ZERO)
             // impermanent position converted into permanent
             expect((await amm.positions(maker3.address)).size).to.eq(maker3Pos.add(baseAssetQuantity))
-            await expect(clearingHouse.liquidate(maker3.address)).to.be.revertedWith('Above Maintenance Margin')
+            await expect(clearingHouse.liquidateTaker(maker3.address)).to.be.revertedWith('Above Maintenance Margin')
         })
 
         it('taker-Liquidable, maker-notLiquidable', async function() {
@@ -879,7 +879,7 @@ describe('Maker Tests', async function() {
             expect(await clearingHouse.isAboveMaintenanceMargin(maker3.address)).to.be.false // taker+maker marginFraction < MM
             const initialIFBalance = await vusd.balanceOf(insuranceFund.address)
 
-            await expect(clearingHouse.liquidate(maker3.address)).to.be.revertedWith('CH: Remove Liquidity First')
+            await expect(clearingHouse.liquidateTaker(maker3.address)).to.be.revertedWith('CH: Remove Liquidity First')
             const { position: maker3Pos } = await hubbleViewer.getMakerPositionAndUnrealizedPnl(maker3.address, 0)
             tx = await clearingHouse.connect(signers[3]).liquidateMaker(maker3.address)
             const { realizedPnl, quoteAsset } = (await parseRawEvent(tx, amm, 'LiquidityRemoved')).args
@@ -900,7 +900,7 @@ describe('Maker Tests', async function() {
 
             const { notionalPosition } = await amm.getNotionalPositionAndUnrealizedPnl(maker3.address)
             // liquidate taker
-            await clearingHouse.connect(signers[2]).liquidate(maker3.address)
+            await clearingHouse.connect(signers[2]).liquidateTaker(maker3.address)
 
             liquidationPenalty = notionalPosition.mul(5e4).div(_1e6)
             toInsurance = liquidationPenalty.div(2)

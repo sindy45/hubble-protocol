@@ -7,9 +7,9 @@ import { Pausable } from "@openzeppelin/contracts/security/Pausable.sol";
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 import { Governable } from "./Governable.sol";
-import { ERC20Detailed, IOracle, IRegistry, IVAMM } from "./Interfaces.sol";
+import { ERC20Detailed, IOracle, IRegistry, IVAMM, IAMM } from "./Interfaces.sol";
 
-contract AMM is Governable, Pausable {
+contract AMM is IAMM, Governable, Pausable {
     using SafeCast for uint256;
     using SafeCast for int256;
 
@@ -24,8 +24,8 @@ contract AMM is Governable, Pausable {
 
     // AMM config
 
-    IVAMM public vamm;
-    address public underlyingAsset;
+    IVAMM override public vamm;
+    address override public underlyingAsset;
     string public name;
 
     uint256 public fundingBufferPeriod;
@@ -42,7 +42,7 @@ contract AMM is Governable, Pausable {
         uint256 openNotional;
         int256 lastPremiumFraction;
     }
-    mapping(address => Position) public positions;
+    mapping(address => Position) override public positions;
 
     struct Maker {
         uint vUSD;
@@ -53,7 +53,7 @@ contract AMM is Governable, Pausable {
         int lastPremiumFraction;
         int lastPremiumPerDtoken;
     }
-    mapping(address => Maker) public makers;
+    mapping(address => Maker) override public makers;
 
     struct ReserveSnapshot {
         uint256 quoteAssetReserve;
@@ -108,6 +108,7 @@ contract AMM is Governable, Pausable {
     * @dev baseAssetQuantity != 0 has been validated in clearingHouse._openPosition()
     */
     function openPosition(address trader, int256 baseAssetQuantity, uint quoteAssetLimit)
+        override
         external
         whenNotPaused
         onlyClearingHouse
@@ -127,6 +128,7 @@ contract AMM is Governable, Pausable {
     }
 
     function liquidatePosition(address trader)
+        override
         external
         whenNotPaused
         onlyClearingHouse
@@ -144,6 +146,7 @@ contract AMM is Governable, Pausable {
     }
 
     function updatePosition(address trader)
+        override
         external
         whenNotPaused
         onlyClearingHouse
@@ -173,6 +176,7 @@ contract AMM is Governable, Pausable {
     }
 
     function addLiquidity(address maker, uint baseAssetQuantity, uint minDToken)
+        override
         external
         whenNotPaused
         onlyClearingHouse
@@ -201,12 +205,17 @@ contract AMM is Governable, Pausable {
     }
 
     function removeLiquidity(address maker, uint amount, uint minQuote, uint minBase)
+        override
         external
         whenNotPaused
         onlyClearingHouse
-        returns (int256 /* realizedPnl */, uint /* QuoteAsset */)
+        returns (int256 /* realizedPnl */, uint /* quoteAsset */)
     {
         Maker memory _maker = makers[maker];
+        if (_maker.dToken == 0) {
+            return (0,0);
+        }
+
         Position memory _taker = positions[maker];
         // amount <= _maker.dToken will be asserted when updating maker.dToken
         (
@@ -278,6 +287,7 @@ contract AMM is Governable, Pausable {
         int256 unrealizedPnl,
         int256 baseAssetQuantity
     )
+        override
         public
         pure
         returns(uint256 remainOpenNotional, int realizedPnl)
@@ -329,6 +339,7 @@ contract AMM is Governable, Pausable {
      * @dev only allow to update while reaching `nextFundingTime`
      */
     function settleFunding()
+        override
         external
         whenNotPaused
         onlyClearingHouse
@@ -385,6 +396,7 @@ contract AMM is Governable, Pausable {
     }
 
     function getNotionalPositionAndUnrealizedPnl(address trader)
+        override
         external
         view
         returns(uint256 notionalPosition, int256 unrealizedPnl, int256 size, uint256 openNotional)
@@ -402,6 +414,7 @@ contract AMM is Governable, Pausable {
     }
 
     function getPendingFundingPayment(address trader)
+        override
         public
         view
         returns(
@@ -436,7 +449,7 @@ contract AMM is Governable, Pausable {
         }
     }
 
-    function getCloseQuote(int256 baseAssetQuantity) public view returns(uint256 quoteAssetQuantity) {
+    function getCloseQuote(int256 baseAssetQuantity) override public view returns(uint256 quoteAssetQuantity) {
         if (baseAssetQuantity > 0) {
             return vamm.get_dy(1, 0, baseAssetQuantity.toUint256());
         } else if (baseAssetQuantity < 0) {
@@ -445,7 +458,7 @@ contract AMM is Governable, Pausable {
         return 0;
     }
 
-    function getTakerNotionalPositionAndUnrealizedPnl(address trader) public view returns(uint takerNotionalPosition, int256 unrealizedPnl) {
+    function getTakerNotionalPositionAndUnrealizedPnl(address trader) override public view returns(uint takerNotionalPosition, int256 unrealizedPnl) {
         Position memory position = positions[trader];
         if (position.size > 0) {
             takerNotionalPosition = vamm.get_dy(1, 0, position.size.toUint256());

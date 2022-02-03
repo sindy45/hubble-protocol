@@ -60,7 +60,7 @@ describe('Liquidation Tests', async function() {
         ;({ unrealizedPnl, notionalPosition } = await amm.getNotionalPositionAndUnrealizedPnl(alice))
 
         const ifVusdBal = await vusd.balanceOf(insuranceFund.address)
-        await clearingHouse.connect(liquidator1).liquidate(alice)
+        await clearingHouse.connect(liquidator1).liquidateTaker(alice)
 
         const liquidationPenalty = notionalPosition.mul(5e4).div(_1e6)
         expect(await marginAccount.margin(0, alice)).to.eq(
@@ -198,7 +198,7 @@ describe('Multi-collateral Liquidation Tests', async function() {
         ;({ unrealizedPnl, notionalPosition } = await amm.getNotionalPositionAndUnrealizedPnl(alice))
 
         const ifVusdBal = await vusd.balanceOf(insuranceFund.address)
-        await clearingHouse.connect(liquidator1).liquidate(alice)
+        await clearingHouse.connect(liquidator1).liquidateTaker(alice)
 
         const liquidationPenalty = notionalPosition.mul(5e4).div(_1e6)
         expect(await marginAccount.margin(0, alice)).to.eq(
