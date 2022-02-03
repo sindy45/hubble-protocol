@@ -1,6 +1,6 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: BUSL-1.1
 
-pragma solidity 0.8.4;
+pragma solidity 0.8.9;
 
 interface IERC20 {
     function transfer(address to, uint256 value) external returns (bool);

@@ -11,7 +11,7 @@ const PRIVATE_KEY = `0x${process.env.PRIVATE_KEY || 'ac0974bec39a17e36ba4a6b4d23
  * @type import('hardhat/config').HardhatUserConfig
  */
 module.exports = {
-    solidity: "0.8.4",
+    solidity: "0.8.9",
     networks: {
         /*** When forking fuji locally ***/
         // local: {
