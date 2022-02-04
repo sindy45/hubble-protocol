@@ -1,8 +1,11 @@
 const { expect } = require('chai')
 const fs = require('fs')
 const { BigNumber } = require('ethers')
+const util = require('util')
+const { ethers } = require('hardhat')
 
 const _1e6 = BigNumber.from(10).pow(6)
+const _1e8 = BigNumber.from(10).pow(8)
 const _1e12 = BigNumber.from(10).pow(12)
 const _1e18 = ethers.constants.WeiPerEther
 const ZERO = BigNumber.from(0)
@@ -21,25 +24,22 @@ function log(position, notionalPosition, unrealizedPnl, marginFraction, size, op
     })
 }
 
-async function setupContracts(
-    tradeFee = DEFAULT_TRADE_FEE,
-    options = { addLiquidity: true, restrictedVUSD: true }
-) {
-    governance = alice
+/**
+ * signers global var should have been intialized before the call to this fn
+ * @dev { nonce: nonce ? nonce++ : undefined, gasLimit: 6e6 } is a weird quirk that lets us use this script for both local testing and prod deployments
+*/
+async function setupContracts(options = {}) {
+    options = Object.assign(
+        {
+            tradeFee: DEFAULT_TRADE_FEE,
+            restrictedVUSD: true,
+            governance: signers[0].address,
+            setupAMM: true,
+        },
+        options
+    )
+    ;({ governance, nonce } = options)
 
-    // Vyper
-    let abiAndBytecode = fs.readFileSync('./contracts/curve-v2/CurveMath.txt').toString().split('\n').filter(Boolean)
-    const CurveMath = new ethers.ContractFactory(JSON.parse(abiAndBytecode[0]), abiAndBytecode[1], signers[0])
-
-    abiAndBytecode = fs.readFileSync('./contracts/curve-v2/Views.txt').toString().split('\n').filter(Boolean)
-    const Views = new ethers.ContractFactory(JSON.parse(abiAndBytecode[0]), abiAndBytecode[1], signers[0])
-
-    vammAbiAndBytecode = fs.readFileSync('./contracts/curve-v2/Swap.txt').toString().split('\n').filter(Boolean)
-    Swap = new ethers.ContractFactory(JSON.parse(vammAbiAndBytecode[0]), vammAbiAndBytecode[1], signers[0])
-
-    curveMath = await CurveMath.deploy()
-    views = await Views.deploy(curveMath.address)
-    // vyper deployment complete
     ;([ MarginAccountHelper, Registry, ERC20Mintable, MinimalForwarder, TransparentUpgradeableProxy, ProxyAdmin ] = await Promise.all([
         ethers.getContractFactory('MarginAccountHelper'),
         ethers.getContractFactory('Registry'),
@@ -50,26 +50,28 @@ async function setupContracts(
     ]))
 
     ;([ proxyAdmin, forwarder, usdc ] = await Promise.all([
-        ProxyAdmin.deploy(),
-        MinimalForwarder.deploy(),
-        ERC20Mintable.deploy('USD Coin', 'USDC', 6),
+        ProxyAdmin.deploy({ nonce: nonce ? nonce++ : undefined, gasLimit: 6e6 }),
+        MinimalForwarder.deploy({ nonce: nonce ? nonce++ : undefined, gasLimit: 6e6 }),
+        ERC20Mintable.deploy('USD Coin', 'USDC', 6, { nonce: nonce ? nonce++ : undefined, gasLimit: 6e6 }),
     ]))
-    await forwarder.intialize()
-
-    const vusd = await setupUpgradeableProxy(options.restrictedVUSD ? 'RestrictedVusd' : 'VUSD', proxyAdmin.address, [ governance ], [ usdc.address ])
+    await forwarder.intialize({ nonce: nonce ? nonce++ : undefined, gasLimit: 6e6 })
+    vusd = await setupUpgradeableProxy(options.restrictedVUSD ? 'RestrictedVusd' : 'VUSD', proxyAdmin.address, [ governance ], [ usdc.address ])
 
     marginAccount = await setupUpgradeableProxy('MarginAccount', proxyAdmin.address, [ forwarder.address, governance, vusd.address ])
-    marginAccountHelper = await MarginAccountHelper.deploy(marginAccount.address, vusd.address)
+    marginAccountHelper = await MarginAccountHelper.deploy(marginAccount.address, vusd.address, { nonce: nonce ? nonce++ : undefined, gasLimit: 6e6 })
     insuranceFund = await setupUpgradeableProxy('InsuranceFund', proxyAdmin.address, [ governance ])
 
     if (options.restrictedVUSD) {
-        await vusd.grantRole(await vusd.TRANSFER_ROLE(), marginAccountHelper.address)
-        await vusd.grantRole(await vusd.TRANSFER_ROLE(), marginAccount.address)
+        const transferRole = await vusd.TRANSFER_ROLE()
+        await Promise.all([
+            vusd.grantRole(transferRole, marginAccountHelper.address, { nonce: nonce ? nonce++ : undefined, gasLimit: 6e6 }),
+            vusd.grantRole(transferRole, marginAccount.address, { nonce: nonce ? nonce++ : undefined, gasLimit: 6e6 }),
+            vusd.grantRole(transferRole, insuranceFund.address, { nonce: nonce ? nonce++ : undefined, gasLimit: 6e6 })
+        ])
     }
 
-    weth = await setupRestrictedTestToken('WETH', 'WETH', 18)
     oracle = await setupUpgradeableProxy('TestOracle', proxyAdmin.address, [ governance ])
-    await oracle.setStablePrice(vusd.address, 1e6) // $1
+    await oracle.setStablePrice(vusd.address, 1e6, { nonce: nonce ? nonce++ : undefined, gasLimit: 6e6 }) // $1
 
     clearingHouse = await setupUpgradeableProxy(
         'ClearingHouse',
@@ -80,31 +82,38 @@ async function setupContracts(
             insuranceFund.address,
             marginAccount.address,
             vusd.address,
-            0.1 * 1e6 /* 10% maintenance margin, 10x */,
-            0.2 * 1e6 /* 20% minimum allowable margin, 5x */,
-            tradeFee,
-            0.05 * 1e6, // liquidationPenalty = 5%])
+            0.1 * 1e6, // 10% maintenance margin, 10x
+            0.2 * 1e6, // 20% minimum allowable margin, 5x
+            options.tradeFee,
+            0.05 * 1e6, // liquidationPenalty = 5%
         ]
     )
-    await vusd.grantRole(await vusd.MINTER_ROLE(), marginAccount.address)
-    registry = await Registry.deploy(oracle.address, clearingHouse.address, insuranceFund.address, marginAccount.address, vusd.address)
+    await vusd.grantRole(await vusd.MINTER_ROLE(), marginAccount.address, { nonce: nonce ? nonce++ : undefined, gasLimit: 6e6 })
+    registry = await Registry.deploy(oracle.address, clearingHouse.address, insuranceFund.address, marginAccount.address, vusd.address, { nonce: nonce ? nonce++ : undefined, gasLimit: 6e6 })
     await Promise.all([
-        marginAccount.syncDeps(registry.address, 5e4), // liquidationIncentive = 5% = .05 scaled 6 decimals
-        insuranceFund.syncDeps(registry.address)
+        marginAccount.syncDeps(registry.address, 5e4, { nonce: nonce ? nonce++ : undefined, gasLimit: 6e6 }), // liquidationIncentive = 5% = .05 scaled 6 decimals
+        insuranceFund.syncDeps(registry.address, { nonce: nonce ? nonce++ : undefined, gasLimit: 6e6 })
     ])
 
-    vammImpl = await Swap.deploy()
-    ;({ amm, vamm } = await setupAmm(
-        governance,
-        [ registry.address, weth.address, 'ETH-Perp' ],
-        1000, // initialRate,
-        options.addLiquidity ? 1000 : 0 // initialLiquidity
-    ))
     const HubbleViewer = await ethers.getContractFactory('HubbleViewer')
-    const hubbleViewer = await HubbleViewer.deploy(clearingHouse.address, marginAccount.address)
-    return {
-        swap: vamm,
-        amm,
+    hubbleViewer = await HubbleViewer.deploy(clearingHouse.address, marginAccount.address, registry.address, { nonce: nonce ? nonce++ : undefined, gasLimit: 6e6 })
+
+    // we will initialize the amm deps so that can be used as  global vars later
+    let abiAndBytecode = fs.readFileSync('./contracts/curve-v2/CurveMath.txt').toString().split('\n').filter(Boolean)
+    const CurveMath = new ethers.ContractFactory(JSON.parse(abiAndBytecode[0]), abiAndBytecode[1], signers[0])
+
+    abiAndBytecode = fs.readFileSync('./contracts/curve-v2/Views.txt').toString().split('\n').filter(Boolean)
+    const Views = new ethers.ContractFactory(JSON.parse(abiAndBytecode[0]), abiAndBytecode[1], signers[0])
+
+    vammAbiAndBytecode = fs.readFileSync('./contracts/curve-v2/Swap.txt').toString().split('\n').filter(Boolean)
+    Swap = new ethers.ContractFactory(JSON.parse(vammAbiAndBytecode[0]), vammAbiAndBytecode[1], signers[0])
+
+    curveMath = await CurveMath.deploy({ nonce: nonce ? nonce++ : undefined, gasLimit: 6e6 })
+    views = await Views.deploy(curveMath.address, { nonce: nonce ? nonce++ : undefined, gasLimit: 6e6 })
+    vammImpl = await Swap.deploy({ nonce: nonce ? nonce++ : undefined, gasLimit: 6e6 })
+    // amm deps complete
+
+    const res = {
         registry,
         marginAccount,
         marginAccountHelper,
@@ -112,21 +121,34 @@ async function setupContracts(
         hubbleViewer,
         vusd,
         usdc,
-        weth,
         oracle,
         insuranceFund,
         forwarder,
-        tradeFee
+        vammImpl: vammImpl,
+        tradeFee: options.tradeFee
     }
+
+    if (options.setupAMM) {
+        weth = await setupRestrictedTestToken('Hubble Ether', 'hWETH', 18)
+        ;({ amm, vamm } = await setupAmm(
+            governance,
+            [ registry.address, weth.address, 'ETH-Perp' ],
+            options.amm
+        ))
+        Object.assign(res, { swap: vamm, amm, weth })
+    }
+
+    // console.log(await generateConfig(hubbleViewer.address))
+    return res
 }
 
 async function setupUpgradeableProxy(contract, admin, initArgs, deployArgs) {
     const factory = await ethers.getContractFactory(contract)
     let impl
     if (deployArgs) {
-        impl = await factory.deploy(...deployArgs)
+        impl = await factory.deploy(...deployArgs, { nonce: nonce ? nonce++ : undefined, gasLimit: 6e6 })
     } else {
-        impl = await factory.deploy()
+        impl = await factory.deploy({ nonce: nonce ? nonce++ : undefined, gasLimit: 6e6 })
     }
     const proxy = await TransparentUpgradeableProxy.deploy(
         impl.address,
@@ -136,12 +158,22 @@ async function setupUpgradeableProxy(contract, admin, initArgs, deployArgs) {
                 contract === 'VUSD' || contract === 'RestrictedVusd' ? 'init' : 'initialize',
                 initArgs
             )
-            : '0x'
+            : '0x',
+        { nonce: nonce ? nonce++ : undefined, gasLimit: 6e6 }
     )
     return ethers.getContractAt(contract, proxy.address)
 }
 
-async function setupAmm(governance, args, initialRate, initialLiquidity, _pause = false, index = 0) {
+async function setupAmm(governance, args, options) {
+    const { initialRate, initialLiquidity, fee, pause } = Object.assign(
+        {
+            initialRate: 1000, // for ETH perp
+            initialLiquidity: 1000, // 1000 eth
+            fee: 10000000, // 0.1%
+            pause: false,
+        },
+        options
+    )
     const VammProxy = await TransparentUpgradeableProxy.deploy(
         vammImpl.address,
         proxyAdmin.address,
@@ -151,22 +183,24 @@ async function setupAmm(governance, args, initialRate, initialLiquidity, _pause 
             views.address, // views
             400000, // A
             '145000000000000', // gamma
-            10000000, 0, 0, 0, // mid_fee = 0.1%, out_fee, allowed_extra_profit, fee_gamma
+            fee, 0, 0, 0, // mid_fee, out_fee, allowed_extra_profit, fee_gamma
             '146000000000000', // adjustment_step
             0, // admin_fee
             600, // ma_half_time
             _1e18.mul(initialRate)
-        ])
+        ]),
+        { nonce: nonce ? nonce++ : undefined, gasLimit: 6e6 }
     )
 
     const vamm = new ethers.Contract(VammProxy.address, JSON.parse(vammAbiAndBytecode[0]), signers[0])
     const amm = await setupUpgradeableProxy('AMM', proxyAdmin.address, args.concat([ vamm.address, governance ]))
-    if (!_pause) {
-        await amm.togglePause(_pause)
+    if (!pause) {
+        await amm.togglePause(pause, { nonce: nonce ? nonce++ : undefined, gasLimit: 6e6 })
     }
-    await vamm.setAMM(amm.address)
+    await vamm.setAMM(amm.address, { nonce: nonce ? nonce++ : undefined, gasLimit: 6e6 })
 
-    await clearingHouse.whitelistAmm(amm.address)
+    const index = await clearingHouse.getAmmsLength()
+    await clearingHouse.whitelistAmm(amm.address, { nonce: nonce ? nonce++ : undefined, gasLimit: 6e6 })
 
     if (initialLiquidity) {
         maker = (await ethers.getSigners())[9]
@@ -178,13 +212,15 @@ async function setupAmm(governance, args, initialRate, initialLiquidity, _pause 
 
 async function setupRestrictedTestToken(name, symbol, decimals) {
     const RestrictedErc20 = await ethers.getContractFactory('RestrictedErc20')
-    const tok = await RestrictedErc20.deploy(name, symbol, decimals)
-    await tok.grantRole(await tok.TRANSFER_ROLE(), marginAccount.address)
+    const tok = await RestrictedErc20.deploy(name, symbol, decimals, { nonce: nonce ? nonce++ : undefined, gasLimit: 6e6 })
+    // avoiding await tok.TRANSFER_ROLE(), because that reverts if the above tx hasn't confirmed
+    await tok.grantRole(ethers.utils.id('TRANSFER_ROLE'), marginAccount.address, { nonce: nonce ? nonce++ : undefined, gasLimit: 6e6 })
     return tok
 }
 
 async function addMargin(trader, margin) {
-    await usdc.mint(trader.address, margin)
+    // omitting the nonce calculation here because this is only used in local
+    await usdc.mint(trader.address, margin, { nonce: nonce ? nonce++ : undefined, gasLimit: 6e6 })
     await usdc.connect(trader).approve(marginAccountHelper.address, margin)
     await marginAccountHelper.connect(trader).addVUSDMarginWithReserve(margin)
 }
@@ -350,8 +386,63 @@ async function assertBounds(v, lowerBound, upperBound) {
     if (upperBound) expect(v).lt(upperBound)
 }
 
+async function generateConfig(hubbleViewerAddress) {
+    const hubbleViewer = await ethers.getContractAt('HubbleViewer', hubbleViewerAddress)
+    const clearingHouse = await ethers.getContractAt('ClearingHouse', await hubbleViewer.clearingHouse())
+    const marginAccount = await ethers.getContractAt('MarginAccount', await hubbleViewer.marginAccount())
+
+    const _amms = await clearingHouse.getAMMs()
+    const amms = []
+    for (let i = 0; i < _amms.length; i++) {
+        const a = await ethers.getContractAt('AMM', _amms[i])
+        const name = await a.name()
+        const underlying = await a.underlyingAsset()
+        amms.push({
+            perp: name.slice(0, name.length-5),
+            address: a.address,
+            underlying
+        })
+    }
+    let _collateral = await marginAccount.supportedAssets()
+    const collateral = []
+    for (let i = 0; i < _collateral.length; i++) {
+        const asset = await ethers.getContractAt('ERC20PresetMinterPauser', _collateral[i].token)
+        collateral.push({
+            name: await asset.name(),
+            ticker: await asset.symbol(),
+            decimals: await asset.decimals(),
+            address: asset.address
+        })
+    }
+
+    // to find the genesis block, we will get the block in which the first amm was whitelisted
+    const marketAddedEvents = await clearingHouse.queryFilter('MarketAdded')
+    return util.inspect({
+        genesisBlock: marketAddedEvents[0].blockNumber,
+        contracts: {
+            ClearingHouse: clearingHouse.address,
+            HubbleViewer: hubbleViewer.address,
+            MarginAccount: marginAccount.address,
+            Oracle: await marginAccount.oracle(),
+            InsuranceFund: await marginAccount.insuranceFund(),
+            Registry: await hubbleViewer.registry(),
+            amms,
+            collateral,
+            systemParams: {
+                maintenanceMargin: (await clearingHouse.maintenanceMargin()).toString(),
+                numCollateral: collateral.length
+            }
+        }
+    }, { depth: null })
+}
+
+function sleep(s) {
+    return new Promise(resolve => setTimeout(resolve, s * 1000));
+}
+
 module.exports = {
-    constants: { _1e6, _1e12, _1e18, ZERO },
+    constants: { _1e6, _1e8, _1e12, _1e18, ZERO },
+    BigNumber,
     log,
     setupContracts,
     setupUpgradeableProxy,
@@ -369,5 +460,6 @@ module.exports = {
     addMargin,
     parseRawEvent,
     assertBounds,
-    BigNumber
+    generateConfig,
+    sleep
 }

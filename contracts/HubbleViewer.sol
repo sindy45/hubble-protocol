@@ -2,10 +2,10 @@
 
 pragma solidity 0.8.9;
 
-import { IClearingHouse, IMarginAccount, IAMM, IVAMM } from "./Interfaces.sol";
+import { IClearingHouse, IMarginAccount, IAMM, IVAMM, IHubbleViewer } from "./Interfaces.sol";
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
-contract HubbleViewer {
+contract HubbleViewer is IHubbleViewer {
     using SafeCast for uint256;
     using SafeCast for int256;
 
@@ -14,6 +14,7 @@ contract HubbleViewer {
 
     IClearingHouse public immutable clearingHouse;
     IMarginAccount public immutable marginAccount;
+    address public immutable registry;
 
     struct Position {
         int256 size;
@@ -30,10 +31,12 @@ contract HubbleViewer {
 
     constructor(
         IClearingHouse _clearingHouse,
-        IMarginAccount _marginAccount
+        IMarginAccount _marginAccount,
+        address _registry
     ) {
         clearingHouse = _clearingHouse;
         marginAccount = _marginAccount;
+        registry = _registry;
     }
 
     function getMarginFractionAndMakerStatus(address[] calldata traders)
@@ -281,8 +284,12 @@ contract HubbleViewer {
     * @notice get maker impermanent position and unrealizedPnl for a particular amm
     * @param _maker maker address
     * @param idx amm index
+    * @return position Maker's current impermanent position
+    * @return openNotional Position open notional for the current impermanent position inclusive of fee earned
+    * @return unrealizedPnl PnL if maker removes liquidity and closes their impermanent position in the same amm
     */
     function getMakerPositionAndUnrealizedPnl(address _maker, uint idx)
+        override
         public
         view
         returns (int256 position, uint openNotional, int256 unrealizedPnl)

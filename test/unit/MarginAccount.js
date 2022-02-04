@@ -10,7 +10,7 @@ describe('Margin Account Unit Tests', function() {
         signers = await ethers.getSigners()
         alice = signers[0].address
         ;([ bob, mockClearingHouse, admin ] = signers.slice(10))
-        ;({ marginAccount, vusd, oracle, clearingHouse, insuranceFund } = await setupContracts(0, { addLiquidity: false }))
+        ;({ marginAccount, vusd, oracle, clearingHouse, insuranceFund } = await setupContracts({ amm: { initialLiquidity: 0 } }))
         await vusd.grantRole(await vusd.MINTER_ROLE(), admin.address)
     })
 

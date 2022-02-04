@@ -35,11 +35,10 @@ module.exports = {
         fuji: {
             url: 'https://api.avax-test.network/ext/bc/C/rpc',
             chainId: 43113,
+            throwOnTransactionFailures: false,
+            gasLimit: 6000000,
             accounts: [ PRIVATE_KEY ]
         },
-    },
-    mocha: {
-        timeout: 0
     },
     etherscan: {
         apiKey: `${process.env.ETHERSCAN || ''}`
@@ -53,5 +52,8 @@ module.exports = {
         coinmarketcap: '554a6764-aae9-440e-852b-63e3c66c20d7',
         token: 'AVAX',
         enabled: process.env.REPORT_GAS ? true : false
+    },
+    docgen: {
+        clear: true,
     }
 };

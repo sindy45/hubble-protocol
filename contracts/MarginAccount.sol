@@ -138,7 +138,7 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, ERC2771ContextUpgra
     * @param idx Index of the supported collateral
     * @param amount Amount to deposit (scaled same as the asset)
     */
-    function addMargin(uint idx, uint amount) external {
+    function addMargin(uint idx, uint amount) override external {
         addMarginFor(idx, amount, _msgSender());
     }
 
@@ -148,7 +148,7 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, ERC2771ContextUpgra
     * @param amount Amount to deposit (scaled same as the asset)
     * @param to Account to post margin for
     */
-    function addMarginFor(uint idx, uint amount, address to) public {
+    function addMarginFor(uint idx, uint amount, address to) override public {
         require(amount > 0, "Add non-zero margin");
         // will revert for idx >= supportedCollateral.length
         if (idx == VUSD_IDX) {
@@ -167,7 +167,7 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, ERC2771ContextUpgra
     * @param idx Index of the supported collateral
     * @param amount Amount to withdraw (scaled same as the asset)
     */
-    function removeMargin(uint idx, uint256 amount) external {
+    function removeMargin(uint idx, uint256 amount) override external {
         address trader = _msgSender();
 
         // credit funding payments
@@ -589,7 +589,7 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, ERC2771ContextUpgra
     }
 
     /* ****************** */
-    /*   onlyGovernance   */
+    /*     Governance     */
     /* ****************** */
 
     function syncDeps(address _registry, uint _liquidationIncentive) public onlyGovernance {

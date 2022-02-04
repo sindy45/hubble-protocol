@@ -18,6 +18,11 @@ interface IOracle {
 }
 
 interface IClearingHouse {
+    function openPosition(uint idx, int256 baseAssetQuantity, uint quoteAssetLimit) external;
+    function closePosition(uint idx, uint quoteAssetLimit) external;
+    function addLiquidity(uint idx, uint256 baseAssetQuantity, uint minDToken) external;
+    function removeLiquidity(uint idx, uint256 amount, uint minQuoteValue, uint minBaseValue) external;
+    function settleFunding() external;
     function getTotalNotionalPositionAndUnrealizedPnl(address trader)
         external
         view
@@ -85,6 +90,9 @@ interface IAMM {
 }
 
 interface IMarginAccount {
+    function addMargin(uint idx, uint amount) external;
+    function addMarginFor(uint idx, uint amount, address to) external;
+    function removeMargin(uint idx, uint256 amount) external;
     function getSpotCollateralValue(address trader) external view returns(int256 spot);
     function getNormalizedMargin(address trader) external view returns(int256);
     function realizePnL(address trader, int256 realizedPnl) external;
@@ -176,4 +184,11 @@ interface AggregatorV3Interface {
 interface IERC20FlexibleSupply is IERC20 {
     function mint(address to, uint256 amount) external;
     function burn(uint256 amount) external;
+}
+
+interface IHubbleViewer {
+    function getMakerPositionAndUnrealizedPnl(address _maker, uint idx)
+        external
+        view
+        returns (int256 position, uint openNotional, int256 unrealizedPnl);
 }

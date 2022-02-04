@@ -7,7 +7,7 @@ describe('AMM Tests', function() {
         signers = await ethers.getSigners()
         alice = signers[0].address
         mockAmm = signers[1]
-        ;({ swap, amm, clearingHouse, hubbleViewer } = await setupContracts(TRADE_FEE))
+        ;({ swap, amm, clearingHouse, hubbleViewer } = await setupContracts({ tradeFee: TRADE_FEE }))
         await swap.setAMM(mockAmm.address)
     })
 
@@ -194,7 +194,7 @@ describe('TWAP Price', function() {
     before('generate sample snapshots', async function() {
         signers = await ethers.getSigners()
         alice = signers[0].address
-        ;({ swap, amm } = await setupContracts(TRADE_FEE))
+        ;({ swap, amm } = await setupContracts({ tradeFee: TRADE_FEE }))
         // add margin
         margin = _1e6.mul(10000)
         await addMargin(signers[0], margin)

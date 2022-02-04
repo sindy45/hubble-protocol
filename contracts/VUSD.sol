@@ -33,7 +33,7 @@ contract VUSD is VanillaGovernable, ERC20PresetMinterPauserUpgradeable {
     }
 
     function init(address _governance) external {
-        super.initialize("Hubble-virtual-usd", "hvUSD"); // has initializer modifier
+        super.initialize("Hubble USD", "hUSD"); // has initializer modifier
         _setGovernace(_governance);
         maxWithdrawalProcesses = 100;
     }

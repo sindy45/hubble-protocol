@@ -60,11 +60,11 @@ contract ClearingHouse is IClearingHouse, VanillaGovernable, ERC2771ContextUpgra
     * @param baseAssetQuantity Quantity of the base asset to Long (baseAssetQuantity > 0) or Short (baseAssetQuantity < 0)
     * @param quoteAssetLimit Rate at which the trade is executed in the AMM. Used to cap slippage.
     */
-    function openPosition(uint idx, int256 baseAssetQuantity, uint quoteAssetLimit) external {
+    function openPosition(uint idx, int256 baseAssetQuantity, uint quoteAssetLimit) override external {
         _openPosition(_msgSender(), idx, baseAssetQuantity, quoteAssetLimit);
     }
 
-    function closePosition(uint idx, uint quoteAssetLimit) external {
+    function closePosition(uint idx, uint quoteAssetLimit) override external {
         address trader = _msgSender();
         (int256 size,,) = amms[idx].positions(trader);
         _openPosition(trader, idx, -size, quoteAssetLimit);
@@ -85,17 +85,33 @@ contract ClearingHouse is IClearingHouse, VanillaGovernable, ERC2771ContextUpgra
         emit PositionModified(trader, idx, baseAssetQuantity, quoteAsset, _blockTimestamp());
     }
 
-    function addLiquidity(uint idx, uint256 baseAssetQuantity, uint minDToken) external {
+    /**
+    * @notice Add liquidity to the amm. The free margin from margin account is utilized for the same
+    *   The liquidity can be provided on leverage.
+    * @param idx Index of the AMM
+    * @param baseAssetQuantity Amount of the asset to add to AMM. Equivalent amount of USD side is automatically added.
+    *   This means that user is actually adding 2 * baseAssetQuantity * markPrice.
+    * @param minDToken Min amount of dTokens to receive. Used to cap slippage.
+    */
+    function addLiquidity(uint idx, uint256 baseAssetQuantity, uint minDToken) override external {
         address maker = _msgSender();
         updatePositions(maker);
         amms[idx].addLiquidity(maker, baseAssetQuantity, minDToken);
         require(isAboveMinAllowableMargin(maker), "CH: Below Minimum Allowable Margin");
     }
 
-    function removeLiquidity(uint idx, uint256 amount, uint minQuoteValue, uint minBaseValue) external {
+    /**
+    * @notice Remove liquidity from the amm.
+    * @param idx Index of the AMM
+    * @param dToken Measure of the liquidity to remove.
+    * @param minQuoteValue Min amount of USD to remove.
+    * @param minBaseValue Min amount of base to remove.
+    *   Both the above params enable capping slippage in either direction.
+    */
+    function removeLiquidity(uint idx, uint256 dToken, uint minQuoteValue, uint minBaseValue) override external {
         address maker = _msgSender();
         updatePositions(maker);
-        (int256 realizedPnl,) = amms[idx].removeLiquidity(maker, amount, minQuoteValue, minBaseValue);
+        (int256 realizedPnl,) = amms[idx].removeLiquidity(maker, dToken, minQuoteValue, minBaseValue);
         marginAccount.realizePnL(maker, realizedPnl);
     }
 
@@ -109,7 +125,7 @@ contract ClearingHouse is IClearingHouse, VanillaGovernable, ERC2771ContextUpgra
         marginAccount.realizePnL(trader, -fundingPayment);
     }
 
-    function settleFunding() external {
+    function settleFunding() override external {
         for (uint i = 0; i < amms.length; i++) {
             amms[i].settleFunding();
         }
@@ -138,6 +154,10 @@ contract ClearingHouse is IClearingHouse, VanillaGovernable, ERC2771ContextUpgra
         updatePositions(trader);
         _liquidateTaker(trader);
     }
+
+    /* ********************* */
+    /* Liquidations Internal */
+    /* ********************* */
 
     function _liquidateMaker(address maker) internal {
         require(
@@ -209,7 +229,9 @@ contract ClearingHouse is IClearingHouse, VanillaGovernable, ERC2771ContextUpgra
         }
     }
 
-    // View
+    /* ****************** */
+    /*        View        */
+    /* ****************** */
 
     function isAboveMaintenanceMargin(address trader) override external view returns(bool) {
         return getMarginFraction(trader) >= maintenanceMargin;
@@ -276,7 +298,13 @@ contract ClearingHouse is IClearingHouse, VanillaGovernable, ERC2771ContextUpgra
         return amms.length;
     }
 
-    // Internal View
+    function getAMMs() external view returns (IAMM[] memory) {
+        return amms;
+    }
+
+    /* ****************** */
+    /*   Internal View    */
+    /* ****************** */
 
     function _calculateTradeFee(uint quoteAsset) internal view returns (uint) {
         return quoteAsset * tradeFee / PRECISION;
@@ -295,7 +323,9 @@ contract ClearingHouse is IClearingHouse, VanillaGovernable, ERC2771ContextUpgra
         return block.timestamp;
     }
 
-    // Pure
+    /* ****************** */
+    /*        Pure        */
+    /* ****************** */
 
     function _getMarginFraction(int256 accountValue, uint notionalPosition) private pure returns(int256) {
         if (notionalPosition == 0) {
@@ -304,7 +334,9 @@ contract ClearingHouse is IClearingHouse, VanillaGovernable, ERC2771ContextUpgra
         return accountValue * PRECISION.toInt256() / notionalPosition.toInt256();
     }
 
-    // Governance
+    /* ****************** */
+    /*     Governance     */
+    /* ****************** */
 
     function whitelistAmm(address _amm) external onlyGovernance {
         emit MarketAdded(amms.length, _amm);

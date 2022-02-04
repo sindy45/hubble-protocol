@@ -1,5 +1,5 @@
-const { expect } = require('chai');
 const utils = require('./utils')
+const { expect } = require('chai');
 
 const {
     constants: { _1e6, _1e18, ZERO },
@@ -17,7 +17,7 @@ describe('Position Tests', async function() {
         signers = await ethers.getSigners()
         ;([ alice ] = signers.map(s => s.address))
 
-        contracts = await setupContracts(TRADE_FEE)
+        contracts = await setupContracts({ tradeFee: TRADE_FEE })
         ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, swap, hubbleViewer } = contracts)
 
         // add margin
@@ -540,10 +540,10 @@ describe('Position Tests', async function() {
             const secondAmm = await utils.setupAmm(
                 alice,
                 [ registry.address, avax.address, 'AVAX-Perp' ],
-                65, // initialRate => avax = $65
-                10000, // initialLiquidity = 10k avax
-                false,
-                1 // amm index
+                {
+                    initialRate: 65,
+                    initialLiquidity: 1e4
+                }
             )
             const markets = await hubbleViewer.markets()
             expect(markets[0].amm).to.eq(amm.address)

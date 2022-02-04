@@ -13,7 +13,7 @@ npm run vyper-compile
 
 ### Compile
 ```
-npm run compile
+npm run vyper-compile && npm run compile
 ```
 
 ### Tests

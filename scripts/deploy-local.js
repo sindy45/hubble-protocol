@@ -1,23 +1,26 @@
-const { BigNumber } = require('ethers')
 const utils = require('../test/utils')
 
-const { constants: { _1e6, _1e18 } } = utils
+const {
+    constants: { _1e6, _1e18 },
+    BigNumber,
+    setupContracts,
+    setupRestrictedTestToken,
+    generateConfig
+} = utils
 const _1e8 = BigNumber.from(10).pow(8)
-const DEFAULT_TRADE_FEE = 0.0005 * 1e6 /* 0.05% */
 
 /**
  * After deployment
  * maker1 - signers[9]
  * maker2 - signers[8]
  * governance - signers[0]
- * signers[1], signers[2]  have vUSD and avax
+ * signers[1], signers[2] have 1000 vUSD and 200 avax each
  */
 
 async function main() {
     signers = await ethers.getSigners()
-    alice = signers[0].address
 
-    const { marginAccount, clearingHouse, vusd, usdc, oracle, hubbleViewer, insuranceFund } = await utils.setupContracts(DEFAULT_TRADE_FEE, { restrictedVUSD: false })
+    await setupContracts()
 
     // provide some vusd to signers[1], signers[2]
     const initialVusdAmount = _1e6.mul(1000)
@@ -25,17 +28,16 @@ async function main() {
     await addVUSDWithReserve(signers[2], initialVusdAmount)
 
     // whitelist avax as collateral
-    const ERC20Mintable = await ethers.getContractFactory('ERC20Mintable')
-    const avax = await ERC20Mintable.deploy('Avalanche', 'AVAX', 8)
+    const avax = await setupRestrictedTestToken('Avalanche', 'AVAX', 8)
     await oracle.setStablePrice(avax.address, 100e8) // $100
     await marginAccount.whitelistCollateral(avax.address, 8e5) // weight = 0.8e6
     await avax.mint(signers[1].address, _1e8.mul(200)) // 200 avax
     await avax.mint(signers[2].address, _1e8.mul(200)) // 200 avax
 
     // setup another market
-    const btc = await ERC20Mintable.deploy('Bitcoin', 'BTC', 8)
+    const btc = await setupRestrictedTestToken('Bitcoin', 'BTC', 8)
     await utils.setupAmm(
-        alice,
+        governance,
         [ registry.address, btc.address, 'BTC-Perp' ],
         50000, // initialRate => btc = $50000
         25, // initialLiquidity = 25 btc
@@ -48,16 +50,7 @@ async function main() {
     await clearingHouse.connect(signers[8]).addLiquidity(0, _1e18.mul(500), 0)
     await clearingHouse.connect(signers[8]).addLiquidity(1, _1e18.mul(10), 0)
 
-    const contracts = {
-        marginAccount: marginAccount.address,
-        clearingHouse: clearingHouse.address,
-        hubbleViewer: hubbleViewer.address,
-        insuranceFund: insuranceFund.address,
-        vusd: vusd.address,
-        avax: avax.address,
-        oracle: oracle.address
-    }
-    console.log(contracts)
+    console.log(await generateConfig(hubbleViewer.address))
 
     async function addVUSDWithReserve(trader, amount) {
         await usdc.mint(trader.address, amount)

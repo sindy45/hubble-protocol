@@ -161,7 +161,7 @@ contract Oracle is Governable {
         requireNonEmptyAddress(underlying);
         requireNonEmptyAddress(aggregator);
         chainLinkAggregatorMap[underlying] = aggregator;
-        AggregatorV3Interface(chainLinkAggregatorMap[underlying]).latestRoundData(); // sanity check
+        // AggregatorV3Interface(chainLinkAggregatorMap[underlying]).latestRoundData(); // sanity check
     }
 
     function setStablePrice(address underlying, int256 price) external onlyGovernance {

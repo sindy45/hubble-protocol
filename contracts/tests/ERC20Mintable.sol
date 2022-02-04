@@ -41,7 +41,7 @@ contract RestrictedErc20 is ERC20Mintable {
         super._beforeTokenTransfer(from, to, amount);
         require(
             transfersAllowed ||
-            hasRole(MINTER_ROLE, _msgSender()) ||
+            from == address(0) || // mints are allowed, ACLed on MINTER_ROLE or internal _mint
             hasRole(TRANSFER_ROLE, from) ||
             hasRole(TRANSFER_ROLE, to),
             "HubbleErc20.transfersDisabled"
@@ -69,10 +69,10 @@ contract RestrictedVusd is VUSD {
         super._beforeTokenTransfer(from, to, amount);
         require(
             transfersAllowed ||
-            hasRole(MINTER_ROLE, _msgSender()) ||
+            from == address(0) || // mints are allowed, ACLed on MINTER_ROLE or internal _mint
             hasRole(TRANSFER_ROLE, from) ||
             hasRole(TRANSFER_ROLE, to),
-            "HubbleErc20.transfersDisabled"
+            "RestrictedVusd.transfersDisabled"
         );
     }
 }
