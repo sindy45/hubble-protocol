@@ -27,6 +27,8 @@ contract VUSD is VanillaGovernable, ERC20PresetMinterPauserUpgradeable {
     /// @dev Constrained by block gas limit
     uint public maxWithdrawalProcesses;
 
+    uint256[49] private __gap;
+
     constructor(address _reserveToken) {
         require(_reserveToken != address(0), "vUSD: null _reserveToken");
         reserveToken = IERC20(_reserveToken);

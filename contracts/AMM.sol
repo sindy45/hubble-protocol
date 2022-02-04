@@ -33,10 +33,12 @@ contract AMM is IAMM, Governable, Pausable {
     int256 public fundingRate;
     int256 public cumulativePremiumFraction;
     int256 public cumulativePremiumPerDtoken;
+    int256 public posAccumulator;
 
     uint256 public longOpenInterestNotional;
     uint256 public shortOpenInterestNotional;
 
+    enum Side { LONG, SHORT }
     struct Position {
         int256 size;
         uint256 openNotional;
@@ -63,9 +65,7 @@ contract AMM is IAMM, Governable, Pausable {
     }
     ReserveSnapshot[] public reserveSnapshots;
 
-    int256 posAccumulator;
-
-    enum Side { LONG, SHORT }
+    uint256[49] private __gap;
 
     // Events
 

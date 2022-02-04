@@ -9,6 +9,7 @@ const {
     generateConfig,
     sleep
 } = utils
+const gasLimit = 6e6
 
 async function main() {
     signers = await ethers.getSigners()
@@ -22,7 +23,7 @@ async function main() {
     nonce = await signers[0].getTransactionCount()
 
     // 1. All the main contracts
-    await setupContracts({ governance, nonce, setupAMM: false })
+    await setupContracts({ governance, nonce, setupAMM: false, testOracle: false })
     console.log({ vammImpl: vammImpl.address })
 
     // 2. Collaterals
@@ -33,15 +34,15 @@ async function main() {
 
     console.log('setting aggregators...')
     await Promise.all([
-        oracle.setAggregator(avax.address, '0x5498BB86BC934c8D34FDA08E81D444153d0D06aD', { nonce: nonce++ }), // AVAX / USD Feed
-        oracle.setAggregator(weth.address, '0x86d67c3D38D2bCeE722E601025C25a575021c6EA', { nonce: nonce++ }), // ETH / USD Feed
-        oracle.setAggregator(btc.address, '0x31CF013A08c6Ac228C94551d535d5BAfE19c602a', { nonce: nonce++ }), // BTC / USD Feed
+        oracle.setAggregator(avax.address, '0x5498BB86BC934c8D34FDA08E81D444153d0D06aD', { nonce: nonce++, gasLimit }), // AVAX / USD Feed
+        oracle.setAggregator(weth.address, '0x86d67c3D38D2bCeE722E601025C25a575021c6EA', { nonce: nonce++, gasLimit }), // ETH / USD Feed
+        oracle.setAggregator(btc.address, '0x31CF013A08c6Ac228C94551d535d5BAfE19c602a', { nonce: nonce++, gasLimit }), // BTC / USD Feed
     ])
 
     console.log('whitelistCollateral...')
-    await marginAccount.whitelistCollateral(avax.address, 8e5, { nonce: nonce++ }) // weight = 0.8e6
-    await marginAccount.whitelistCollateral(weth.address, 8e5, { nonce: nonce++ })
-    await marginAccount.whitelistCollateral(btc.address, 8e5, { nonce: nonce++ })
+    await marginAccount.whitelistCollateral(avax.address, 8e5, { nonce: nonce++, gasLimit }) // weight = 0.8e6
+    await marginAccount.whitelistCollateral(weth.address, 8e5, { nonce: nonce++, gasLimit })
+    await marginAccount.whitelistCollateral(btc.address, 8e5, { nonce: nonce++, gasLimit })
 
     console.log('setup AMMs...')
     // 3. AMMs
@@ -77,7 +78,7 @@ async function main() {
     console.log('setting up faucet...')
     faucet = '0x40ac7FaFeBc2D746E6679b8Da77F1bD9a5F1484f'
     const Executor = await ethers.getContractFactory('Executor')
-    executor = await Executor.deploy({ nonce: nonce++ })
+    executor = await Executor.deploy({ nonce: nonce++, gasLimit })
     console.log({ executor: executor.address })
 
     // mint test tokens to faucet
@@ -91,19 +92,19 @@ async function main() {
     const DEFAULT_ADMIN_ROLE = '0x' + '0'.repeat(64)
     const TRANSFER_ROLE = ethers.utils.id('TRANSFER_ROLE')
     await Promise.all([
-        executor.grantRole(DEFAULT_ADMIN_ROLE, faucet, { nonce: nonce++ }),
-        vusd.grantRole(TRANSFER_ROLE, executor.address, { nonce: nonce++ }),
-        avax.grantRole(TRANSFER_ROLE, executor.address, { nonce: nonce++ }),
-        weth.grantRole(TRANSFER_ROLE, executor.address, { nonce: nonce++ }),
-        btc.grantRole(TRANSFER_ROLE, executor.address, { nonce: nonce++ }),
-        vusd.mint(executor.address, airdropAmounts.vusd.mul(users), { nonce: nonce++ }),
-        avax.mint(executor.address, airdropAmounts.avax.mul(users), { nonce: nonce++ }),
-        weth.mint(executor.address, airdropAmounts.weth.mul(users), { nonce: nonce++ }),
-        btc.mint(executor.address, airdropAmounts.btc.mul(users), { nonce: nonce++ }),
+        executor.grantRole(DEFAULT_ADMIN_ROLE, faucet, { nonce: nonce++, gasLimit }),
+        vusd.grantRole(TRANSFER_ROLE, executor.address, { nonce: nonce++, gasLimit }),
+        avax.grantRole(TRANSFER_ROLE, executor.address, { nonce: nonce++, gasLimit }),
+        weth.grantRole(TRANSFER_ROLE, executor.address, { nonce: nonce++, gasLimit }),
+        btc.grantRole(TRANSFER_ROLE, executor.address, { nonce: nonce++, gasLimit }),
+        vusd.mint(executor.address, airdropAmounts.vusd.mul(users), { nonce: nonce++, gasLimit }),
+        avax.mint(executor.address, airdropAmounts.avax.mul(users), { nonce: nonce++, gasLimit }),
+        weth.mint(executor.address, airdropAmounts.weth.mul(users), { nonce: nonce++, gasLimit }),
+        btc.mint(executor.address, airdropAmounts.btc.mul(users), { nonce: nonce++, gasLimit }),
     ])
 
     // await testFaucet(signers[1].address)
-    console.log('sleeping for 5...')
+    console.log('sleeping for 5s...')
     await sleep(5)
     console.log(await generateConfig(hubbleViewer.address))
 }

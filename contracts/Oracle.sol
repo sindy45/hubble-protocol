@@ -15,6 +15,8 @@ contract Oracle is Governable {
     mapping(address => address) public chainLinkAggregatorMap;
     mapping(address => int256) public stablePrice;
 
+    uint256[49] private __gap;
+
     function initialize(address _governance) external initializer {
         _setGovernace(_governance);
     }

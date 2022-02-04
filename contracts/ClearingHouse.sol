@@ -25,6 +25,8 @@ contract ClearingHouse is IClearingHouse, VanillaGovernable, ERC2771ContextUpgra
     IMarginAccount public marginAccount;
     IAMM[] override public amms;
 
+    uint256[49] private __gap;
+
     event PositionModified(address indexed trader, uint indexed idx, int256 baseAsset, uint quoteAsset, uint256 timestamp);
     event PositionLiquidated(address indexed trader, uint indexed idx, int256 baseAsset, uint256 quoteAsset, uint256 timestamp);
     event MarketAdded(uint indexed idx, address indexed amm);
