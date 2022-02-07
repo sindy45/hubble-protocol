@@ -3,13 +3,12 @@
 pragma solidity 0.8.9;
 
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
-import { Pausable } from "@openzeppelin/contracts/security/Pausable.sol";
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 import { Governable } from "./Governable.sol";
 import { ERC20Detailed, IOracle, IRegistry, IVAMM, IAMM } from "./Interfaces.sol";
 
-contract AMM is IAMM, Governable, Pausable {
+contract AMM is IAMM, Governable {
     using SafeCast for uint256;
     using SafeCast for int256;
 
@@ -65,6 +64,12 @@ contract AMM is IAMM, Governable, Pausable {
     }
     ReserveSnapshot[] public reserveSnapshots;
 
+    /**
+    * @dev We do not deliberately have a Pause state. There is only a master-level pause at clearingHouse level
+    */
+    enum AMMState { Inactive, Ignition, Active }
+    AMMState public ammState;
+
     uint256[49] private __gap;
 
     // Events
@@ -99,9 +104,9 @@ contract AMM is IAMM, Governable, Pausable {
         vamm = IVAMM(_vamm);
         underlyingAsset = _underlyingAsset;
         name = _name;
+        fundingBufferPeriod = 15 minutes;
 
         syncDeps(_registry);
-        _pause(); // not open for trading as yet
     }
 
     /**
@@ -110,10 +115,10 @@ contract AMM is IAMM, Governable, Pausable {
     function openPosition(address trader, int256 baseAssetQuantity, uint quoteAssetLimit)
         override
         external
-        whenNotPaused
         onlyClearingHouse
         returns (int realizedPnl, uint quoteAsset, bool isPositionIncreased)
     {
+        require(ammState == AMMState.Active, "AMM.openPosition.not_active");
         Position memory position = positions[trader];
         bool isNewPosition = position.size == 0 ? true : false;
         Side side = baseAssetQuantity > 0 ? Side.LONG : Side.SHORT;
@@ -130,10 +135,10 @@ contract AMM is IAMM, Governable, Pausable {
     function liquidatePosition(address trader)
         override
         external
-        whenNotPaused
         onlyClearingHouse
         returns (int realizedPnl, uint quoteAsset)
     {
+        // don't need an ammState check because there should be no active positions
         Position memory position = positions[trader];
         bool isLongPosition = position.size > 0 ? true : false;
         // sending market orders can fk the trader. @todo put some safe guards around price of liquidations
@@ -148,10 +153,10 @@ contract AMM is IAMM, Governable, Pausable {
     function updatePosition(address trader)
         override
         external
-        whenNotPaused
         onlyClearingHouse
         returns(int256 fundingPayment)
     {
+        if (ammState != AMMState.Active) return 0;
         (
             int256 takerFundingPayment,
             int256 makerFundingPayment,
@@ -178,9 +183,9 @@ contract AMM is IAMM, Governable, Pausable {
     function addLiquidity(address maker, uint baseAssetQuantity, uint minDToken)
         override
         external
-        whenNotPaused
         onlyClearingHouse
     {
+        require(ammState != AMMState.Inactive, "AMM.addLiquidity.amm_inactive");
         uint quoteAsset;
         uint baseAssetBal = vamm.balances(1);
         if (baseAssetBal == 0) {
@@ -207,7 +212,6 @@ contract AMM is IAMM, Governable, Pausable {
     function removeLiquidity(address maker, uint amount, uint minQuote, uint minBase)
         override
         external
-        whenNotPaused
         onlyClearingHouse
         returns (int256 /* realizedPnl */, uint /* quoteAsset */)
     {
@@ -341,9 +345,9 @@ contract AMM is IAMM, Governable, Pausable {
     function settleFunding()
         override
         external
-        whenNotPaused
         onlyClearingHouse
     {
+        if (ammState != AMMState.Active) return;
         require(_blockTimestamp() >= nextFundingTime, "settle funding too early");
 
         // premium = twapMarketPrice - twapIndexPrice
@@ -664,7 +668,7 @@ contract AMM is IAMM, Governable, Pausable {
         returns (uint256)
     {
         uint256 snapshotIndex = reserveSnapshots.length - 1;
-        uint256 currentPrice = getPriceWithSpecificSnapshot(snapshotIndex);
+        uint256 currentPrice = _getPriceWithSpecificSnapshot(snapshotIndex);
         if (_intervalInSeconds == 0) {
             return currentPrice;
         }
@@ -688,7 +692,7 @@ contract AMM is IAMM, Governable, Pausable {
 
             snapshotIndex = snapshotIndex - 1;
             currentSnapshot = reserveSnapshots[snapshotIndex];
-            currentPrice = getPriceWithSpecificSnapshot(snapshotIndex);
+            currentPrice = _getPriceWithSpecificSnapshot(snapshotIndex);
 
             // check if current round timestamp is earlier than target timestamp
             if (currentSnapshot.timestamp <= baseTimestamp) {
@@ -708,7 +712,7 @@ contract AMM is IAMM, Governable, Pausable {
         return weightedPrice / _intervalInSeconds;
     }
 
-    function getPriceWithSpecificSnapshot(uint256 _snapshotIndex)
+    function _getPriceWithSpecificSnapshot(uint256 _snapshotIndex)
         internal
         view
         returns (uint256)
@@ -733,12 +737,10 @@ contract AMM is IAMM, Governable, Pausable {
 
     // Governance
 
-    function togglePause(bool pause_) external onlyGovernance {
-        if (pause_ == paused()) return;
-        if (pause_) {
-            _pause();
-        } else {
-            _unpause();
+    function setAmmState(AMMState _state) external onlyGovernance {
+        require(ammState != _state, "AMM.setAmmState.sameState");
+        ammState = _state;
+        if (_state == AMMState.Active) {
             nextFundingTime = ((_blockTimestamp() + fundingPeriod) / 1 hours) * 1 hours;
         }
     }

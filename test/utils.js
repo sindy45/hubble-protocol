@@ -160,12 +160,12 @@ async function setupUpgradeableProxy(contract, admin, initArgs, deployArgs = [])
 }
 
 async function setupAmm(governance, args, options) {
-    const { initialRate, initialLiquidity, fee, pause } = Object.assign(
+    const { initialRate, initialLiquidity, fee, ammState } = Object.assign(
         {
             initialRate: 1000, // for ETH perp
             initialLiquidity: 1000, // 1000 eth
             fee: 10000000, // 0.1%
-            pause: false,
+            ammState: 2, // Active
         },
         options
     )
@@ -195,8 +195,8 @@ async function setupAmm(governance, args, options) {
         { nonce: nonce ? nonce++ : undefined, gasLimit }
     )
     const amm = await ethers.getContractAt('AMM', ammProxy.address)
-    if (!pause) {
-        await amm.togglePause(pause, { nonce: nonce ? nonce++ : undefined, gasLimit })
+    if (ammState) {
+        await amm.setAmmState(ammState, { nonce: nonce ? nonce++ : undefined, gasLimit })
     }
     await vamm.setAMM(amm.address, { nonce: nonce ? nonce++ : undefined, gasLimit })
 
@@ -204,11 +204,15 @@ async function setupAmm(governance, args, options) {
     await clearingHouse.whitelistAmm(amm.address, { nonce: nonce ? nonce++ : undefined, gasLimit })
 
     if (initialLiquidity) {
-        maker = (await ethers.getSigners())[9]
-        await addMargin(maker, _1e6.mul(initialLiquidity * initialRate * 2))
-        await clearingHouse.connect(maker).addLiquidity(index, _1e18.mul(initialLiquidity), 0)
+        await addLiquidity(index, initialLiquidity, initialRate)
     }
     return { amm, vamm }
+}
+
+async function addLiquidity(index, initialLiquidity, rate) {
+    maker = (await ethers.getSigners())[9]
+    await addMargin(maker, _1e6.mul(initialLiquidity * rate * 2))
+    await clearingHouse.connect(maker).addLiquidity(index, _1e18.mul(initialLiquidity), 0)
 }
 
 async function setupRestrictedTestToken(name, symbol, decimals) {
@@ -418,7 +422,7 @@ async function generateConfig(hubbleViewerAddress) {
 
     // to find the genesis block, we will get the block in which the first amm was whitelisted
     const marketAddedEvents = await clearingHouse.queryFilter('MarketAdded')
-    return util.inspect({
+    return {
         genesisBlock: marketAddedEvents[0].blockNumber,
         contracts: {
             ClearingHouse: clearingHouse.address,
@@ -434,7 +438,7 @@ async function generateConfig(hubbleViewerAddress) {
                 numCollateral: collateral.length
             }
         }
-    }, { depth: null })
+    }
 }
 
 function sleep(s) {
@@ -461,5 +465,6 @@ module.exports = {
     parseRawEvent,
     assertBounds,
     generateConfig,
-    sleep
+    sleep,
+    addLiquidity
 }

@@ -1,8 +1,17 @@
 const { expect } = require('chai');
-const { constants: { _1e6, _1e12, _1e18, ZERO }, filterEvent, setupContracts, addMargin } = require('../utils')
+
+const utils = require('../utils')
+const {
+    constants: { _1e6, _1e12, _1e18, ZERO },
+    filterEvent,
+    setupContracts,
+    addMargin,
+    addLiquidity,
+} = utils
+
 const TRADE_FEE = 0.000567 * _1e6
 
-describe('AMM Tests', function() {
+describe('amm unit Tests', function() {
     beforeEach('contract factories', async function() {
         signers = await ethers.getSigners()
         alice = signers[0].address
@@ -155,7 +164,7 @@ describe('AMM Tests', function() {
     })
 })
 
-describe('TWAP Price', function() {
+describe('Twap Price Tests', function() {
     /*
         Test data
         quoteAssetBalance | baseAssetBalance | spot price (scaled by 6 demicals) | timestamp
@@ -229,7 +238,7 @@ describe('TWAP Price', function() {
         expect(parseInt(twap.toNumber() / 1e6)).to.eq(1008)
     })
 
-    it('the timestamp of latest snapshot is now, the latest snapshot wont have any effect', async () => {
+    it('the timestamp of latest snapshot=now, the latest snapshot wont have any effect', async () => {
         // price is 990 but time weighted is zero
         await clearingHouse.openPosition(0, baseAssetQuantity.mul(-1), ZERO)
 
@@ -259,6 +268,119 @@ describe('TWAP Price', function() {
     it('price with interval 0 should be the same as spot price', async () => {
         expect(await amm.getTwapPrice(0)).to.eq(await amm.getSpotPrice())
     })
+})
+
+describe('amm states', async function() {
+    before(async function() {
+        signers = await ethers.getSigners()
+        ;([ alice ] = signers.map(s => s.address))
+
+        contracts = await setupContracts({ amm: { initialLiquidity: 0, ammState: 0 }})
+        ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, swap, hubbleViewer } = contracts)
+
+        // add margin
+        margin = _1e6.mul(2000)
+        await addMargin(signers[0], margin)
+    })
+
+    it('addLiquidity fails when ammState=InActive', async () => {
+        await expect(
+            addLiquidity(0, 1000, 1000)
+        ).to.be.revertedWith('AMM.addLiquidity.amm_inactive')
+    })
+
+    it('openPosition fails when ammState=InActive', async () => {
+        await expect(
+            clearingHouse.openPosition(0, -1, 0)
+        ).to.be.revertedWith('AMM.openPosition.not_active')
+    })
+
+    it('set ammState to Ignition', async () => {
+        await amm.setAmmState(1)
+    })
+
+    it('addLiquidity works when ammState=Ignition', async () => {
+        await clearingHouse.connect(maker).addLiquidity(0, _1e18.mul(100), 0)
+    })
+
+    it('openPosition fails when ammState=Ignition', async () => {
+        await expect(
+            clearingHouse.openPosition(0, -1, 0)
+        ).to.be.revertedWith('AMM.openPosition.not_active')
+    })
+
+    it('set ammState=Active', async () => {
+        await amm.setAmmState(2)
+    })
+
+    it('addLiquidity works when ammState=Ignition', async () => {
+        await clearingHouse.connect(maker).addLiquidity(0, _1e18, 0)
+    })
+
+    it('openPosition works when ammState=Active', async () => {
+        await clearingHouse.openPosition(0, -10000, 0)
+    })
+
+    it('add 2nd amm', async () => {
+        avax = await utils.setupRestrictedTestToken('avax', 'avax', 6)
+        ;({ amm: avaxAmm } = await utils.setupAmm(
+            alice,
+            [ registry.address, avax.address, 'AVAX-Perp' ],
+            {
+                initialRate: 65,
+                initialLiquidity: 0,
+                ammState: 0 // Inactive
+            }
+        ))
+        const markets = await hubbleViewer.markets()
+        expect(markets[0].amm).to.eq(amm.address)
+        expect(markets[0].underlying).to.eq(weth.address)
+        expect(markets[1].amm).to.eq(avaxAmm.address)
+        expect(markets[1].underlying).to.eq(avax.address)
+    })
+
+    it('other amms will work as usual when 1 amm is inactive', async () => {
+        await oracle.setUnderlyingTwapPrice(weth.address, _1e6.mul(900))
+        await utils.gotoNextFundingTime(amm)
+
+        await ops()
+
+        expect((await amm.cumulativePremiumFraction()).gt(0)).to.be.true
+        expect(await avaxAmm.cumulativePremiumFraction()).to.eq(0)
+    })
+
+    it('other amms will work as usual when 1 amm is in ignition', async () => {
+        await avaxAmm.setAmmState(1)
+        await utils.gotoNextFundingTime(amm)
+        await ops()
+    })
+
+    it('other amms will work as usual when last amm is made active', async () => {
+        await avaxAmm.setAmmState(2)
+        await utils.gotoNextFundingTime(avaxAmm)
+
+        // reverts because underlying twap hasnt been set
+        await expect(
+            clearingHouse.settleFunding()
+        ).to.be.revertedWith('underlying twap price has not been set as yet')
+        await oracle.setUnderlyingTwapPrice(avax.address, _1e6.mul(100))
+
+        // reverts because reserveSnapshots.length == 0
+        await expect(
+            clearingHouse.settleFunding()
+        ).to.reverted
+        await utils.addLiquidity(1, 1e4, 65)
+
+        await ops()
+    })
+
+    async function ops() {
+        return Promise.all([
+            clearingHouse.settleFunding(),
+            clearingHouse.updatePositions(alice),
+            clearingHouse.openPosition(0, -10000, 0)
+        ])
+    }
 })
 
 async function increaseEvmTime(timeInSeconds) {
