@@ -19,7 +19,7 @@ describe('Funding Tests', function() {
     describe('single trader', async function() {
         beforeEach(async function() {
             contracts = await setupContracts()
-            ;({ swap, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, oracle, weth } = contracts)
+            ;({ swap, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, oracle, weth, hubbleViewer } = contracts)
 
             // add margin
             margin = _1e6.mul(2000)
@@ -61,6 +61,11 @@ describe('Funding Tests', function() {
                 openNotional: quoteAsset,
                 margin: remainingMargin
             })
+
+            const { totalCollateral, freeMargin } = await hubbleViewer.getAccountInfo(alice)
+            const minAllowableMargin = await clearingHouse.minAllowableMargin()
+            expect(totalCollateral).to.eq(remainingMargin)
+            expect(freeMargin).to.eq(remainingMargin.add(unrealizedPnl).sub(notionalPosition.mul(minAllowableMargin).div(_1e6)))
         })
 
         it('alice shorts and pays -ve funding', async () => {
@@ -125,6 +130,11 @@ describe('Funding Tests', function() {
                 openNotional: quoteAsset,
                 margin: remainingMargin
             })
+
+            const { totalCollateral, freeMargin } = await hubbleViewer.getAccountInfo(alice)
+            const minAllowableMargin = await clearingHouse.minAllowableMargin()
+            expect(totalCollateral).to.eq(remainingMargin)
+            expect(freeMargin).to.eq(remainingMargin.add(unrealizedPnl).sub(notionalPosition.mul(minAllowableMargin).div(_1e6)))
         })
 
         it('alice longs and receives -ve funding', async () => {

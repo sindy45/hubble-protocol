@@ -35,6 +35,7 @@ interface IClearingHouse {
     function getAmmsLength() external view returns(uint);
     function amms(uint idx) external view returns(IAMM);
     function maintenanceMargin() external view returns(int256);
+    function minAllowableMargin() external view returns(int256);
     function tradeFee() external view returns(uint256);
     function liquidationPenalty() external view returns(uint256);
     function getNotionalPositionAndMargin(address trader, bool includeFundingPayments)
@@ -94,6 +95,7 @@ interface IMarginAccount {
     function addMarginFor(uint idx, uint amount, address to) external;
     function removeMargin(uint idx, uint256 amount) external;
     function getSpotCollateralValue(address trader) external view returns(int256 spot);
+    function weightedAndSpotCollateral(address trader) external view returns(int256, int256);
     function getNormalizedMargin(address trader) external view returns(int256);
     function realizePnL(address trader, int256 realizedPnl) external;
     function isLiquidatable(address trader, bool includeFunding) external view returns(bool, uint, uint);

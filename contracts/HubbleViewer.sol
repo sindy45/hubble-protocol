@@ -9,7 +9,9 @@ contract HubbleViewer is IHubbleViewer {
     using SafeCast for uint256;
     using SafeCast for int256;
 
-    uint256 constant PRECISION = 1e6;
+    int256 constant PRECISION_INT = 1e6;
+    uint256 constant PRECISION_UINT = 1e6;
+
     uint constant VUSD_IDX = 0;
 
     IClearingHouse public immutable clearingHouse;
@@ -420,6 +422,24 @@ contract HubbleViewer is IHubbleViewer {
         return _margin;
     }
 
+    /**
+    * @notice get user account information
+    */
+    function getAccountInfo(address trader) external view returns (
+        int totalCollateral,
+        int256 freeMargin,
+        int256 marginFraction,
+        uint notionalPosition,
+        int256 unrealizedPnl
+    ) {
+        int256 margin;
+        (margin, totalCollateral) = marginAccount.weightedAndSpotCollateral(trader);
+        marginFraction = clearingHouse.getMarginFraction(trader);
+        (notionalPosition, unrealizedPnl) = clearingHouse.getTotalNotionalPositionAndUnrealizedPnl(trader);
+        int256 minAllowableMargin = clearingHouse.minAllowableMargin();
+        freeMargin = margin + unrealizedPnl - clearingHouse.getTotalFunding(trader) - notionalPosition.toInt256() * minAllowableMargin / PRECISION_INT;
+    }
+
     // Internal
 
     /**
@@ -471,7 +491,7 @@ contract HubbleViewer is IHubbleViewer {
             totalPosSize += baseAssetQuantity;
         }
 
-        int256 pnlForLiquidation = clearingHouse.maintenanceMargin() * notionalPosition.toInt256() / PRECISION.toInt256() - margin;
+        int256 pnlForLiquidation = clearingHouse.maintenanceMargin() * notionalPosition.toInt256() / PRECISION_INT - margin;
         int256 _liquidationPrice;
         if (totalPosSize > 0) {
             _liquidationPrice = (openNotional.toInt256() + pnlForLiquidation) * 1e18 / totalPosSize;
@@ -486,7 +506,7 @@ contract HubbleViewer is IHubbleViewer {
     }
 
     function _calculateTradeFee(uint quoteAsset) internal view returns (uint) {
-        return quoteAsset * clearingHouse.tradeFee() / PRECISION;
+        return quoteAsset * clearingHouse.tradeFee() / PRECISION_UINT;
     }
 
     // Pure
@@ -495,7 +515,7 @@ contract HubbleViewer is IHubbleViewer {
         if (notionalPosition == 0) {
             return type(int256).max;
         }
-        return accountValue * PRECISION.toInt256() / notionalPosition.toInt256();
+        return accountValue * PRECISION_INT / notionalPosition.toInt256();
     }
 
     function _abs(int x) private pure returns (int) {
