@@ -290,17 +290,22 @@ contract HubbleViewer is IHubbleViewer {
     *   vUSD - current quote asset amount of maker in the pool
     *   totalDeposited - total value of initial liquidity deposited in the pool by maker
     *   dToken - maker dToken balance
+    *   vAssetBalance - base token liquidity in the pool
+    *   vUSDBalance - quote token liquidity in the pool
     */
-    function getMakerLiquidity(address _maker, uint idx) external view returns (uint vAsset, uint vUSD, uint totalDeposited, uint dToken) {
+    function getMakerLiquidity(address _maker, uint idx) external view returns (uint vAsset, uint vUSD, uint totalDeposited, uint dToken, uint vAssetBalance, uint vUSDBalance) {
         IAMM amm = clearingHouse.amms(idx);
         IVAMM vamm = amm.vamm();
         (vUSD,, dToken,,,,) = amm.makers(_maker);
 
         totalDeposited = 2 * vUSD;
         uint totalDTokenSupply = vamm.totalSupply();
+        vUSDBalance = vamm.balances(0);
+        vAssetBalance = vamm.balances(1);
+
         if (totalDTokenSupply > 0) {
-            vUSD = vamm.balances(0) * dToken / totalDTokenSupply;
-            vAsset = vamm.balances(1) * dToken / totalDTokenSupply;
+            vUSD = vUSDBalance * dToken / totalDTokenSupply;
+            vAsset = vAssetBalance * dToken / totalDTokenSupply;
         }
     }
 

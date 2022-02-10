@@ -281,10 +281,14 @@ describe('Maker Tests', async function() {
             const tx = await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* long exactly */, amount /* max_dx */)
             let { quoteAsset } = await getTradeDetails(tx)
 
-            const [{ vAsset, vUSD, totalDeposited, dToken: maker1Liquidity }, vUSDBalance] = await Promise.all([
-                hubbleViewer.getMakerLiquidity(maker1.address, 0),
-                swap.balances(0, {gasLimit: 100000})
-            ])
+            const {
+                vAsset,
+                vUSD,
+                totalDeposited,
+                dToken: maker1Liquidity,
+                vUSDBalance
+            } = await hubbleViewer.getMakerLiquidity(maker1.address, 0)
+
             expect(totalDeposited).to.eq(_1e6.mul(2e6))
             // base balance in pool = 1000 + 500 - 50 = 1450
             expect(vAsset).to.eq(_1e18.mul(1450).mul(maker1Liquidity).div(totalSupply))
