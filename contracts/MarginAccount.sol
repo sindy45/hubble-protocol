@@ -3,6 +3,8 @@
 pragma solidity 0.8.9;
 
 import { ERC2771ContextUpgradeable } from "@openzeppelin/contracts-upgradeable/metatx/ERC2771ContextUpgradeable.sol";
+import { PausableUpgradeable } from "@openzeppelin/contracts-upgradeable/security/PausableUpgradeable.sol";
+import { ContextUpgradeable } from "@openzeppelin/contracts-upgradeable/utils/ContextUpgradeable.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
@@ -23,7 +25,7 @@ import {
 * @title This contract is used for posting margin (collateral), realizing PnL etc.
 * @notice Most notable operations include addMargin, removeMargin and liquidations
 */
-contract MarginAccount is IMarginAccount, VanillaGovernable, ERC2771ContextUpgradeable {
+contract MarginAccount is IMarginAccount, VanillaGovernable, PausableUpgradeable, ERC2771ContextUpgradeable {
     using SafeERC20 for IERC20;
     using SafeCast for uint256;
     using SafeCast for int256;
@@ -140,7 +142,7 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, ERC2771ContextUpgra
     * @param idx Index of the supported collateral
     * @param amount Amount to deposit (scaled same as the asset)
     */
-    function addMargin(uint idx, uint amount) override external {
+    function addMargin(uint idx, uint amount) override external whenNotPaused {
         addMarginFor(idx, amount, _msgSender());
     }
 
@@ -150,7 +152,7 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, ERC2771ContextUpgra
     * @param amount Amount to deposit (scaled same as the asset)
     * @param to Account to post margin for
     */
-    function addMarginFor(uint idx, uint amount, address to) override public {
+    function addMarginFor(uint idx, uint amount, address to) override public whenNotPaused {
         require(amount > 0, "Add non-zero margin");
         // will revert for idx >= supportedCollateral.length
         if (idx == VUSD_IDX) {
@@ -169,7 +171,7 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, ERC2771ContextUpgra
     * @param idx Index of the supported collateral
     * @param amount Amount to withdraw (scaled same as the asset)
     */
-    function removeMargin(uint idx, uint256 amount) override external {
+    function removeMargin(uint idx, uint256 amount) override external whenNotPaused {
         address trader = _msgSender();
 
         // credit funding payments
@@ -293,7 +295,7 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, ERC2771ContextUpgra
     * @param idx Index of the collateral to seize
     * @param minSeizeAmount Min collateral output amount
     */
-    function liquidateExactRepay(address trader, uint repay, uint idx, uint minSeizeAmount) external {
+    function liquidateExactRepay(address trader, uint repay, uint idx, uint minSeizeAmount) external whenNotPaused {
         clearingHouse.updatePositions(trader); // credits/debits funding
         LiquidationBuffer memory buffer = _getLiquidationInfo(trader, idx);
         _liquidateExactRepay(buffer, trader, repay, idx, minSeizeAmount);
@@ -308,7 +310,7 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, ERC2771ContextUpgra
     * @param idx Index of the collateral to seize
     * @param seize Exact collateral amount desired to be seized
     */
-    function liquidateExactSeize(address trader, uint maxRepay, uint idx, uint seize) external {
+    function liquidateExactSeize(address trader, uint maxRepay, uint idx, uint seize) external whenNotPaused {
         clearingHouse.updatePositions(trader); // credits/debits funding
         LiquidationBuffer memory buffer = _getLiquidationInfo(trader, idx);
         _liquidateExactSeize(buffer, trader, maxRepay, idx, seize);
@@ -323,7 +325,7 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, ERC2771ContextUpgra
     * @param maxRepay Max vUSD input amount
     * @param idxs Indices of the collateral to seize
     */
-    function liquidateFlexible(address trader, uint maxRepay, uint[] calldata idxs) external {
+    function liquidateFlexible(address trader, uint maxRepay, uint[] calldata idxs) external whenNotPaused {
         clearingHouse.updatePositions(trader); // credits/debits funding
         uint repayed;
         uint repayAble;
@@ -341,7 +343,7 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, ERC2771ContextUpgra
     *   Since there are no open positions, debit/credit funding payments is not required.
     * @param trader Account for which the bad debt needs to be settled
     */
-    function settleBadDebt(address trader) external {
+    function settleBadDebt(address trader) external whenNotPaused {
         (uint256 notionalPosition,) = clearingHouse.getTotalNotionalPositionAndUnrealizedPnl(trader);
         require(notionalPosition == 0, "Liquidate positions before settling bad debt");
 
@@ -383,7 +385,7 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, ERC2771ContextUpgra
     * @return Debt repayed <= repayble i.e. user's max debt
     * @return User's debt that remains to be repayed
     */
-    function _liquidateFlexible(address trader, uint maxRepay, uint idx) public returns(uint /* repayed */, uint /* repayAble */) {
+    function _liquidateFlexible(address trader, uint maxRepay, uint idx) public whenNotPaused returns(uint /* repayed */, uint /* repayAble */) {
         LiquidationBuffer memory buffer = _getLiquidationInfo(trader, idx);
 
         // Q. Can user's margin cover the entire debt?
@@ -590,6 +592,24 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, ERC2771ContextUpgra
         IERC20(address(vusd)).safeTransfer(recipient, amount);
     }
 
+    function _msgSender()
+        internal
+        view
+        override(ContextUpgradeable, ERC2771ContextUpgradeable)
+        returns (address)
+    {
+        return super._msgSender();
+    }
+
+    function _msgData()
+        internal
+        view
+        override(ContextUpgradeable, ERC2771ContextUpgradeable)
+        returns (bytes memory)
+    {
+        return super._msgData();
+    }
+
     /* ****************** */
     /*     Governance     */
     /* ****************** */
@@ -615,5 +635,13 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, ERC2771ContextUpgra
         require(_weight <= PRECISION, "weight > 1e6");
         require(idx < supportedCollateral.length, "Collateral not supported");
         supportedCollateral[idx].weight = _weight;
+    }
+
+    function pause() external onlyGovernance {
+        _pause();
+    }
+
+    function unpause() external onlyGovernance {
+        _unpause();
     }
 }

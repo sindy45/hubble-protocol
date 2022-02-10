@@ -3,13 +3,15 @@
 pragma solidity 0.8.9;
 
 import { ERC2771ContextUpgradeable } from "@openzeppelin/contracts-upgradeable/metatx/ERC2771ContextUpgradeable.sol";
+import { PausableUpgradeable } from "@openzeppelin/contracts-upgradeable/security/PausableUpgradeable.sol";
+import { ContextUpgradeable } from "@openzeppelin/contracts-upgradeable/utils/ContextUpgradeable.sol";
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 import { VanillaGovernable } from "./Governable.sol";
 import { IAMM, IInsuranceFund, IMarginAccount, IClearingHouse } from "./Interfaces.sol";
 import { VUSD } from "./VUSD.sol";
 
-contract ClearingHouse is IClearingHouse, VanillaGovernable, ERC2771ContextUpgradeable {
+contract ClearingHouse is IClearingHouse, VanillaGovernable, PausableUpgradeable, ERC2771ContextUpgradeable {
     using SafeCast for uint256;
     using SafeCast for int256;
 
@@ -62,11 +64,11 @@ contract ClearingHouse is IClearingHouse, VanillaGovernable, ERC2771ContextUpgra
     * @param baseAssetQuantity Quantity of the base asset to Long (baseAssetQuantity > 0) or Short (baseAssetQuantity < 0)
     * @param quoteAssetLimit Rate at which the trade is executed in the AMM. Used to cap slippage.
     */
-    function openPosition(uint idx, int256 baseAssetQuantity, uint quoteAssetLimit) override external {
+    function openPosition(uint idx, int256 baseAssetQuantity, uint quoteAssetLimit) override external whenNotPaused {
         _openPosition(_msgSender(), idx, baseAssetQuantity, quoteAssetLimit);
     }
 
-    function closePosition(uint idx, uint quoteAssetLimit) override external {
+    function closePosition(uint idx, uint quoteAssetLimit) override external whenNotPaused {
         address trader = _msgSender();
         (int256 size,,) = amms[idx].positions(trader);
         _openPosition(trader, idx, -size, quoteAssetLimit);
@@ -95,7 +97,7 @@ contract ClearingHouse is IClearingHouse, VanillaGovernable, ERC2771ContextUpgra
     *   This means that user is actually adding 2 * baseAssetQuantity * markPrice.
     * @param minDToken Min amount of dTokens to receive. Used to cap slippage.
     */
-    function addLiquidity(uint idx, uint256 baseAssetQuantity, uint minDToken) override external {
+    function addLiquidity(uint idx, uint256 baseAssetQuantity, uint minDToken) override external whenNotPaused {
         address maker = _msgSender();
         updatePositions(maker);
         amms[idx].addLiquidity(maker, baseAssetQuantity, minDToken);
@@ -110,14 +112,14 @@ contract ClearingHouse is IClearingHouse, VanillaGovernable, ERC2771ContextUpgra
     * @param minBaseValue Min amount of base to remove.
     *   Both the above params enable capping slippage in either direction.
     */
-    function removeLiquidity(uint idx, uint256 dToken, uint minQuoteValue, uint minBaseValue) override external {
+    function removeLiquidity(uint idx, uint256 dToken, uint minQuoteValue, uint minBaseValue) override external whenNotPaused {
         address maker = _msgSender();
         updatePositions(maker);
         (int256 realizedPnl,) = amms[idx].removeLiquidity(maker, dToken, minQuoteValue, minBaseValue);
         marginAccount.realizePnL(maker, realizedPnl);
     }
 
-    function updatePositions(address trader) override public {
+    function updatePositions(address trader) override public whenNotPaused {
         require(address(trader) != address(0), 'CH: 0x0 trader Address');
         int256 fundingPayment;
         for (uint i = 0; i < amms.length; i++) {
@@ -127,7 +129,7 @@ contract ClearingHouse is IClearingHouse, VanillaGovernable, ERC2771ContextUpgra
         marginAccount.realizePnL(trader, -fundingPayment);
     }
 
-    function settleFunding() override external {
+    function settleFunding() override external whenNotPaused {
         for (uint i = 0; i < amms.length; i++) {
             amms[i].settleFunding();
         }
@@ -137,7 +139,7 @@ contract ClearingHouse is IClearingHouse, VanillaGovernable, ERC2771ContextUpgra
     /*    Liquidations    */
     /* ****************** */
 
-    function liquidate(address trader) override external {
+    function liquidate(address trader) override external whenNotPaused {
         updatePositions(trader);
         if (isMaker(trader)) {
             _liquidateMaker(trader);
@@ -146,12 +148,12 @@ contract ClearingHouse is IClearingHouse, VanillaGovernable, ERC2771ContextUpgra
         }
     }
 
-    function liquidateMaker(address maker) override public {
+    function liquidateMaker(address maker) override public whenNotPaused {
         updatePositions(maker);
         _liquidateMaker(maker);
     }
 
-    function liquidateTaker(address trader) override public {
+    function liquidateTaker(address trader) override public whenNotPaused {
         require(!isMaker(trader), 'CH: Remove Liquidity First');
         updatePositions(trader);
         _liquidateTaker(trader);
@@ -326,6 +328,24 @@ contract ClearingHouse is IClearingHouse, VanillaGovernable, ERC2771ContextUpgra
         return block.timestamp;
     }
 
+    function _msgSender()
+        internal
+        view
+        override(ContextUpgradeable, ERC2771ContextUpgradeable)
+        returns (address)
+    {
+        return super._msgSender();
+    }
+
+    function _msgData()
+        internal
+        view
+        override(ContextUpgradeable, ERC2771ContextUpgradeable)
+        returns (bytes memory)
+    {
+        return super._msgData();
+    }
+
     /* ****************** */
     /*        Pure        */
     /* ****************** */
@@ -356,5 +376,13 @@ contract ClearingHouse is IClearingHouse, VanillaGovernable, ERC2771ContextUpgra
         liquidationPenalty = _liquidationPenality;
         maintenanceMargin = _maintenanceMargin;
         minAllowableMargin = _minAllowableMargin;
+    }
+
+    function pause() external onlyGovernance {
+        _pause();
+    }
+
+    function unpause() external onlyGovernance {
+        _unpause();
     }
 }

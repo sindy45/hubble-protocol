@@ -34,11 +34,26 @@ describe('Liquidation Tests', async function() {
         wethMargin = _1e18.div(2)
         await weth.mint(alice, wethMargin)
         await weth.approve(marginAccount.address, wethMargin)
+
+        // being lazy, adding a pausability test here
+        await marginAccount.pause()
+        await expect(
+            marginAccount.addMargin(1, wethMargin)
+        ).to.be.revertedWith('Pausable: paused')
+        await marginAccount.unpause()
+
         await marginAccount.addMargin(1, wethMargin)
         expect((await marginAccount.isLiquidatable(alice, true))[0]).to.be.false
     })
 
     it('alice makes a trade', async function() {
+        // being lazy, adding a pausability test here
+        await clearingHouse.pause()
+        await expect(
+            clearingHouse.openPosition(0, _1e18.mul(-5), 0)
+        ).to.be.revertedWith('Pausable: paused')
+        await clearingHouse.unpause()
+
         let tx = await clearingHouse.openPosition(0, _1e18.mul(-5), 0)
         ;({ fee: tradeFee } = await getTradeDetails(tx))
         expect((await marginAccount.isLiquidatable(alice, true))[0]).to.be.false
@@ -60,6 +75,14 @@ describe('Liquidation Tests', async function() {
         ;({ unrealizedPnl, notionalPosition } = await amm.getNotionalPositionAndUnrealizedPnl(alice))
 
         const ifVusdBal = await vusd.balanceOf(insuranceFund.address)
+
+        // being lazy, adding a pausability test here
+        await clearingHouse.pause()
+        await expect(
+            clearingHouse.connect(liquidator1).liquidateTaker(alice)
+        ).to.be.revertedWith('Pausable: paused')
+        await clearingHouse.unpause()
+
         await clearingHouse.connect(liquidator1).liquidateTaker(alice)
 
         const liquidationPenalty = notionalPosition.mul(5e4).div(_1e6)
