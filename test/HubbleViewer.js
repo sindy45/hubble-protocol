@@ -15,6 +15,8 @@ describe('Hubble Viewer', async function() {
 
             contracts = await setupContracts()
             ;({ swap, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, oracle, weth, hubbleViewer } = contracts)
+            const Leaderboard = await ethers.getContractFactory('Leaderboard')
+            leaderboard = await Leaderboard.deploy(hubbleViewer.address)
             await clearingHouse.setParams(
                 1e5 /** maintenance margin */,
                 1e5 /** minimum allowable margin */,
@@ -31,7 +33,7 @@ describe('Hubble Viewer', async function() {
         })
 
         it('leaderboard - takerMargins is 0', async function() {
-            const { makerMargins, takerMargins } = await hubbleViewer.leaderboard([alice])
+            const { makerMargins, takerMargins } = await leaderboard.leaderboard([alice])
             assertBounds(makerMargins[0], _1e6.mul(3999), _1e6.mul(4000))
             expect(takerMargins[0]).to.eq(ZERO)
         })
@@ -51,7 +53,7 @@ describe('Hubble Viewer', async function() {
         })
 
         it('leaderboard', async function() {
-            const { makerMargins, takerMargins } = await hubbleViewer.leaderboard([alice])
+            const { makerMargins, takerMargins } = await leaderboard.leaderboard([alice])
             assertBounds(makerMargins[0], _1e6.mul(3990), _1e6.mul(3995))
             assertBounds(takerMargins[0], _1e6.mul(3974), _1e6.mul(3975))
         })

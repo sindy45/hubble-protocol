@@ -5,6 +5,7 @@ pragma solidity 0.8.9;
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import { VUSD } from "./VUSD.sol";
+import { IMarginAccount } from "./Interfaces.sol";
 
 contract MarginAccountHelper {
     using SafeERC20 for IERC20;
@@ -29,8 +30,4 @@ contract MarginAccountHelper {
         vusd.mintWithReserve(address(this), amount);
         marginAccount.addMarginFor(VUSD_IDX, amount, msg.sender);
     }
-}
-
-interface IMarginAccount {
-    function addMarginFor(uint idx, uint amount, address to) external;
 }

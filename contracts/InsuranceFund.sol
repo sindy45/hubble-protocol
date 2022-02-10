@@ -20,7 +20,7 @@ contract InsuranceFund is VanillaGovernable, ERC20Upgradeable {
     address public marginAccount;
     uint public pendingObligation;
 
-    uint256[49] private __gap;
+    uint256[50] private __gap;
 
     event FundsAdded(address indexed insurer, uint amount, uint timestamp);
     event FundsWithdrawn(address indexed insurer, uint amount, uint timestamp);

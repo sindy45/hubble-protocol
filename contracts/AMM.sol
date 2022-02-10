@@ -70,7 +70,7 @@ contract AMM is IAMM, Governable {
     enum AMMState { Inactive, Ignition, Active }
     AMMState public ammState;
 
-    uint256[49] private __gap;
+    uint256[50] private __gap;
 
     // Events
 

@@ -193,4 +193,6 @@ interface IHubbleViewer {
         external
         view
         returns (int256 position, uint openNotional, int256 unrealizedPnl);
+    function clearingHouse() external returns(IClearingHouse);
+    function marginAccount() external returns(IMarginAccount);
 }

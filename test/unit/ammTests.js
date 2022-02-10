@@ -325,7 +325,7 @@ describe('amm states', async function() {
         avax = await utils.setupRestrictedTestToken('avax', 'avax', 6)
         ;({ amm: avaxAmm } = await utils.setupAmm(
             alice,
-            [ registry.address, avax.address, 'AVAX-Perp' ],
+            [ registry.address, avax.address, 'AVAX-PERP' ],
             {
                 initialRate: 65,
                 initialLiquidity: 0,

@@ -2,7 +2,7 @@ const { expect } = require('chai')
 const fs = require('fs')
 const { BigNumber } = require('ethers')
 const util = require('util')
-const { ethers } = require('hardhat')
+const { ethers, network } = require('hardhat')
 
 const ZERO = BigNumber.from(0)
 const _1e6 = BigNumber.from(10).pow(6)
@@ -132,7 +132,7 @@ async function setupContracts(options = {}) {
         weth = await setupRestrictedTestToken('Hubble Ether', 'hWETH', 18)
         ;({ amm, vamm } = await setupAmm(
             governance,
-            [ registry.address, weth.address, 'ETH-Perp' ],
+            [ registry.address, weth.address, 'ETH-PERP' ],
             options.amm
         ))
         Object.assign(res, { swap: vamm, amm, weth })
@@ -400,12 +400,10 @@ async function generateConfig(hubbleViewerAddress) {
     const amms = []
     for (let i = 0; i < _amms.length; i++) {
         const a = await ethers.getContractAt('AMM', _amms[i])
-        const name = await a.name()
-        const underlying = await a.underlyingAsset()
         amms.push({
-            perp: name.slice(0, name.length-5),
+            perp: await a.name(),
             address: a.address,
-            underlying
+            underlying: await a.underlyingAsset()
         })
     }
     let _collateral = await marginAccount.supportedAssets()
@@ -422,8 +420,10 @@ async function generateConfig(hubbleViewerAddress) {
 
     // to find the genesis block, we will get the block in which the first amm was whitelisted
     const marketAddedEvents = await clearingHouse.queryFilter('MarketAdded')
+    const genesisBlock = marketAddedEvents[0].blockNumber
     return {
-        genesisBlock: marketAddedEvents[0].blockNumber,
+        genesisBlock,
+        timestamp: (await ethers.provider.getBlock(genesisBlock)).timestamp,
         contracts: {
             ClearingHouse: clearingHouse.address,
             HubbleViewer: hubbleViewer.address,
@@ -433,10 +433,10 @@ async function generateConfig(hubbleViewerAddress) {
             Registry: await hubbleViewer.registry(),
             amms,
             collateral,
-            systemParams: {
-                maintenanceMargin: (await clearingHouse.maintenanceMargin()).toString(),
-                numCollateral: collateral.length
-            }
+        },
+        systemParams: {
+            maintenanceMargin: (await clearingHouse.maintenanceMargin()).toString(),
+            numCollateral: collateral.length
         }
     }
 }

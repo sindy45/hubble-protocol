@@ -38,7 +38,7 @@ async function main() {
     const btc = await setupRestrictedTestToken('Bitcoin', 'BTC', 8)
     await utils.setupAmm(
         governance,
-        [ registry.address, btc.address, 'BTC-Perp' ],
+        [ registry.address, btc.address, 'BTC-PERP' ],
         50000, // initialRate => btc = $50000
         25, // initialLiquidity = 25 btc
         false, // isPause

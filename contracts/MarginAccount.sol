@@ -83,7 +83,7 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, ERC2771ContextUpgra
     */
     mapping(uint => mapping(address => int)) override public margin;
 
-    uint256[49] private __gap;
+    uint256[50] private __gap;
 
     /* ****************** */
     /*       Events       */

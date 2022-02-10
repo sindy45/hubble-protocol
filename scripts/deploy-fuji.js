@@ -48,7 +48,7 @@ async function main() {
     // 3. AMMs
     await setupAmm(
         governance,
-        [ registry.address, avax.address, 'AVAX-Perp' ],
+        [ registry.address, avax.address, 'AVAX-PERP' ],
         {
             initialRate: 70,
             initialLiquidity: 0,
@@ -57,7 +57,7 @@ async function main() {
     )
     await setupAmm(
         governance,
-        [ registry.address, weth.address, 'ETH-Perp' ],
+        [ registry.address, weth.address, 'ETH-PERP' ],
         {
             initialRate: 2800,
             initialLiquidity: 0,
@@ -66,7 +66,7 @@ async function main() {
     )
     await setupAmm(
         governance,
-        [ registry.address, btc.address, 'BTC-Perp' ],
+        [ registry.address, btc.address, 'BTC-PERP' ],
         {
             initialRate: 38000,
             initialLiquidity: 0,
