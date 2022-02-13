@@ -539,6 +539,7 @@ describe('Position Tests', async function() {
                 alice,
                 [ registry.address, avax.address, 'AVAX-PERP' ],
                 {
+                    index: 1,
                     initialRate: 65,
                     initialLiquidity: 1e4
                 }

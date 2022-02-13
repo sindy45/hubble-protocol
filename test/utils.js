@@ -13,9 +13,11 @@ const _1e18 = ethers.constants.WeiPerEther
 const DEFAULT_TRADE_FEE = 0.0005 * 1e6 /* 0.05% */
 const gasLimit = 6e6
 
+let txOptions = {}
+
 /**
  * signers global var should have been intialized before the call to this fn
- * @dev { nonce: nonce ? nonce++ : undefined, gasLimit } is a weird quirk that lets us use this script for both local testing and prod deployments
+ * @dev { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit } is a weird quirk that lets us use this script for both local testing and prod deployments
 */
 async function setupContracts(options = {}) {
     options = Object.assign(
@@ -29,7 +31,7 @@ async function setupContracts(options = {}) {
         },
         options
     )
-    ;({ governance, nonce } = options)
+    ;({ governance } = options)
 
     ;([
         MarginAccountHelper,
@@ -50,9 +52,9 @@ async function setupContracts(options = {}) {
     ]))
 
     ;([ proxyAdmin, forwarder, usdc ] = await Promise.all([
-        ProxyAdmin.deploy({ nonce: nonce ? nonce++ : undefined, gasLimit }),
-        MinimalForwarder.deploy({ nonce: nonce ? nonce++ : undefined, gasLimit }),
-        ERC20Mintable.deploy('USD Coin', 'USDC', 6, { nonce: nonce ? nonce++ : undefined, gasLimit }),
+        ProxyAdmin.deploy({ nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit }),
+        MinimalForwarder.deploy({ nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit }),
+        ERC20Mintable.deploy('USD Coin', 'USDC', 6, { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit }),
     ]))
     vusd = await setupUpgradeableProxy(options.restrictedVUSD ? 'RestrictedVusd' : 'VUSD', proxyAdmin.address, [ governance ], [ usdc.address ])
 
@@ -62,20 +64,20 @@ async function setupContracts(options = {}) {
         [ governance, vusd.address ],
         [ forwarder.address ]
     )
-    marginAccountHelper = await MarginAccountHelper.deploy(marginAccount.address, vusd.address, { nonce: nonce ? nonce++ : undefined, gasLimit })
+    marginAccountHelper = await MarginAccountHelper.deploy(marginAccount.address, vusd.address, { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit })
     insuranceFund = await setupUpgradeableProxy('InsuranceFund', proxyAdmin.address, [ governance ])
 
     if (options.restrictedVUSD) {
         const transferRole = await vusd.TRANSFER_ROLE()
         await Promise.all([
-            vusd.grantRole(transferRole, marginAccountHelper.address, { nonce: nonce ? nonce++ : undefined, gasLimit }),
-            vusd.grantRole(transferRole, marginAccount.address, { nonce: nonce ? nonce++ : undefined, gasLimit }),
-            vusd.grantRole(transferRole, insuranceFund.address, { nonce: nonce ? nonce++ : undefined, gasLimit })
+            vusd.grantRole(transferRole, marginAccountHelper.address, { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit }),
+            vusd.grantRole(transferRole, marginAccount.address, { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit }),
+            vusd.grantRole(transferRole, insuranceFund.address, { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit })
         ])
     }
 
     oracle = await setupUpgradeableProxy(options.testOracle ? 'TestOracle' : 'Oracle', proxyAdmin.address, [ governance ])
-    await oracle.setStablePrice(vusd.address, 1e6, { nonce: nonce ? nonce++ : undefined, gasLimit }) // $1
+    await oracle.setStablePrice(vusd.address, 1e6, { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit }) // $1
 
     clearingHouse = await setupUpgradeableProxy(
         'ClearingHouse',
@@ -92,14 +94,17 @@ async function setupContracts(options = {}) {
         ],
         [ forwarder.address ]
     )
-    await vusd.grantRole(await vusd.MINTER_ROLE(), marginAccount.address, { nonce: nonce ? nonce++ : undefined, gasLimit })
-    registry = await Registry.deploy(oracle.address, clearingHouse.address, insuranceFund.address, marginAccount.address, vusd.address, { nonce: nonce ? nonce++ : undefined, gasLimit })
+    await vusd.grantRole(await vusd.MINTER_ROLE(), marginAccount.address, { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit })
+    registry = await Registry.deploy(oracle.address, clearingHouse.address, insuranceFund.address, marginAccount.address, vusd.address, { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit })
     await Promise.all([
-        marginAccount.syncDeps(registry.address, 5e4, { nonce: nonce ? nonce++ : undefined, gasLimit }), // liquidationIncentive = 5% = .05 scaled 6 decimals
-        insuranceFund.syncDeps(registry.address, { nonce: nonce ? nonce++ : undefined, gasLimit })
+        marginAccount.syncDeps(registry.address, 5e4, { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit }), // liquidationIncentive = 5% = .05 scaled 6 decimals
+        insuranceFund.syncDeps(registry.address, { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit })
     ])
     const HubbleViewer = await ethers.getContractFactory('HubbleViewer')
-    hubbleViewer = await HubbleViewer.deploy(clearingHouse.address, marginAccount.address, registry.address, { nonce: nonce ? nonce++ : undefined, gasLimit })
+    hubbleViewer = await HubbleViewer.deploy(clearingHouse.address, marginAccount.address, registry.address, { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit })
+
+    const Leaderboard = await ethers.getContractFactory('Leaderboard')
+    leaderboard = await Leaderboard.deploy(hubbleViewer.address, { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit })
 
     // we will initialize the amm deps so that can be used as  global vars later
     let abiAndBytecode = fs.readFileSync('./contracts/curve-v2/CurveMath.txt').toString().split('\n').filter(Boolean)
@@ -111,11 +116,11 @@ async function setupContracts(options = {}) {
     vammAbiAndBytecode = fs.readFileSync('./contracts/curve-v2/Swap.txt').toString().split('\n').filter(Boolean)
     Swap = new ethers.ContractFactory(JSON.parse(vammAbiAndBytecode[0]), vammAbiAndBytecode[1], signers[0])
     ;([ curveMath, vammImpl, ammImpl ] = await Promise.all([
-        CurveMath.deploy({ nonce: nonce ? nonce++ : undefined, gasLimit }),
-        Swap.deploy({ nonce: nonce ? nonce++ : undefined, gasLimit }),
-        AMM.deploy({ nonce: nonce ? nonce++ : undefined, gasLimit })
+        CurveMath.deploy({ nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit }),
+        Swap.deploy({ nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit }),
+        AMM.deploy({ nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit })
     ]))
-    views = await Views.deploy(curveMath.address, { nonce: nonce ? nonce++ : undefined, gasLimit })
+    views = await Views.deploy(curveMath.address, { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit })
     // amm deps complete
 
     const res = {
@@ -129,8 +134,8 @@ async function setupContracts(options = {}) {
         oracle,
         insuranceFund,
         forwarder,
-        vammImpl: vammImpl,
-        tradeFee: options.tradeFee
+        vammImpl,
+        tradeFee: options.tradeFee,
     }
 
     if (options.setupAMM) {
@@ -143,13 +148,13 @@ async function setupContracts(options = {}) {
         Object.assign(res, { swap: vamm, amm, weth })
     }
 
-    // console.log(await generateConfig(hubbleViewer.address))
+    // console.log(await generateConfig(leaderboard.address))
     return res
 }
 
 async function setupUpgradeableProxy(contract, admin, initArgs, deployArgs = []) {
     const factory = await ethers.getContractFactory(contract)
-    const impl = await factory.deploy(...deployArgs, { nonce: nonce ? nonce++ : undefined, gasLimit })
+    const impl = await factory.deploy(...deployArgs, { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit })
     const proxy = await TransparentUpgradeableProxy.deploy(
         impl.address,
         admin,
@@ -159,20 +164,21 @@ async function setupUpgradeableProxy(contract, admin, initArgs, deployArgs = [])
                 initArgs
             )
             : '0x',
-        { nonce: nonce ? nonce++ : undefined, gasLimit }
+        { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit }
     )
     return ethers.getContractAt(contract, proxy.address)
 }
 
-async function setupAmm(governance, args, options) {
-    const { initialRate, initialLiquidity, fee, ammState } = Object.assign(
+async function setupAmm(governance, args, ammOptions) {
+    const { initialRate, initialLiquidity, fee, ammState, index } = Object.assign(
         {
+            index: 0,
             initialRate: 1000, // for ETH perp
             initialLiquidity: 1000, // 1000 eth
             fee: 10000000, // 0.1%
             ammState: 2, // Active
         },
-        options
+        ammOptions
     )
     const vammProxy = await TransparentUpgradeableProxy.deploy(
         vammImpl.address,
@@ -189,7 +195,7 @@ async function setupAmm(governance, args, options) {
             600, // ma_half_time
             _1e18.mul(initialRate)
         ]),
-        { nonce: nonce ? nonce++ : undefined, gasLimit }
+        { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit }
     )
 
     const vamm = new ethers.Contract(vammProxy.address, JSON.parse(vammAbiAndBytecode[0]), signers[0])
@@ -197,16 +203,14 @@ async function setupAmm(governance, args, options) {
         ammImpl.address,
         proxyAdmin.address,
         ammImpl.interface.encodeFunctionData('initialize', args.concat([ vamm.address, governance ])),
-        { nonce: nonce ? nonce++ : undefined, gasLimit }
+        { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit }
     )
     const amm = await ethers.getContractAt('AMM', ammProxy.address)
     if (ammState) {
-        await amm.setAmmState(ammState, { nonce: nonce ? nonce++ : undefined, gasLimit })
+        await amm.setAmmState(ammState, { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit })
     }
-    await vamm.setAMM(amm.address, { nonce: nonce ? nonce++ : undefined, gasLimit })
-
-    const index = await clearingHouse.getAmmsLength()
-    await clearingHouse.whitelistAmm(amm.address, { nonce: nonce ? nonce++ : undefined, gasLimit })
+    await vamm.setAMM(amm.address, { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit })
+    await clearingHouse.whitelistAmm(amm.address, { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit })
 
     if (initialLiquidity) {
         await addLiquidity(index, initialLiquidity, initialRate)
@@ -222,15 +226,15 @@ async function addLiquidity(index, initialLiquidity, rate) {
 
 async function setupRestrictedTestToken(name, symbol, decimals) {
     const RestrictedErc20 = await ethers.getContractFactory('RestrictedErc20')
-    const tok = await RestrictedErc20.deploy(name, symbol, decimals, { nonce: nonce ? nonce++ : undefined, gasLimit })
+    const tok = await RestrictedErc20.deploy(name, symbol, decimals, { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit })
     // avoiding await tok.TRANSFER_ROLE(), because that reverts if the above tx hasn't confirmed
-    await tok.grantRole(ethers.utils.id('TRANSFER_ROLE'), marginAccount.address, { nonce: nonce ? nonce++ : undefined, gasLimit })
+    await tok.grantRole(ethers.utils.id('TRANSFER_ROLE'), marginAccount.address, { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit })
     return tok
 }
 
 async function addMargin(trader, margin) {
     // omitting the nonce calculation here because this is only used in local
-    await usdc.mint(trader.address, margin, { nonce: nonce ? nonce++ : undefined, gasLimit })
+    await usdc.mint(trader.address, margin, { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit })
     await usdc.connect(trader).approve(marginAccountHelper.address, margin)
     await marginAccountHelper.connect(trader).addVUSDMarginWithReserve(margin)
 }
@@ -396,8 +400,9 @@ async function assertBounds(v, lowerBound, upperBound) {
     if (upperBound) expect(v).lt(upperBound)
 }
 
-async function generateConfig(hubbleViewerAddress) {
-    const hubbleViewer = await ethers.getContractAt('HubbleViewer', hubbleViewerAddress)
+async function generateConfig(leaderboardAddress) {
+    const leaderboard = await ethers.getContractAt('Leaderboard', leaderboardAddress)
+    const hubbleViewer = await ethers.getContractAt('HubbleViewer', await leaderboard.hubbleViewer())
     const clearingHouse = await ethers.getContractAt('ClearingHouse', await hubbleViewer.clearingHouse())
     const marginAccount = await ethers.getContractAt('MarginAccount', await hubbleViewer.marginAccount())
 
@@ -457,6 +462,7 @@ function bnToFloat(num, decimals = 6) {
 module.exports = {
     constants: { _1e6, _1e8, _1e12, _1e18, ZERO },
     BigNumber,
+    txOptions,
     setupContracts,
     setupUpgradeableProxy,
     filterEvent,
