@@ -2,15 +2,12 @@
 
 pragma solidity 0.8.9;
 
-import { ERC2771ContextUpgradeable } from "@openzeppelin/contracts-upgradeable/metatx/ERC2771ContextUpgradeable.sol";
-import { PausableUpgradeable } from "@openzeppelin/contracts-upgradeable/security/PausableUpgradeable.sol";
-import { ContextUpgradeable } from "@openzeppelin/contracts-upgradeable/utils/ContextUpgradeable.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-import { VanillaGovernable } from "./Governable.sol";
+import { HubbleBase } from "./legos/HubbleBase.sol";
 import {
     ERC20Detailed,
     IClearingHouse,
@@ -25,7 +22,7 @@ import {
 * @title This contract is used for posting margin (collateral), realizing PnL etc.
 * @notice Most notable operations include addMargin, removeMargin and liquidations
 */
-contract MarginAccount is IMarginAccount, VanillaGovernable, PausableUpgradeable, ERC2771ContextUpgradeable {
+contract MarginAccount is IMarginAccount, HubbleBase {
     using SafeERC20 for IERC20;
     using SafeCast for uint256;
     using SafeCast for int256;
@@ -126,8 +123,12 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, PausableUpgradeable
         _;
     }
 
-    function initialize(address _trustedForwarder, address _governance, address _vusd) external {
-        __ERC2771Context_init(_trustedForwarder); // has the initializer modifier
+    constructor(address _trustedForwarder) HubbleBase(_trustedForwarder) {}
+
+    function initialize(
+        address _governance,
+        address _vusd
+    ) external initializer {
         _setGovernace(_governance);
         _addCollateral(_vusd, PRECISION); // weight = 1 * PRECISION
         vusd = IERC20FlexibleSupply(_vusd);
@@ -161,7 +162,7 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, PausableUpgradeable
             supportedCollateral[idx].token.safeTransferFrom(_msgSender(), address(this), amount);
         }
         margin[idx][to] += amount.toInt256();
-        emit MarginAdded(to, idx, amount, block.timestamp);
+        emit MarginAdded(to, idx, amount, _blockTimestamp());
     }
 
     /**
@@ -190,7 +191,7 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, PausableUpgradeable
         } else {
             supportedCollateral[idx].token.safeTransfer(trader, amount);
         }
-        emit MarginRemoved(trader, idx, amount, block.timestamp);
+        emit MarginRemoved(trader, idx, amount, _blockTimestamp());
     }
 
     /**
@@ -208,7 +209,7 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, PausableUpgradeable
         // -ve PnL will reduce balance
         if (realizedPnl != 0) {
             margin[VUSD_IDX][trader] += realizedPnl;
-            emit PnLRealized(trader, realizedPnl, block.timestamp);
+            emit PnLRealized(trader, realizedPnl, _blockTimestamp());
         }
     }
 
@@ -330,7 +331,7 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, PausableUpgradeable
         uint repayed;
         uint repayAble;
         for (uint i = 0; i < idxs.length; i++) {
-            (repayed, repayAble) = _liquidateFlexible(trader, maxRepay, idxs[i]);
+            (repayed, repayAble) = liquidateFlexibleWithSingleSeize(trader, maxRepay, idxs[i]);
             if (repayAble == 0) break;
             maxRepay -= repayed;
         }
@@ -372,7 +373,7 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, PausableUpgradeable
                 seized[i] = amount.toUint256();
             }
         }
-        emit SettledBadDebt(trader, seized, badDebt, block.timestamp);
+        emit SettledBadDebt(trader, seized, badDebt, _blockTimestamp());
     }
 
     /* ********************* */
@@ -385,7 +386,7 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, PausableUpgradeable
     * @return Debt repayed <= repayble i.e. user's max debt
     * @return User's debt that remains to be repayed
     */
-    function _liquidateFlexible(address trader, uint maxRepay, uint idx) public whenNotPaused returns(uint /* repayed */, uint /* repayAble */) {
+    function liquidateFlexibleWithSingleSeize(address trader, uint maxRepay, uint idx) public whenNotPaused returns(uint /* repayed */, uint /* repayAble */) {
         LiquidationBuffer memory buffer = _getLiquidationInfo(trader, idx);
 
         // Q. Can user's margin cover the entire debt?
@@ -487,7 +488,7 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, PausableUpgradeable
         margin[idx][trader] -= seize.toInt256();
         supportedCollateral[idx].token.safeTransfer(_msgSender(), seize);
 
-        emit MarginAccountLiquidated(trader, idx, seize, repay, block.timestamp);
+        emit MarginAccountLiquidated(trader, idx, seize, repay, _blockTimestamp());
         return repayAble - repay; // will ensure that the liquidator isn't repaying more than user's debt (and seizing a bigger amount of their collateral)
     }
 
@@ -592,24 +593,6 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, PausableUpgradeable
         IERC20(address(vusd)).safeTransfer(recipient, amount);
     }
 
-    function _msgSender()
-        internal
-        view
-        override(ContextUpgradeable, ERC2771ContextUpgradeable)
-        returns (address)
-    {
-        return super._msgSender();
-    }
-
-    function _msgData()
-        internal
-        view
-        override(ContextUpgradeable, ERC2771ContextUpgradeable)
-        returns (bytes memory)
-    {
-        return super._msgData();
-    }
-
     /* ****************** */
     /*     Governance     */
     /* ****************** */
@@ -635,13 +618,5 @@ contract MarginAccount is IMarginAccount, VanillaGovernable, PausableUpgradeable
         require(_weight <= PRECISION, "weight > 1e6");
         require(idx < supportedCollateral.length, "Collateral not supported");
         supportedCollateral[idx].weight = _weight;
-    }
-
-    function pause() external onlyGovernance {
-        _pause();
-    }
-
-    function unpause() external onlyGovernance {
-        _unpause();
     }
 }

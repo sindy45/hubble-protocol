@@ -5,7 +5,7 @@ const {
 } = utils
 const { constants: { _1e6, ZERO } } = utils
 
-describe('Margin Account Unit Tests', function() {
+describe('MarginAccount Unit Tests', function() {
     before('factories', async function() {
         signers = await ethers.getSigners()
         alice = signers[0].address
@@ -15,7 +15,38 @@ describe('Margin Account Unit Tests', function() {
     })
 
     it('reverts when initializing again', async function() {
-        await expect(marginAccount.initialize(alice, alice, alice)).to.be.revertedWith('Initializable: contract is already initialized')
+        await expect(marginAccount.initialize(bob.address, vusd.address)).to.be.revertedWith('Initializable: contract is already initialized')
+    })
+
+    it('governance things', async function() {
+        expect(await marginAccount.governance()).to.eq(alice)
+
+        await expect(marginAccount.connect(bob).setGovernace(bob.address)).to.be.revertedWith('ONLY_GOVERNANCE')
+        await expect(marginAccount.connect(bob).pause()).to.be.revertedWith('ONLY_GOVERNANCE')
+        await expect(marginAccount.connect(bob).unpause()).to.be.revertedWith('ONLY_GOVERNANCE')
+        await expect(marginAccount.connect(bob).syncDeps(alice, 0)).to.be.revertedWith('ONLY_GOVERNANCE')
+        await expect(marginAccount.connect(bob).whitelistCollateral(alice, 0)).to.be.revertedWith('ONLY_GOVERNANCE')
+        await expect(marginAccount.connect(bob).changeCollateralWeight(0, 0)).to.be.revertedWith('ONLY_GOVERNANCE')
+
+        await marginAccount.setGovernace(bob.address)
+        expect(await marginAccount.governance()).to.eq(bob.address)
+        // alice doesn't have priviledges now
+        await expect(marginAccount.setGovernace(bob.address)).to.be.revertedWith('ONLY_GOVERNANCE')
+
+        await marginAccount.connect(bob).setGovernace(alice)
+        expect(await marginAccount.governance()).to.eq(alice)
+    })
+
+    it('reverts when paused', async function() {
+        await marginAccount.pause()
+        await expect(marginAccount.addMargin(0, 1)).to.be.revertedWith('Pausable: paused')
+        await expect(marginAccount.removeMargin(0, 1)).to.be.revertedWith('Pausable: paused')
+        await expect(marginAccount.liquidateExactRepay(alice, 1, 1, 0)).to.be.revertedWith('Pausable: paused')
+        await expect(marginAccount.liquidateExactSeize(alice, 1, 1, 0)).to.be.revertedWith('Pausable: paused')
+        await expect(marginAccount.liquidateFlexible(alice, 1, [1])).to.be.revertedWith('Pausable: paused')
+        await expect(marginAccount.settleBadDebt(alice)).to.be.revertedWith('Pausable: paused')
+        await expect(marginAccount.liquidateFlexibleWithSingleSeize(alice, 1, 1)).to.be.revertedWith('Pausable: paused')
+        await marginAccount.unpause()
     })
 
     it('realize fake pnl', async function() {

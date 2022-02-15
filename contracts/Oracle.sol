@@ -5,7 +5,7 @@ pragma solidity 0.8.9;
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
-import { Governable } from "./Governable.sol";
+import { Governable } from "./legos/Governable.sol";
 import { AggregatorV3Interface } from "./Interfaces.sol";
 
 contract Oracle is Governable {

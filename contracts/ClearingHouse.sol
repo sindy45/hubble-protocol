@@ -2,16 +2,13 @@
 
 pragma solidity 0.8.9;
 
-import { ERC2771ContextUpgradeable } from "@openzeppelin/contracts-upgradeable/metatx/ERC2771ContextUpgradeable.sol";
-import { PausableUpgradeable } from "@openzeppelin/contracts-upgradeable/security/PausableUpgradeable.sol";
-import { ContextUpgradeable } from "@openzeppelin/contracts-upgradeable/utils/ContextUpgradeable.sol";
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
-import { VanillaGovernable } from "./Governable.sol";
+import { HubbleBase } from "./legos/HubbleBase.sol";
 import { IAMM, IInsuranceFund, IMarginAccount, IClearingHouse } from "./Interfaces.sol";
 import { VUSD } from "./VUSD.sol";
 
-contract ClearingHouse is IClearingHouse, VanillaGovernable, PausableUpgradeable, ERC2771ContextUpgradeable {
+contract ClearingHouse is IClearingHouse, HubbleBase {
     using SafeCast for uint256;
     using SafeCast for int256;
 
@@ -33,8 +30,9 @@ contract ClearingHouse is IClearingHouse, VanillaGovernable, PausableUpgradeable
     event PositionLiquidated(address indexed trader, uint indexed idx, int256 baseAsset, uint256 quoteAsset, uint256 timestamp);
     event MarketAdded(uint indexed idx, address indexed amm);
 
+    constructor(address _trustedForwarder) HubbleBase(_trustedForwarder) {}
+
     function initialize(
-        address _trustedForwarder,
         address _governance,
         address _insuranceFund,
         address _marginAccount,
@@ -43,8 +41,7 @@ contract ClearingHouse is IClearingHouse, VanillaGovernable, PausableUpgradeable
         int256 _minAllowableMargin,
         uint _tradeFee,
         uint _liquidationPenalty
-    ) external {
-        __ERC2771Context_init(_trustedForwarder); // has the initializer modifier
+    ) external initializer {
         _setGovernace(_governance);
 
         insuranceFund = IInsuranceFund(_insuranceFund);
@@ -324,28 +321,6 @@ contract ClearingHouse is IClearingHouse, VanillaGovernable, PausableUpgradeable
         return _getMarginFraction(margin, notionalPosition);
     }
 
-    function _blockTimestamp() internal view virtual returns (uint256) {
-        return block.timestamp;
-    }
-
-    function _msgSender()
-        internal
-        view
-        override(ContextUpgradeable, ERC2771ContextUpgradeable)
-        returns (address)
-    {
-        return super._msgSender();
-    }
-
-    function _msgData()
-        internal
-        view
-        override(ContextUpgradeable, ERC2771ContextUpgradeable)
-        returns (bytes memory)
-    {
-        return super._msgData();
-    }
-
     /* ****************** */
     /*        Pure        */
     /* ****************** */
@@ -376,13 +351,5 @@ contract ClearingHouse is IClearingHouse, VanillaGovernable, PausableUpgradeable
         liquidationPenalty = _liquidationPenality;
         maintenanceMargin = _maintenanceMargin;
         minAllowableMargin = _minAllowableMargin;
-    }
-
-    function pause() external onlyGovernance {
-        _pause();
-    }
-
-    function unpause() external onlyGovernance {
-        _unpause();
     }
 }

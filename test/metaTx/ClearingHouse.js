@@ -39,7 +39,7 @@ describe('Clearing House Meta Txs', async function() {
         const { sign, req } = await signTransaction(signers[0], clearingHouse, data, forwarder)
         expect(await forwarder.verify(req, sign)).to.equal(true);
 
-        const tx = await forwarder.connect(relayer).metaExecute(req, sign);
+        const tx = await forwarder.connect(relayer).executeRequiringSuccess(req, sign);
         const positionModifiedEvent = await parseRawEvent(tx, clearingHouse, 'PositionModified')
         const quoteAsset = positionModifiedEvent.args.quoteAsset
         const fee = quoteAsset.mul(tradeFee).div(_1e6)
@@ -72,7 +72,7 @@ describe('Clearing House Meta Txs', async function() {
         const { sign, req } = await signTransaction(signers[0], clearingHouse, data, forwarder)
         expect(await forwarder.verify(req, sign)).to.equal(true);
 
-        const tx = await forwarder.connect(relayer).metaExecute(req, sign);
+        const tx = await forwarder.connect(relayer).executeRequiringSuccess(req, sign);
         const positionModifiedEvent = await parseRawEvent(tx, clearingHouse, 'PositionModified')
         const quoteAsset = positionModifiedEvent.args.quoteAsset
         const fee = quoteAsset.mul(tradeFee).div(_1e6)
@@ -116,7 +116,7 @@ describe('Clearing House Meta Txs', async function() {
 
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
         try {
-            await forwarder.connect(relayer).metaExecute(req, sign)
+            await forwarder.connect(relayer).executeRequiringSuccess(req, sign)
         } catch (error) {
             expect(error.message).to.contain('META_EXEC_FAILED:').and.contain('CH: Below Minimum Allowable Margin')
         }

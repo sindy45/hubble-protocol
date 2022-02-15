@@ -6,7 +6,7 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import { ERC20PresetMinterPauserUpgradeable } from "@openzeppelin/contracts-upgradeable/token/ERC20/presets/ERC20PresetMinterPauserUpgradeable.sol";
 
-import { VanillaGovernable } from "./Governable.sol";
+import { VanillaGovernable } from "./legos/Governable.sol";
 
 contract VUSD is VanillaGovernable, ERC20PresetMinterPauserUpgradeable {
     using SafeERC20 for IERC20;

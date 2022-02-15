@@ -2,14 +2,12 @@
 
 pragma solidity 0.8.9;
 
-import { MinimalForwarderUpgradeable } from "@openzeppelin/contracts-upgradeable/metatx/MinimalForwarderUpgradeable.sol";
+import { MinimalForwarder as Forwarder } from "@openzeppelin/contracts/metatx/MinimalForwarder.sol";
+// import { MinimalForwarderUpgradeable } from "@openzeppelin/contracts-upgradeable/metatx/MinimalForwarderUpgradeable.sol";
 
-contract MinimalForwarder is MinimalForwarderUpgradeable {
-    function intialize() external {
-        __MinimalForwarder_init(); // has the initializer modifier
-    }
+contract MinimalForwarder is Forwarder {
 
-    function metaExecute(ForwardRequest calldata req, bytes calldata signature)
+    function executeRequiringSuccess(ForwardRequest calldata req, bytes calldata signature)
         external
         payable
     {

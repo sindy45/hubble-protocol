@@ -36,7 +36,7 @@ describe('Margin Account Meta Txs', async function () {
         const { sign, req } = await signTransaction(signers[0], marginAccount, data, forwarder)
         expect(await forwarder.verify(req, sign)).to.equal(true);
 
-        await forwarder.connect(relayer).metaExecute(req, sign);
+        await forwarder.connect(relayer).executeRequiringSuccess(req, sign);
 
         expect(await marginAccount.margin(1, alice)).to.eq(amount)
         expect(await marginAccount.getNormalizedMargin(alice)).to.eq(_1e6.mul(2000))

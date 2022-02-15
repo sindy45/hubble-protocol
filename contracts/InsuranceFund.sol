@@ -7,7 +7,7 @@ import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.s
 import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 import { ERC20Upgradeable } from "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
 
-import { VanillaGovernable } from "./Governable.sol";
+import { VanillaGovernable } from "./legos/Governable.sol";
 import { IRegistry } from "./Interfaces.sol";
 
 contract InsuranceFund is VanillaGovernable, ERC20Upgradeable {

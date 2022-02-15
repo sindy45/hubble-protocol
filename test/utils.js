@@ -43,7 +43,7 @@ async function setupContracts(options = {}) {
         ethers.getContractFactory('Registry'),
         ethers.getContractFactory('ERC20Mintable'),
         ethers.getContractFactory('AMM'),
-        ethers.getContractFactory('MinimalForwarder'),
+        ethers.getContractFactory('contracts/MinimalForwarder.sol:MinimalForwarder'),
         ethers.getContractFactory('TransparentUpgradeableProxy'),
         ethers.getContractFactory('ProxyAdmin')
     ]))
@@ -53,10 +53,9 @@ async function setupContracts(options = {}) {
         MinimalForwarder.deploy({ nonce: nonce ? nonce++ : undefined, gasLimit }),
         ERC20Mintable.deploy('USD Coin', 'USDC', 6, { nonce: nonce ? nonce++ : undefined, gasLimit }),
     ]))
-    await forwarder.intialize({ nonce: nonce ? nonce++ : undefined, gasLimit })
     vusd = await setupUpgradeableProxy(options.restrictedVUSD ? 'RestrictedVusd' : 'VUSD', proxyAdmin.address, [ governance ], [ usdc.address ])
 
-    marginAccount = await setupUpgradeableProxy('MarginAccount', proxyAdmin.address, [ forwarder.address, governance, vusd.address ])
+    marginAccount = await setupUpgradeableProxy('MarginAccount', proxyAdmin.address, [ governance, vusd.address ], [ forwarder.address ])
     marginAccountHelper = await MarginAccountHelper.deploy(marginAccount.address, vusd.address, { nonce: nonce ? nonce++ : undefined, gasLimit })
     insuranceFund = await setupUpgradeableProxy('InsuranceFund', proxyAdmin.address, [ governance ])
 
@@ -76,7 +75,6 @@ async function setupContracts(options = {}) {
         'ClearingHouse',
         proxyAdmin.address,
         [
-            forwarder.address,
             governance,
             insuranceFund.address,
             marginAccount.address,
@@ -85,7 +83,8 @@ async function setupContracts(options = {}) {
             0.2 * 1e6, // 20% minimum allowable margin, 5x
             options.tradeFee,
             0.05 * 1e6, // liquidationPenalty = 5%
-        ]
+        ],
+        [ forwarder.address ]
     )
     await vusd.grantRole(await vusd.MINTER_ROLE(), marginAccount.address, { nonce: nonce ? nonce++ : undefined, gasLimit })
     registry = await Registry.deploy(oracle.address, clearingHouse.address, insuranceFund.address, marginAccount.address, vusd.address, { nonce: nonce ? nonce++ : undefined, gasLimit })
