@@ -76,7 +76,7 @@ contract AMM is IAMM, Governable {
     event PositionChanged(address indexed trader, int256 size, uint256 openNotional, int256 realizedPnl);
     event FundingRateUpdated(int256 premiumFraction, int256 rate, uint256 underlyingPrice, uint256 timestamp, uint256 blockNumber);
     event FundingPaid(address indexed trader, int256 takerPosSize, int256 takerFundingPayment, int256 makerFundingPayment, int256 latestCumulativePremiumFraction, int256 latestPremiumPerDtoken);
-    event Swap(int256 baseAsset, uint256 qouteAsset, uint256 lastPrice, uint256 openInterestNotional);
+    event Swap(int256 baseAsset, uint256 quoteAsset, uint256 lastPrice, uint256 openInterestNotional);
     event LiquidityAdded(address indexed maker, uint dToken, uint baseAsset, uint quoteAsset, uint timestamp);
     event LiquidityRemoved(address indexed maker, uint dToken, uint baseAsset, uint quoteAsset, uint timestamp, int256 realizedPnl);
 
@@ -479,15 +479,15 @@ contract AMM is IAMM, Governable {
     /**
     * @dev Go long on an asset
     * @param baseAssetQuantity Exact base asset quantity to go long
-    * @param max_dx Maximum amount of qoute asset to be used while longing baseAssetQuantity. Lower means longing at a lower price (desirable).
-    * @return qouteAssetQuantity quote asset utilised. qouteAssetQuantity / baseAssetQuantity was the average rate.
-      qouteAssetQuantity <= max_dx
+    * @param max_dx Maximum amount of quote asset to be used while longing baseAssetQuantity. Lower means longing at a lower price (desirable).
+    * @return quoteAssetQuantity quote asset utilised. quoteAssetQuantity / baseAssetQuantity was the average rate.
+      quoteAssetQuantity <= max_dx
     */
-    function _long(int256 baseAssetQuantity, uint max_dx) internal returns (uint256 qouteAssetQuantity) {
+    function _long(int256 baseAssetQuantity, uint max_dx) internal returns (uint256 quoteAssetQuantity) {
         require(baseAssetQuantity > 0, "VAMM._long: baseAssetQuantity is <= 0");
 
         uint _lastPrice;
-        (qouteAssetQuantity, _lastPrice) = vamm.exchangeExactOut(
+        (quoteAssetQuantity, _lastPrice) = vamm.exchangeExactOut(
             0, // sell quote asset
             1, // purchase base asset
             baseAssetQuantity.toUint256(), // long exactly. Note that statement asserts that baseAssetQuantity >= 0
@@ -497,21 +497,21 @@ contract AMM is IAMM, Governable {
         _addReserveSnapshot(_lastPrice);
         // since maker position will be opposite of the trade
         posAccumulator -= baseAssetQuantity * 1e18 / vamm.totalSupply().toInt256();
-        emit Swap(baseAssetQuantity, qouteAssetQuantity, _lastPrice, openInterestNotional());
+        emit Swap(baseAssetQuantity, quoteAssetQuantity, _lastPrice, openInterestNotional());
     }
 
     /**
     * @dev Go short on an asset
     * @param baseAssetQuantity Exact base asset quantity to short
-    * @param min_dy Minimum amount of qoute asset to be used while shorting baseAssetQuantity. Higher means shorting at a higher price (desirable).
-    * @return qouteAssetQuantity quote asset utilised. qouteAssetQuantity / baseAssetQuantity was the average short rate.
-      qouteAssetQuantity >= min_dy.
+    * @param min_dy Minimum amount of quote asset to be used while shorting baseAssetQuantity. Higher means shorting at a higher price (desirable).
+    * @return quoteAssetQuantity quote asset utilised. quoteAssetQuantity / baseAssetQuantity was the average short rate.
+      quoteAssetQuantity >= min_dy.
     */
-    function _short(int256 baseAssetQuantity, uint min_dy) internal returns (uint256 qouteAssetQuantity) {
+    function _short(int256 baseAssetQuantity, uint min_dy) internal returns (uint256 quoteAssetQuantity) {
         require(baseAssetQuantity < 0, "VAMM._short: baseAssetQuantity is >= 0");
 
         uint _lastPrice;
-        (qouteAssetQuantity, _lastPrice) = vamm.exchange(
+        (quoteAssetQuantity, _lastPrice) = vamm.exchange(
             1, // sell base asset
             0, // get quote asset
             (-baseAssetQuantity).toUint256(), // short exactly. Note that statement asserts that baseAssetQuantity <= 0
@@ -521,7 +521,7 @@ contract AMM is IAMM, Governable {
         _addReserveSnapshot(_lastPrice);
         // since maker position will be opposite of the trade
         posAccumulator -= baseAssetQuantity * 1e18 / vamm.totalSupply().toInt256();
-        emit Swap(baseAssetQuantity, qouteAssetQuantity, _lastPrice, openInterestNotional());
+        emit Swap(baseAssetQuantity, quoteAssetQuantity, _lastPrice, openInterestNotional());
     }
 
     function _emitPositionChanged(address trader, int256 realizedPnl) internal {
