@@ -138,20 +138,20 @@ interface IVAMM {
         uint256 j,
         uint256 dx,
         uint256 min_dy
-    ) external returns (uint256 dy, uint[2] calldata);
+    ) external returns (uint256 dy, uint256 last_price);
 
     function exchangeExactOut(
         uint256 i,
         uint256 j,
         uint256 dy,
         uint256 max_dx
-    ) external returns (uint256 dx, uint[2] calldata);
+    ) external returns (uint256 dx, uint256 last_price);
 
     function get_notional(uint256 makerDToken, uint256 vUSD, uint256 vAsset, int256 takerPosSize, uint256 takerOpenNotional) external view returns (uint256, int256, int256, uint256);
     function last_prices() external view returns(uint256);
     function price_oracle() external view returns(uint256);
     function price_scale() external view returns(uint256);
-    function add_liquidity(uint256[2] calldata amounts, uint256 min_mint_amount) external returns (uint256, uint[2] calldata);
+    function add_liquidity(uint256[2] calldata amounts, uint256 min_mint_amount) external returns (uint256);
     function calc_token_amount(uint256[2] calldata amounts, bool deposit) external view returns (uint256);
     function remove_liquidity(
         uint256 amount,

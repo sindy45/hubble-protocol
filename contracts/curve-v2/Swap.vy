@@ -432,7 +432,7 @@ def tweak_price(A_gamma: uint256[2],
 # @payable
 @external
 @nonreentrant('lock')
-def exchange(i: uint256, j: uint256, dx: uint256, min_dy: uint256) -> (uint256, uint256[N_COINS]):
+def exchange(i: uint256, j: uint256, dx: uint256, min_dy: uint256) -> (uint256, uint256):
     assert msg.sender == self.amm, 'VAMM: OnlyAMM'
     assert not self.is_killed  # dev: the pool is killed
     assert i != j  # dev: coin index out of range
@@ -523,12 +523,12 @@ def exchange(i: uint256, j: uint256, dx: uint256, min_dy: uint256) -> (uint256, 
     self.tweak_price(A_gamma, xp, p, 0)
 
     log TokenExchange(msg.sender, i, dx, j, dy, trade_fee)
-    return dy, self.balances
+    return dy, self.last_prices / PRECISIONS[0]
 
 # @payable
 @external
 @nonreentrant('lock')
-def exchangeExactOut(i: uint256, j: uint256, dy: uint256, max_dx: uint256) -> (uint256, uint256[N_COINS]):
+def exchangeExactOut(i: uint256, j: uint256, dy: uint256, max_dx: uint256) -> (uint256, uint256):
     assert msg.sender == self.amm, 'VAMM: OnlyAMM'
     assert not self.is_killed  # dev: the pool is killed
     assert i != j  # dev: coin index out of range
@@ -619,7 +619,7 @@ def exchangeExactOut(i: uint256, j: uint256, dy: uint256, max_dx: uint256) -> (u
     self.tweak_price(A_gamma, xp, p, 0)
 
     log TokenExchange(msg.sender, i, dx, j, dy, trade_fee)
-    return dx, self.balances
+    return dx, self.last_prices / PRECISIONS[0]
 
 @external
 @view
@@ -665,7 +665,7 @@ def calc_token_fee(amounts: uint256[N_COINS], xp: uint256[N_COINS]) -> uint256:
 
 @external
 @nonreentrant('lock')
-def add_liquidity(amounts: uint256[N_COINS], min_mint_amount: uint256) -> (uint256, uint256[N_COINS]):
+def add_liquidity(amounts: uint256[N_COINS], min_mint_amount: uint256) -> (uint256):
     assert msg.sender == self.amm, 'VAMM: OnlyAMM'
     assert not self.is_killed  # dev: the pool is killed
     assert msg.sender == self.amm
@@ -761,7 +761,7 @@ def add_liquidity(amounts: uint256[N_COINS], min_mint_amount: uint256) -> (uint2
     assert d_token >= min_mint_amount, "Slippage"
 
     log AddLiquidity(msg.sender, amounts, d_token_fee, self.totalSupply)
-    return d_token, self.balances
+    return d_token
 
 @internal
 @pure

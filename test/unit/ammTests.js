@@ -22,9 +22,7 @@ describe('amm unit Tests', function() {
 
     describe('VAMM Unit Tests', function() {
         it('check initial setup', async () => {
-            expect(await amm.getSnapshotLen()).to.eq(1)
-            expect((await amm.reserveSnapshots(0)).quoteAssetReserve).to.eq(_1e6.mul(_1e6))
-            expect((await amm.reserveSnapshots(0)).baseAssetReserve).to.eq(_1e18.mul(1000))
+            expect(await amm.getSnapshotLen()).to.eq(0)
             await expect(swap.initialize(
                 alice, // owner
                 alice, // math
@@ -167,37 +165,37 @@ describe('amm unit Tests', function() {
 describe('Twap Price Tests', function() {
     /*
         Test data
-        quoteAssetBalance | baseAssetBalance | spot price (scaled by 6 demicals) | timestamp
-        1010053427054307313321447 990000000000000000000 1020255986 1637924441
-        1005032058729707709727446 995000000000000000000 1010082471 1637924455
-        1000028529693144790497446 1000000000000000000000 1000028529 1637924483
-        1010082076940516452696405 990000000000000000000 1020284926 1637924511
-        1005060658056196985279396 995000000000000000000 1010111214 1637924525
-        1000057077533931916820771 1000000000000000000000 1000057077 1637924553
-        1010110745082215441315419 990000000000000000000 1020313883 1637924581
-        1005089275604747011951309 995000000000000000000 1010139975 1637924595
-        1000084081395588348180123 1000000000000000000000 1000084081 1637924623
-        1010140725545006156756904 990000000000000000000 1020344167 1637924651
-        1005117619163502837732109 995000000000000000000 1010168461 1637924665
-        1000112373857536434204341 1000000000000000000000 1000112373 1637924693
-        1010169137032252887651586 990000000000000000000 1020372865 1637924721
-        1005145980609509432015311 995000000000000000000 1010196965 1637924735
-        1000140684188538459419394 1000000000000000000000 1000140684 1637924763
-        1010200439924510353734181 990000000000000000000 1020404484 1637924791
-        1005175643637315883037223 995000000000000000000 1010226777 1637924805
-        1000168734649604704043797 1000000000000000000000 1000168734 1637924833
-        1010228608201806171493164 990000000000000000000 1020432937 1637924861
-        1005203762390927267425973 995000000000000000000 1010255037 1637924875
-        1000196802649143789309603 1000000000000000000000 1000196802 1637924903
-        1010256794122000023747073 990000000000000000000 1020461408 1637924931
-        1005231898756458958964489 995000000000000000000 1010283315 1637924945
-        1000223332448828683087890 1000000000000000000000 1000223332 1637924973
-        1010286319189500895458420 990000000000000000000 1020491231 1637925001
-        1005259786777048596382171 995000000000000000000 1010311343 1637925015
-        1000251170049914974449775 1000000000000000000000 1000251170 1637925043
-        1010314273553693213213179 990000000000000000000 1020519468 1637925071
-        1005287692073526114885135 995000000000000000000 1010339389 1637925085
-        1000279024910132451563961 1000000000000000000000 1000279024 1637925113
+        spot price (scaled by 6 demicals) | timestamp
+        1002151330 1645010600
+        1000985181 1645010560739
+        999515051 1645010560767
+        1002487284 1645010560795
+        1001398222 1645010560809
+        999978228 1645010560837
+        1002868390 1645010560865
+        1001725466 1645010560879
+        1000386352 1645010560907
+        1003238539 1645010560935
+        1002057404 1645010560949
+        1000795971 1645010560977
+        1003612087 1645010561005
+        1002394631 1645010561019
+        1001070244 1645010561047
+        1003739258 1645010561075
+        1002399371 1645010561089
+        1001071546 1645010561117
+        1003742288 1645010561145
+        1002404121 1645010561159
+        1001072851 1645010561187
+        1003745325 1645010561215
+        1002408884 1645010561229
+        1001074159 1645010561257
+        1003748370 1645010561285
+        1002413657 1645010561299
+        1001075469 1645010561327
+        1003751421 1645010561355
+        1002418442 1645010561369
+        1001076782 1645010561397
     */
 
     before('generate sample snapshots', async function() {
@@ -210,21 +208,19 @@ describe('Twap Price Tests', function() {
 
         baseAssetQuantity = _1e18.mul(5)
 
-        // spot price after long ~ 1020
-        // spot price after first short ~ 1010
-        // spot price after second short ~ 1000
-        let timestamp = (await amm.reserveSnapshots(0)).timestamp
-        timestamp = timestamp.add(14)
-        await increaseEvmTime(timestamp.toNumber())
+        // spot price after long ~ 1003
+        // spot price after first short ~ 1002
+        // spot price after second short ~ 1001
+        let timestamp = Date.now()
         for (let i = 0; i < 30; i++) {
             if (i % 3 == 0) {
                 await clearingHouse.openPosition(0, baseAssetQuantity.mul(2), ethers.constants.MaxUint256)
-                timestamp = timestamp.add(14)
-                await increaseEvmTime(timestamp.toNumber())
+                timestamp += 14
+                await increaseEvmTime(timestamp)
             } else {
                 await clearingHouse.openPosition(0, baseAssetQuantity.mul(-1), ZERO)
-                timestamp = timestamp.add(28)
-                await increaseEvmTime(timestamp.toNumber())
+                timestamp += 28
+                await increaseEvmTime(timestamp)
             }
         }
     })
@@ -232,41 +228,43 @@ describe('Twap Price Tests', function() {
     it('get TWAP price', async () => {
         // latest spot price is not considered in the calcualtion as delta t is 0
         // total snapshots in 420 seconds = 18
-        // ((1010196965+ 1010226777+ 1010255037+ 1010283315+ 1010311343+ 1010339389)*28 + (1020372865+1020404484+1020432937+1020461408+1020491231+1020519468)*14 + (1000112373+1000140684+1000168734+1000196802+1000223332+1000251170)*28)/420 = 1008269807
+        // (
+        //  (1003612087+1003739258+1003742288+1003745325+1003748370+1003751421)*14 +
+        //  (1000795971+1002394631+1001070244+1002399371+1001071546+1002404121+1001072851+1002408884+1001074159+1002413657+1001075469+1002418442)*28
+        // )/420 = 1002.13
 
         const twap = await amm.getTwapPrice(420)
-        expect(parseInt(twap.toNumber() / 1e6)).to.eq(1008)
+        expect((twap.toNumber() / 1e6).toFixed(2)).to.eq('1002.12')
     })
 
     it('the timestamp of latest snapshot=now, the latest snapshot wont have any effect', async () => {
-        // price is 990 but time weighted is zero
         await clearingHouse.openPosition(0, baseAssetQuantity.mul(-1), ZERO)
 
-        // Shaving off 20 secs from the 420s window would mean dropping the first 1020 snapshot and 6 secs off the 1010 reading.
-        // twap = (1020 * 5 snapshots * 14 sec + 1010 * 22 sec + 1010*5*28 +  + 1000*6*28)/400 = 1007
+        // Shaving off 20 secs from the 420s window would mean dropping the first 1003 snapshot and 6 secs off the 1002 reading.
+        // twap = (1003 * 5 snapshots * 14 sec + 1002 * 22 sec + 1002*5*28 + 1001*6*28)/400 = 1002.x
         const twap = await amm.getTwapPrice(400)
-        expect(parseInt(twap.toNumber() / 1e6)).to.eq(1007)
+        expect((twap.toNumber() / 1e6).toFixed(2)).to.eq('1002.08')
     })
 
     it('asking interval more than the snapshots', async () => {
-        // total 32 snapshots, out of which latest doesn't count
-        // twap = (1020 * 10 snapshots * 14 sec + 1010*10*28 + 1000*10*28 + 1000*14)/714 ~ 1008
+        // total 31 snapshots, out of which latest doesn't count
+        // twap = (1003 * 10 snapshots * 14 sec + 1002*10*28 + 1001*10*28)/700 ~ 1001.x
 
         const twap = await amm.getTwapPrice(900)
-        expect(parseInt(twap.toNumber() / 1e6)).to.eq(1008)
+        expect((twap.toNumber() / 1e6).toFixed(2)).to.eq('1001.86')
     })
 
     it('asking interval less than latest snapshot, return latest price directly', async () => {
-        // price is 990
+        // price is 1000.4
         await increaseEvmTime(Date.now() + 500)
         await clearingHouse.openPosition(0, baseAssetQuantity.mul(-1), ZERO) // add a delay of 500 seconds
 
         const twap = await amm.getTwapPrice(420)
-        expect(parseInt(twap.toNumber() / 1e6)).to.eq(990)
+        expect((twap.toNumber() / 1e6).toFixed(2)).to.eq('1000.42')
     })
 
     it('price with interval 0 should be the same as spot price', async () => {
-        expect(await amm.getTwapPrice(0)).to.eq(await amm.getSpotPrice())
+        expect(await amm.getTwapPrice(0)).to.eq(await amm.lastPrice())
     })
 })
 
@@ -370,6 +368,7 @@ describe('amm states', async function() {
             clearingHouse.settleFunding()
         ).to.reverted
         await utils.addLiquidity(1, 1e4, 65)
+        await clearingHouse.openPosition(1, -10000, 0)
 
         await ops()
     })

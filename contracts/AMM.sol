@@ -57,8 +57,7 @@ contract AMM is IAMM, Governable {
     mapping(address => Maker) override public makers;
 
     struct ReserveSnapshot {
-        uint256 quoteAssetReserve;
-        uint256 baseAssetReserve;
+        uint256 lastPrice;
         uint256 timestamp;
         uint256 blockNumber;
     }
@@ -78,7 +77,6 @@ contract AMM is IAMM, Governable {
     event FundingRateUpdated(int256 premiumFraction, int256 rate, uint256 underlyingPrice, uint256 timestamp, uint256 blockNumber);
     event FundingPaid(address indexed trader, int256 takerPosSize, int256 takerFundingPayment, int256 makerFundingPayment, int256 latestCumulativePremiumFraction, int256 latestPremiumPerDtoken);
     event Swap(int256 baseAsset, uint256 qouteAsset, uint256 lastPrice, uint256 openInterestNotional);
-    event ReserveSnapshotted(uint256 quoteAssetReserve, uint256 baseAssetReserve);
     event LiquidityAdded(address indexed maker, uint dToken, uint baseAsset, uint quoteAsset, uint timestamp);
     event LiquidityRemoved(address indexed maker, uint dToken, uint baseAsset, uint quoteAsset, uint timestamp, int256 realizedPnl);
 
@@ -194,8 +192,7 @@ contract AMM is IAMM, Governable {
             quoteAsset = baseAssetQuantity * vamm.balances(0) / baseAssetBal;
         }
 
-        (uint _dToken, uint[2] memory balances) = vamm.add_liquidity([quoteAsset, baseAssetQuantity], minDToken);
-        _addReserveSnapshot(balances[0], balances[1]);
+        uint _dToken = vamm.add_liquidity([quoteAsset, baseAssetQuantity], minDToken);
 
         // updates
         Maker storage _maker = makers[maker];
@@ -395,10 +392,6 @@ contract AMM is IAMM, Governable {
         return int256(_calcTwap(_intervalInSeconds));
     }
 
-    function getSpotPrice() public view returns (int256) {
-        return int256(vamm.balances(0) * BASE_PRECISION.toUint256() / vamm.balances(1));
-    }
-
     function getNotionalPositionAndUnrealizedPnl(address trader)
         override
         external
@@ -473,7 +466,7 @@ contract AMM is IAMM, Governable {
         }
     }
 
-    function lastPrice() public view returns(uint256) {
+    function lastPrice() external view returns(uint256) {
         return vamm.last_prices() / 1e12;
     }
 
@@ -493,18 +486,18 @@ contract AMM is IAMM, Governable {
     function _long(int256 baseAssetQuantity, uint max_dx) internal returns (uint256 qouteAssetQuantity) {
         require(baseAssetQuantity > 0, "VAMM._long: baseAssetQuantity is <= 0");
 
-        uint[2] memory balances;
-        (qouteAssetQuantity, balances) = vamm.exchangeExactOut(
+        uint _lastPrice;
+        (qouteAssetQuantity, _lastPrice) = vamm.exchangeExactOut(
             0, // sell quote asset
             1, // purchase base asset
             baseAssetQuantity.toUint256(), // long exactly. Note that statement asserts that baseAssetQuantity >= 0
             max_dx
         ); // 6 decimals precision
 
-        _addReserveSnapshot(balances[0], balances[1]);
+        _addReserveSnapshot(_lastPrice);
         // since maker position will be opposite of the trade
         posAccumulator -= baseAssetQuantity * 1e18 / vamm.totalSupply().toInt256();
-        emit Swap(baseAssetQuantity, qouteAssetQuantity, lastPrice(), openInterestNotional());
+        emit Swap(baseAssetQuantity, qouteAssetQuantity, _lastPrice, openInterestNotional());
     }
 
     /**
@@ -517,18 +510,18 @@ contract AMM is IAMM, Governable {
     function _short(int256 baseAssetQuantity, uint min_dy) internal returns (uint256 qouteAssetQuantity) {
         require(baseAssetQuantity < 0, "VAMM._short: baseAssetQuantity is >= 0");
 
-        uint[2] memory balances;
-        (qouteAssetQuantity, balances) = vamm.exchange(
+        uint _lastPrice;
+        (qouteAssetQuantity, _lastPrice) = vamm.exchange(
             1, // sell base asset
             0, // get quote asset
             (-baseAssetQuantity).toUint256(), // short exactly. Note that statement asserts that baseAssetQuantity <= 0
             min_dy
         );
 
-        _addReserveSnapshot(balances[0], balances[1]);
+        _addReserveSnapshot(_lastPrice);
         // since maker position will be opposite of the trade
         posAccumulator -= baseAssetQuantity * 1e18 / vamm.totalSupply().toInt256();
-        emit Swap(baseAssetQuantity, qouteAssetQuantity, lastPrice(), openInterestNotional());
+        emit Swap(baseAssetQuantity, qouteAssetQuantity, _lastPrice, openInterestNotional());
     }
 
     function _emitPositionChanged(address trader, int256 realizedPnl) internal {
@@ -632,16 +625,15 @@ contract AMM is IAMM, Governable {
         position.size += baseAssetQuantity;
     }
 
-    function _addReserveSnapshot(uint256 _quoteAssetReserve, uint256 _baseAssetReserve)
+    function _addReserveSnapshot(uint256 price)
         internal
     {
         uint256 currentBlock = block.number;
         uint256 blockTimestamp = _blockTimestamp();
-        emit ReserveSnapshotted(_quoteAssetReserve, _baseAssetReserve);
 
         if (reserveSnapshots.length == 0) {
             reserveSnapshots.push(
-                ReserveSnapshot(_quoteAssetReserve, _baseAssetReserve, blockTimestamp, currentBlock)
+                ReserveSnapshot(price, blockTimestamp, currentBlock)
             );
             return;
         }
@@ -649,11 +641,10 @@ contract AMM is IAMM, Governable {
         ReserveSnapshot storage latestSnapshot = reserveSnapshots[reserveSnapshots.length - 1];
         // update values in snapshot if in the same block
         if (currentBlock == latestSnapshot.blockNumber) {
-            latestSnapshot.quoteAssetReserve = _quoteAssetReserve;
-            latestSnapshot.baseAssetReserve = _baseAssetReserve;
+            latestSnapshot.lastPrice = price;
         } else {
             reserveSnapshots.push(
-                ReserveSnapshot(_quoteAssetReserve, _baseAssetReserve, blockTimestamp, currentBlock)
+                ReserveSnapshot(price, blockTimestamp, currentBlock)
             );
         }
     }
@@ -668,7 +659,7 @@ contract AMM is IAMM, Governable {
         returns (uint256)
     {
         uint256 snapshotIndex = reserveSnapshots.length - 1;
-        uint256 currentPrice = _getPriceWithSpecificSnapshot(snapshotIndex);
+        uint256 currentPrice = reserveSnapshots[snapshotIndex].lastPrice;
         if (_intervalInSeconds == 0) {
             return currentPrice;
         }
@@ -692,7 +683,7 @@ contract AMM is IAMM, Governable {
 
             snapshotIndex = snapshotIndex - 1;
             currentSnapshot = reserveSnapshots[snapshotIndex];
-            currentPrice = _getPriceWithSpecificSnapshot(snapshotIndex);
+            currentPrice = reserveSnapshots[snapshotIndex].lastPrice;
 
             // check if current round timestamp is earlier than target timestamp
             if (currentSnapshot.timestamp <= baseTimestamp) {
@@ -710,15 +701,6 @@ contract AMM is IAMM, Governable {
             previousTimestamp = currentSnapshot.timestamp;
         }
         return weightedPrice / _intervalInSeconds;
-    }
-
-    function _getPriceWithSpecificSnapshot(uint256 _snapshotIndex)
-        internal
-        view
-        returns (uint256)
-    {
-        ReserveSnapshot memory snapshot = reserveSnapshots[_snapshotIndex];
-        return snapshot.quoteAssetReserve * BASE_PRECISION.toUint256() / snapshot.baseAssetReserve;
     }
 
     function _updateFundingRate(
