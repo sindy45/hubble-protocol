@@ -91,6 +91,19 @@ interface IAMM {
 }
 
 interface IMarginAccount {
+    struct Collateral {
+        IERC20 token;
+        uint weight;
+        uint8 decimals;
+    }
+
+    enum LiquidationStatus {
+        IS_LIQUIDATABLE,
+        OPEN_POSITIONS,
+        NO_DEBT,
+        ABOVE_THRESHOLD
+    }
+
     function addMargin(uint idx, uint amount) external;
     function addMarginFor(uint idx, uint amount, address to) external;
     function removeMargin(uint idx, uint256 amount) external;
@@ -98,8 +111,9 @@ interface IMarginAccount {
     function weightedAndSpotCollateral(address trader) external view returns(int256, int256);
     function getNormalizedMargin(address trader) external view returns(int256);
     function realizePnL(address trader, int256 realizedPnl) external;
-    function isLiquidatable(address trader, bool includeFunding) external view returns(bool, uint, uint);
+    function isLiquidatable(address trader, bool includeFunding) external view returns(LiquidationStatus, uint, uint);
     function supportedAssetsLen() external view returns(uint);
+    function supportedAssets() external view returns (Collateral[] memory);
     function margin(uint idx, address trader) external view returns(int256);
     function transferOutVusd(address recipient, uint amount) external;
 }

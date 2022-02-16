@@ -27,7 +27,7 @@ describe('Liquidation Tests', async function() {
         oraclePrice = 1e6 * 2000 // $2k
         await oracle.setUnderlyingPrice(weth.address, oraclePrice)
         await marginAccount.whitelistCollateral(weth.address, 0.7 * 1e6) // weight = 0.7
-        expect((await marginAccount.isLiquidatable(alice, true))[0]).to.be.false
+        expect((await marginAccount.isLiquidatable(alice, true))[0]).to.eq(2)
     })
 
     it('addMargin', async () => {
@@ -43,7 +43,7 @@ describe('Liquidation Tests', async function() {
         await marginAccount.unpause()
 
         await marginAccount.addMargin(1, wethMargin)
-        expect((await marginAccount.isLiquidatable(alice, true))[0]).to.be.false
+        expect((await marginAccount.isLiquidatable(alice, true))[0]).to.eq(2)
     })
 
     it('alice makes a trade', async function() {
@@ -56,7 +56,7 @@ describe('Liquidation Tests', async function() {
 
         let tx = await clearingHouse.openPosition(0, _1e18.mul(-5), 0)
         ;({ fee: tradeFee } = await getTradeDetails(tx))
-        expect((await marginAccount.isLiquidatable(alice, true))[0]).to.be.false
+        expect((await marginAccount.isLiquidatable(alice, true))[0]).to.eq(1)
 
         const userInfo = await hubbleViewer.userInfo(alice)
         expect(userInfo[0]).to.eq(tradeFee.mul(-1)) // vUSD margin = 0 - tradeFee
@@ -69,7 +69,7 @@ describe('Liquidation Tests', async function() {
     })
 
     it('alice\'s position is liquidated', async function() {
-        expect((await marginAccount.isLiquidatable(alice, true))[0]).to.be.false // notionalPosition should be 0
+        expect((await marginAccount.isLiquidatable(alice, true))[0]).to.eq(1)
 
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
         ;({ unrealizedPnl, notionalPosition } = await amm.getNotionalPositionAndUnrealizedPnl(alice))
@@ -105,7 +105,7 @@ describe('Liquidation Tests', async function() {
         expect(spot.gt(ZERO)).to.be.true
         ;({ _isLiquidatable, incentivePerDollar } = await marginAccount.isLiquidatable(alice, true))
         expect(incentivePerDollar.toNumber() / 1e6).to.eq(1.032325)
-        expect(_isLiquidatable).to.be.true
+        expect(_isLiquidatable).to.eq(0) // IS_LIQUIDATABLE
     })
 
     it('liquidateExactSeize (incentivePerDollar = 5%)', async function() {
@@ -135,7 +135,7 @@ describe('Liquidation Tests', async function() {
         ])
         expect(parseInt(weighted.toNumber() / 1e6)).to.eq(-214) // .4 * 2000 * .7 - 774.x
         expect(parseInt(spot.toNumber() / 1e6)).to.eq(25) // .4 * 2000 - 774.x
-        expect(_isLiquidatable).to.be.true
+        expect(_isLiquidatable).to.eq(0) // IS_LIQUIDATABLE
         expect(incentivePerDollar.toNumber() / 1e6).to.eq(1.032326) // max incentive was (spot + repayAmount) / repayAmount
 
         await vusd.connect(admin).mint(liquidator3.address, repayAmount)
@@ -155,7 +155,7 @@ describe('Liquidation Tests', async function() {
         const { weighted, spot } = await marginAccount.weightedAndSpotCollateral(alice)
         expect(weighted.gt(ZERO)).to.be.true
         expect(spot.gt(ZERO)).to.be.true
-        expect((await marginAccount.isLiquidatable(alice, true))[0]).to.be.false
+        expect((await marginAccount.isLiquidatable(alice, true))[0]).to.eq(2) // NO_DEBT
     })
 
     async function addMargin(trader, margin) {
@@ -189,7 +189,7 @@ describe('Multi-collateral Liquidation Tests', async function() {
         ])
         await marginAccount.whitelistCollateral(weth.address, 0.7 * 1e6), // weight = 0.7
         await marginAccount.whitelistCollateral(avax.address, 0.8 * 1e6) // weight = 0.8
-        expect((await marginAccount.isLiquidatable(alice, true))[0]).to.be.false
+        expect((await marginAccount.isLiquidatable(alice, true))[0]).to.eq(2) // NO_DEBT
 
         // addMargin
         wethMargin = _1e18.div(4) // $500
@@ -202,12 +202,12 @@ describe('Multi-collateral Liquidation Tests', async function() {
         ])
         await marginAccount.addMargin(1, wethMargin)
         await marginAccount.addMargin(2, avaxMargin)
-        expect((await marginAccount.isLiquidatable(alice, true))[0]).to.be.false
+        expect((await marginAccount.isLiquidatable(alice, true))[0]).to.eq(2) // NO_DEBT
 
         // alice makes a trade
         let tx = await clearingHouse.openPosition(0, _1e18.mul(-5), 0)
         ;({ fee: tradeFee } = await getTradeDetails(tx))
-        expect((await marginAccount.isLiquidatable(alice, true))[0]).to.be.false
+        expect((await marginAccount.isLiquidatable(alice, true))[0]).to.eq(1) // OPEN_POSITIONS
 
         // bob makes a counter-trade
         await addMargin(bob, _1e6.mul(20000))
@@ -215,7 +215,7 @@ describe('Multi-collateral Liquidation Tests', async function() {
     })
 
     it('alice\'s position is liquidated', async function() {
-        expect((await marginAccount.isLiquidatable(alice, true))[0]).to.be.false // notionalPosition should be 0
+        expect((await marginAccount.isLiquidatable(alice, true))[0]).to.eq(1) // OPEN_POSITIONS
 
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
         ;({ unrealizedPnl, notionalPosition } = await amm.getNotionalPositionAndUnrealizedPnl(alice))
@@ -242,7 +242,7 @@ describe('Multi-collateral Liquidation Tests', async function() {
         expect(weighted.lt(ZERO)).to.be.true
         expect(spot.gt(ZERO)).to.be.true
         ;({ _isLiquidatable, incentivePerDollar } = await marginAccount.isLiquidatable(alice, true))
-        expect(_isLiquidatable).to.be.true
+        expect(_isLiquidatable).to.eq(0) // IS_LIQUIDATABLE
     })
 
     it('liquidateFlexible (_liquidateExactSeize branch, incentivePerDollar < 5%)', async function() {
@@ -258,7 +258,7 @@ describe('Multi-collateral Liquidation Tests', async function() {
         ])
         expect(parseInt(weighted.toNumber() / 1e6)).to.eq(-218) // 750 - 968.x
         expect(parseInt(spot.toNumber() / 1e6)).to.eq(31) // 1000 - 968.x
-        expect(_isLiquidatable).to.be.true
+        expect(_isLiquidatable).to.eq(0) // IS_LIQUIDATABLE
         expect(incentivePerDollar.toNumber() / 1e6).to.eq(1.032325) // min(1.05, 1000/968.48)
 
         await vusd.connect(admin).mint(liquidator3.address, repayAmount)
@@ -285,7 +285,7 @@ describe('Multi-collateral Liquidation Tests', async function() {
         ])
         expect(parseInt(weighted.toNumber() / 1e6)).to.eq(-84) // 400 - 484.x
         expect(parseInt(spot.toNumber() / 1e6)).to.eq(15) // 500 - 484.x
-        expect(_isLiquidatable).to.be.true
+        expect(_isLiquidatable).to.eq(0) // IS_LIQUIDATABLE
         expect(incentivePerDollar.toNumber() / 1e6).to.eq(1.032326) // min(1.05, 500/484.34)
 
         const repay = _1e6.mul(200) // < 484
@@ -333,10 +333,8 @@ describe('Multi-collateral Liquidation Tests', async function() {
         expect(await marginAccount.margin(2, alice)).to.eq(ZERO)
         expect(await avax.balanceOf(insuranceFund.address)).to.eq(avaxMargin)
         expect(await vusd.balanceOf(insuranceFund.address)).to.eq(ZERO)
-        expect((await marginAccount.isLiquidatable(alice, true))[0]).to.be.false
+        expect((await marginAccount.isLiquidatable(alice, true))[0]).to.eq(2) // NO_DEBT
     })
-
-    it('liquidateFlexible with >=2 collateral excluding vusd');
 
     async function addMargin(trader, margin) {
         await usdc.mint(trader.address, margin)

@@ -70,9 +70,9 @@ contract HubbleViewer is IHubbleViewer {
     function marginAccountLiquidatationStatus(address[] calldata traders)
         external
         view
-        returns(bool[] memory isLiquidatable, uint[] memory repayAmount, uint[] memory incentivePerDollar)
+        returns(IMarginAccount.LiquidationStatus[] memory isLiquidatable, uint[] memory repayAmount, uint[] memory incentivePerDollar)
     {
-        isLiquidatable = new bool[](traders.length);
+        isLiquidatable = new IMarginAccount.LiquidationStatus[](traders.length);
         repayAmount = new uint[](traders.length);
         incentivePerDollar = new uint[](traders.length);
         for (uint i = 0; i < traders.length; i++) {

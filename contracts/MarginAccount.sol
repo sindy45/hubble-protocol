@@ -33,15 +33,7 @@ contract MarginAccount is IMarginAccount, HubbleBase {
     // used for all usd based values
     uint constant PRECISION = 1e6;
 
-    /* ****************** */
-    /*       Structs      */
-    /* ****************** */
-
-    struct Collateral {
-        IERC20 token;
-        uint weight;
-        uint8 decimals;
-    }
+    error NOT_LIQUIDATABLE(IMarginAccount.LiquidationStatus);
 
     /**
     * @dev This is only used to group variables to avoid a solidity stack too deep error
@@ -51,10 +43,11 @@ contract MarginAccount is IMarginAccount, HubbleBase {
     *   decimals Decimals for the collateral being seized
     */
     struct LiquidationBuffer {
+        LiquidationStatus status;
+        uint8 decimals;
         uint incentivePerDollar;
         uint repayAble;
         uint priceCollateral;
-        uint8 decimals;
     }
 
     /* ****************** */
@@ -229,7 +222,7 @@ contract MarginAccount is IMarginAccount, HubbleBase {
     * @notice Determines if a trader's margin account can be liquidated now
     * @param trader Account to check liquidation status for
     * @param includeFunding whether to include funding payments before checking liquidation status
-    * @return _isLiquidatable Whether the account can be liquidated
+    * @return _isLiquidatable Whether the account can be liquidated; reason if not
     * @return repayAmount Trader's debt i.e. the max amount that they can be liquidated for
     * @return incentivePerDollar How many $ liquidator gets for each $ they repay
     *   e.g. they might get $1.05 for every $1 that is repayed.
@@ -238,27 +231,27 @@ contract MarginAccount is IMarginAccount, HubbleBase {
         override
         public
         view
-        returns(bool _isLiquidatable, uint repayAmount, uint incentivePerDollar)
+        returns(IMarginAccount.LiquidationStatus _isLiquidatable, uint repayAmount, uint incentivePerDollar)
     {
         int vusdBal = margin[VUSD_IDX][trader];
         if (includeFunding) {
             vusdBal -= clearingHouse.getTotalFunding(trader);
         }
         if (vusdBal >= 0) { // nothing to liquidate
-            return (false, 0, 0);
+            return (IMarginAccount.LiquidationStatus.NO_DEBT, 0, 0);
         }
 
         (uint256 notionalPosition,) = clearingHouse.getTotalNotionalPositionAndUnrealizedPnl(trader);
         if (notionalPosition != 0) { // Liquidate positions before liquidating margin account
-            return (false, 0, 0);
+            return (IMarginAccount.LiquidationStatus.OPEN_POSITIONS, 0, 0);
         }
 
         (int256 weighted, int256 spot) = weightedAndSpotCollateral(trader);
         if (weighted >= 0) {
-            return (false, 0, 0);
+            return (IMarginAccount.LiquidationStatus.ABOVE_THRESHOLD, 0, 0);
         }
 
-        _isLiquidatable = true;
+        // _isLiquidatable = IMarginAccount.LiquidationStatus.IS_LIQUIDATABLE;
         repayAmount = (-vusdBal).toUint256();
         incentivePerDollar = PRECISION; // get atleast $1 worth of collateral for every $1 paid
 
@@ -299,6 +292,9 @@ contract MarginAccount is IMarginAccount, HubbleBase {
     function liquidateExactRepay(address trader, uint repay, uint idx, uint minSeizeAmount) external whenNotPaused {
         clearingHouse.updatePositions(trader); // credits/debits funding
         LiquidationBuffer memory buffer = _getLiquidationInfo(trader, idx);
+        if (buffer.status != IMarginAccount.LiquidationStatus.IS_LIQUIDATABLE) {
+            revert NOT_LIQUIDATABLE(buffer.status);
+        }
         _liquidateExactRepay(buffer, trader, repay, idx, minSeizeAmount);
     }
 
@@ -314,6 +310,9 @@ contract MarginAccount is IMarginAccount, HubbleBase {
     function liquidateExactSeize(address trader, uint maxRepay, uint idx, uint seize) external whenNotPaused {
         clearingHouse.updatePositions(trader); // credits/debits funding
         LiquidationBuffer memory buffer = _getLiquidationInfo(trader, idx);
+        if (buffer.status != IMarginAccount.LiquidationStatus.IS_LIQUIDATABLE) {
+            revert NOT_LIQUIDATABLE(buffer.status);
+        }
         _liquidateExactSeize(buffer, trader, maxRepay, idx, seize);
     }
 
@@ -329,10 +328,16 @@ contract MarginAccount is IMarginAccount, HubbleBase {
     function liquidateFlexible(address trader, uint maxRepay, uint[] calldata idxs) external whenNotPaused {
         clearingHouse.updatePositions(trader); // credits/debits funding
         uint repayed;
-        uint repayAble;
         for (uint i = 0; i < idxs.length; i++) {
-            (repayed, repayAble) = liquidateFlexibleWithSingleSeize(trader, maxRepay, idxs[i]);
-            if (repayAble == 0) break;
+            LiquidationBuffer memory buffer = _getLiquidationInfo(trader, idxs[i]);
+            // revert only if trader has open positions, otherwise fail silently
+            if (buffer.status == IMarginAccount.LiquidationStatus.OPEN_POSITIONS) {
+                revert NOT_LIQUIDATABLE(buffer.status);
+            }
+            if (buffer.status != IMarginAccount.LiquidationStatus.IS_LIQUIDATABLE) {
+                break;
+            }
+            repayed = _liquidateFlexible(trader, maxRepay, idxs[i]);
             maxRepay -= repayed;
         }
     }
@@ -384,9 +389,8 @@ contract MarginAccount is IMarginAccount, HubbleBase {
     * @dev This function wil either seize all available collateral of type idx
     * OR settle debt completely with (most likely) left over collateral
     * @return Debt repayed <= repayble i.e. user's max debt
-    * @return User's debt that remains to be repayed
     */
-    function liquidateFlexibleWithSingleSeize(address trader, uint maxRepay, uint idx) public whenNotPaused returns(uint /* repayed */, uint /* repayAble */) {
+    function _liquidateFlexible(address trader, uint maxRepay, uint idx) internal whenNotPaused returns(uint /* repayed */) {
         LiquidationBuffer memory buffer = _getLiquidationInfo(trader, idx);
 
         // Q. Can user's margin cover the entire debt?
@@ -401,18 +405,17 @@ contract MarginAccount is IMarginAccount, HubbleBase {
                 idx,
                 0 // minSeizeAmount=0 implies accept whatever the oracle price is
             );
-            return (buffer.repayAble, 0); // repayed exactly repayAble and 0 is left to repay now
+            return buffer.repayAble; // repayed exactly repayAble and 0 is left to repay now
         }
 
         // A.2 No, collateral can not cover the entire debt. Seize all of it.
-        uint repayed = _liquidateExactSeize(
+        return _liquidateExactSeize(
             buffer,
             trader,
             maxRepay,
             idx,
             margin[idx][trader].toUint256()
         );
-        return (repayed, buffer.repayAble - repayed);
     }
 
     function _liquidateExactRepay(
@@ -456,16 +459,12 @@ contract MarginAccount is IMarginAccount, HubbleBase {
     */
     function _getLiquidationInfo(address trader, uint idx) internal view returns (LiquidationBuffer memory buffer) {
         require(idx > VUSD_IDX && idx < supportedCollateral.length, "collateral not seizable");
-
-        bool _isLiquidatable;
-        (_isLiquidatable, buffer.repayAble, buffer.incentivePerDollar) = isLiquidatable(trader, false);
-        if (!_isLiquidatable) {
-            revert("trader is above liquidation threshold or has open positions");
+        (buffer.status, buffer.repayAble, buffer.incentivePerDollar) = isLiquidatable(trader, false);
+        if (buffer.status == IMarginAccount.LiquidationStatus.IS_LIQUIDATABLE) {
+            Collateral memory coll = supportedCollateral[idx];
+            buffer.priceCollateral = oracle.getUnderlyingPrice(address(coll.token)).toUint256();
+            buffer.decimals = coll.decimals;
         }
-
-        Collateral memory coll = supportedCollateral[idx];
-        buffer.priceCollateral = oracle.getUnderlyingPrice(address(coll.token)).toUint256();
-        buffer.decimals = coll.decimals;
     }
 
     /**
@@ -534,7 +533,7 @@ contract MarginAccount is IMarginAccount, HubbleBase {
     /*     UI Helpers     */
     /* ****************** */
 
-    function supportedAssets() external view returns (Collateral[] memory) {
+    function supportedAssets() external view override returns (Collateral[] memory) {
         return supportedCollateral;
     }
 

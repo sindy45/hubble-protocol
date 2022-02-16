@@ -24,7 +24,8 @@ async function setupContracts(options = {}) {
             restrictedVUSD: true,
             governance: signers[0].address,
             setupAMM: true,
-            testOracle: true
+            testOracle: true,
+            mockMarginAccount: false
         },
         options
     )
@@ -55,7 +56,12 @@ async function setupContracts(options = {}) {
     ]))
     vusd = await setupUpgradeableProxy(options.restrictedVUSD ? 'RestrictedVusd' : 'VUSD', proxyAdmin.address, [ governance ], [ usdc.address ])
 
-    marginAccount = await setupUpgradeableProxy('MarginAccount', proxyAdmin.address, [ governance, vusd.address ], [ forwarder.address ])
+    marginAccount = await setupUpgradeableProxy(
+        `${options.mockMarginAccount ? 'Mock' : ''}MarginAccount`,
+        proxyAdmin.address,
+        [ governance, vusd.address ],
+        [ forwarder.address ]
+    )
     marginAccountHelper = await MarginAccountHelper.deploy(marginAccount.address, vusd.address, { nonce: nonce ? nonce++ : undefined, gasLimit })
     insuranceFund = await setupUpgradeableProxy('InsuranceFund', proxyAdmin.address, [ governance ])
 
@@ -444,6 +450,10 @@ function sleep(s) {
     return new Promise(resolve => setTimeout(resolve, s * 1000));
 }
 
+function bnToFloat(num, decimals = 6) {
+    return parseFloat(ethers.utils.formatUnits(num.toString(), decimals))
+}
+
 module.exports = {
     constants: { _1e6, _1e8, _1e12, _1e18, ZERO },
     BigNumber,
@@ -465,5 +475,6 @@ module.exports = {
     assertBounds,
     generateConfig,
     sleep,
-    addLiquidity
+    addLiquidity,
+    bnToFloat
 }
