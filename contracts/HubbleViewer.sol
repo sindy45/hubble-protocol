@@ -175,7 +175,7 @@ contract HubbleViewer is IHubbleViewer {
     /**
     * Get final margin fraction and liquidation price if user add/remove liquidity
     * @param idx AMM Index
-    * @param vUSD vUSD amount to be added in the pool (in 6 decimals)
+    * @param vUSD vUSD amount to be added/removed in the pool (in 6 decimals)
     * @param isRemove true is liquidity is being removed, false if added
     * @return expectedMarginFraction Resultant Margin fraction after the tx
     * @return liquidationPrice Mark Price at which maker will be liquidated
@@ -189,17 +189,24 @@ contract HubbleViewer is IHubbleViewer {
         (uint256 notionalPosition, int256 margin) = clearingHouse.getNotionalPositionAndMargin(trader, true /* includeFundingPayments */);
 
         IAMM amm = clearingHouse.amms(idx);
+        IVAMM vamm = amm.vamm();
 
         // get taker info
         (int256 takerPosSize,,) = amm.positions(trader);
         uint takerNotional = amm.getCloseQuote(takerPosSize);
         // get maker info
         (uint makerDebt,,,,,,) = amm.makers(trader);
-        // calculate total value of deposited liquidity after the tx
-        if (isRemove) {
-            makerDebt = 2 * (makerDebt - vUSD);
-        } else {
-            makerDebt = 2 * (makerDebt + vUSD);
+
+        {
+            // recalling because of stack too deep
+            (,,uint makerDToken,,,,) = amm.makers(trader);
+            // calculate total value of deposited liquidity after the tx
+            if (isRemove) {
+                (,uint dToken) = getMakerQuote(idx, vUSD, false /* isBase */, false /* deposit */);
+                makerDebt = 2 * makerDebt * (makerDToken - dToken) / makerDToken;
+            } else {
+                makerDebt = 2 * (makerDebt + vUSD);
+            }
         }
 
         {
@@ -331,7 +338,7 @@ contract HubbleViewer is IHubbleViewer {
     * @return fillAmount base/quote asset amount to be added/removed
     *         dToken - equivalent dToken amount
     */
-    function getMakerQuote(uint idx, uint inputAmount, bool isBase, bool deposit) external view returns (uint fillAmount, uint dToken) {
+    function getMakerQuote(uint idx, uint inputAmount, bool isBase, bool deposit) public view returns (uint fillAmount, uint dToken) {
         IAMM amm = clearingHouse.amms(idx);
         IVAMM vamm = amm.vamm();
 
