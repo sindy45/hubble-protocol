@@ -4,7 +4,8 @@ const {
     constants: { _1e6, _1e18, ZERO },
     setupContracts,
     addMargin,
-    assertBounds
+    assertBounds,
+    unbondAndRemoveLiquidity
 } = require('./utils')
 
 describe('Hubble Viewer', async function() {
@@ -93,11 +94,9 @@ describe('Hubble Viewer', async function() {
 
         it('alice removes liquidity', async function() {
             const liquidity = _1e18.mul(5)
-            const { fillAmount: vUsd } = await hubbleViewer.getMakerQuote(0, liquidity, true, false)
-            const { expectedMarginFraction, liquidationPrice } = await hubbleViewer.getMakerExpectedMFAndLiquidationPrice(alice, 0, vUsd, true)
-            const { vAsset, dToken } = await amm.makers(alice)
-            const dTokenAmount = liquidity.mul(dToken).div(vAsset)
-            await clearingHouse.removeLiquidity(0, dTokenAmount, 0, 0)
+            const { fillAmount, dToken } = await hubbleViewer.getMakerQuote(0, liquidity, true, false)
+            const { expectedMarginFraction, liquidationPrice } = await hubbleViewer.getMakerExpectedMFAndLiquidationPrice(alice, 0, fillAmount, true)
+            await unbondAndRemoveLiquidity(signers[0], amm, 0, dToken, 0, 0)
 
             expect((await clearingHouse.getMarginFraction(alice)).div(1e3)).to.eq(expectedMarginFraction.div(1e3))
             expect(parseInt(liquidationPrice.toNumber() / 1e6)).to.eq(1196)
@@ -124,7 +123,7 @@ describe('Hubble Viewer', async function() {
             // bob removes all liquidity
             const { quoteAsset: vUSD } = await hubbleViewer.calcWithdrawAmounts(dToken, 0)
             const { expectedMarginFraction } = await hubbleViewer.getMakerExpectedMFAndLiquidationPrice(bob.address, 0, vUSD, true)
-            await clearingHouse.connect(bob).removeLiquidity(0, dToken, 0, 0)
+            await unbondAndRemoveLiquidity(bob, amm, 0, dToken, 0, 0)
 
             expect((await clearingHouse.getMarginFraction(bob.address)).div(1e3)).to.eq(expectedMarginFraction.div(1e3))
         })

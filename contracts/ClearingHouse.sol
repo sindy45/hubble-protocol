@@ -17,6 +17,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     int256 override public maintenanceMargin;
     uint override public tradeFee;
     uint override public liquidationPenalty;
+    uint public fixedMakerLiquidationFee;
     int256 public minAllowableMargin;
 
     VUSD public vusd;
@@ -53,7 +54,13 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         minAllowableMargin = _minAllowableMargin;
         tradeFee = _tradeFee;
         liquidationPenalty = _liquidationPenalty;
+
+        fixedMakerLiquidationFee = 20 * PRECISION; // $20
     }
+
+    /* ****************** */
+    /*     Positions      */
+    /* ****************** */
 
     /**
     * @notice Open/Modify/Close Position
@@ -81,11 +88,24 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         marginAccount.transferOutVusd(address(insuranceFund), _tradeFee);
 
         if (isPositionIncreased) {
-            require(isAboveMinAllowableMargin(trader), "CH: Below Minimum Allowable Margin");
+            _assertMarginRequirement(trader);
         }
         emit PositionModified(trader, idx, baseAssetQuantity, quoteAsset, _blockTimestamp());
     }
 
+    /* ****************** */
+    /*     Liquidity      */
+    /* ****************** */
+
+    function commitLiquidity(uint idx, uint quoteAsset)
+        override
+        external
+    {
+        address maker = _msgSender();
+        updatePositions(maker);
+        amms[idx].commitLiquidity(maker, quoteAsset);
+        _assertMarginRequirement(maker);
+    }
     /**
     * @notice Add liquidity to the amm. The free margin from margin account is utilized for the same
     *   The liquidity can be provided on leverage.
@@ -94,11 +114,15 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     *   This means that user is actually adding 2 * baseAssetQuantity * markPrice.
     * @param minDToken Min amount of dTokens to receive. Used to cap slippage.
     */
-    function addLiquidity(uint idx, uint256 baseAssetQuantity, uint minDToken) override external whenNotPaused {
+    function addLiquidity(uint idx, uint256 baseAssetQuantity, uint minDToken) override external whenNotPaused returns (uint dToken) {
         address maker = _msgSender();
         updatePositions(maker);
-        amms[idx].addLiquidity(maker, baseAssetQuantity, minDToken);
-        require(isAboveMinAllowableMargin(maker), "CH: Below Minimum Allowable Margin");
+        dToken = amms[idx].addLiquidity(maker, baseAssetQuantity, minDToken);
+        _assertMarginRequirement(maker);
+    }
+
+    function _assertMarginRequirement(address trader) internal view {
+        require(isAboveMinAllowableMargin(trader), "CH: Below Minimum Allowable Margin");
     }
 
     /**
@@ -112,7 +136,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     function removeLiquidity(uint idx, uint256 dToken, uint minQuoteValue, uint minBaseValue) override external whenNotPaused {
         address maker = _msgSender();
         updatePositions(maker);
-        (int256 realizedPnl,) = amms[idx].removeLiquidity(maker, dToken, minQuoteValue, minBaseValue);
+        int256 realizedPnl = amms[idx].removeLiquidity(maker, dToken, minQuoteValue, minBaseValue);
         marginAccount.realizePnL(maker, realizedPnl);
     }
 
@@ -165,24 +189,24 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
             _calcMarginFraction(maker, false) < maintenanceMargin,
             "CH: Above Maintenance Margin"
         );
-        int256 realizedPnl;
-        uint quoteAsset;
-        for (uint i = 0; i < amms.length; i++) {
-            (,, uint dToken,,,,) = amms[i].makers(maker);
-            // @todo put checks on slippage
-            (int256 _realizedPnl, uint _quote) = amms[i].removeLiquidity(maker, dToken, 0, 0);
-            realizedPnl += _realizedPnl;
-            quoteAsset += _quote;
-        }
 
-        _disperseLiquidationFee(
-            _chargeFeeAndRealizePnL(
-                maker,
-                realizedPnl,
-                2 * quoteAsset,  // total liquidity value = 2 * quote value
-                true // isLiquidation
-            )
-        );
+        int256 realizedPnl;
+        bool isMaker;
+
+        // in-loop reusable var
+        int256 _realizedPnl;
+        bool _isMaker;
+
+        uint8 l = getAmmsLength();
+        for (uint8 i = 0; i < l; i++) {
+            (_realizedPnl, _isMaker) = amms[i].forceRemoveLiquidity(maker);
+            realizedPnl += _realizedPnl;
+            isMaker = isMaker || _isMaker;
+        }
+        if (isMaker) {
+            marginAccount.realizePnL(maker, realizedPnl - fixedMakerLiquidationFee.toInt256());
+            marginAccount.transferOutVusd(_msgSender(), fixedMakerLiquidationFee);
+        }
     }
 
     function _liquidateTaker(address trader) internal {
@@ -226,9 +250,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     {
         fee = isLiquidation ? _calculateLiquidationPenalty(quoteAsset) : _calculateTradeFee(quoteAsset);
         int256 marginCharge = realizedPnl - fee.toInt256();
-        if (marginCharge != 0) {
-            marginAccount.realizePnL(trader, marginCharge);
-        }
+        marginAccount.realizePnL(trader, marginCharge);
     }
 
     /* ****************** */
@@ -249,8 +271,8 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
 
     function isMaker(address trader) override public view returns(bool) {
         for (uint i = 0; i < amms.length; i++) {
-            (,, uint dToken,,,,) = amms[i].makers(trader);
-            if (dToken > 0) {
+            IAMM.Maker memory maker = amms[i].makers(trader);
+            if (maker.dToken > 0) {
                 return true;
             }
         }
@@ -296,8 +318,8 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         }
     }
 
-    function getAmmsLength() override external view returns(uint) {
-        return amms.length;
+    function getAmmsLength() override public view returns(uint8) {
+        return uint8(amms.length);
     }
 
     function getAMMs() external view returns (IAMM[] memory) {
@@ -337,8 +359,13 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     /* ****************** */
 
     function whitelistAmm(address _amm) external onlyGovernance {
-        emit MarketAdded(amms.length, _amm);
+        uint l = amms.length;
+        for (uint i = 0; i < l; i++) {
+            require(address(amms[i]) != _amm, "ch.whitelistAmm.duplicate_amm");
+        }
+        emit MarketAdded(l, _amm);
         amms.push(IAMM(_amm));
+        amms[l].putAmmInIgnition();
     }
 
     function setParams(

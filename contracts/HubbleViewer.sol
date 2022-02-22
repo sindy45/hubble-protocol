@@ -189,23 +189,21 @@ contract HubbleViewer is IHubbleViewer {
         (uint256 notionalPosition, int256 margin) = clearingHouse.getNotionalPositionAndMargin(trader, true /* includeFundingPayments */);
 
         IAMM amm = clearingHouse.amms(idx);
-        IVAMM vamm = amm.vamm();
 
         // get taker info
         (int256 takerPosSize,,) = amm.positions(trader);
         uint takerNotional = amm.getCloseQuote(takerPosSize);
+
         // get maker info
-        (uint makerDebt,,,,,,) = amm.makers(trader);
+        IAMM.Maker memory maker = amm.makers(trader);
 
         {
-            // recalling because of stack too deep
-            (,,uint makerDToken,,,,) = amm.makers(trader);
             // calculate total value of deposited liquidity after the tx
             if (isRemove) {
                 (,uint dToken) = getMakerQuote(idx, vUSD, false /* isBase */, false /* deposit */);
-                makerDebt = 2 * makerDebt * (makerDToken - dToken) / makerDToken;
+                maker.vUSD = maker.vUSD * (maker.dToken - dToken) / maker.dToken;
             } else {
-                makerDebt = 2 * (makerDebt + vUSD);
+                maker.vUSD += vUSD;
             }
         }
 
@@ -213,7 +211,7 @@ contract HubbleViewer is IHubbleViewer {
             // calculate effective notionalPosition
             (int256 makerPosSize,,) = getMakerPositionAndUnrealizedPnl(trader, idx);
             uint totalPosNotional = amm.getCloseQuote(makerPosSize + takerPosSize);
-            notionalPosition += _max(makerDebt + takerNotional, totalPosNotional);
+            notionalPosition += _max(2 * maker.vUSD + takerNotional, totalPosNotional);
         }
 
         {
@@ -249,8 +247,8 @@ contract HubbleViewer is IHubbleViewer {
         IAMM amm = clearingHouse.amms(idx);
         IVAMM vamm = amm.vamm();
 
-        (uint vUSD, uint vAsset, uint dToken,,,,) = amm.makers(_maker);
-        (position, openNotional, unrealizedPnl) = vamm.get_maker_position(dToken, vUSD, vAsset, dToken);
+        IAMM.Maker memory maker = amm.makers(_maker);
+        (position, openNotional, unrealizedPnl) = vamm.get_maker_position(maker.dToken, maker.vUSD, maker.vAsset, maker.dToken);
     }
 
     /**
@@ -303,9 +301,10 @@ contract HubbleViewer is IHubbleViewer {
     function getMakerLiquidity(address _maker, uint idx) external view returns (uint vAsset, uint vUSD, uint totalDeposited, uint dToken, uint vAssetBalance, uint vUSDBalance) {
         IAMM amm = clearingHouse.amms(idx);
         IVAMM vamm = amm.vamm();
-        (vUSD,, dToken,,,,) = amm.makers(_maker);
+        IAMM.Maker memory maker = amm.makers(_maker);
+        dToken = maker.dToken;
 
-        totalDeposited = 2 * vUSD;
+        totalDeposited = 2 * maker.vUSD;
         uint totalDTokenSupply = vamm.totalSupply();
         vUSDBalance = vamm.balances(0);
         vAssetBalance = vamm.balances(1);

@@ -200,8 +200,7 @@ def initialize (
     fee_gamma: uint256,
     adjustment_step: uint256,
     admin_fee: uint256,
-    ma_half_time: uint256,
-    initial_price: uint256
+    ma_half_time: uint256
 ):
     assert not self.isInitialized, "VAMM: contract is already initialized"
     self.math = math
@@ -224,14 +223,18 @@ def initialize (
     self.adjustment_step = adjustment_step
     self.admin_fee = admin_fee
 
-    self.price_scale = initial_price
-    self.price_oracle = initial_price
-    self.last_prices = initial_price
     self.last_prices_timestamp = block.timestamp
     self.ma_half_time = ma_half_time
     self.xcp_profit_a = 10**18
     self.kill_deadline = block.timestamp + KILL_DEADLINE_DT
     self.isInitialized = True
+
+@external
+def setinitialPrice(initial_price: uint256):
+    assert msg.sender == self.amm, 'VAMM: OnlyAMM'
+    self.price_scale = initial_price
+    self.price_oracle = initial_price
+    self.last_prices = initial_price
 
 @payable
 @external
@@ -428,8 +431,6 @@ def tweak_price(A_gamma: uint256[2],
     if needs_adjustment:
         self.not_adjusted = False
 
-
-# @payable
 @external
 @nonreentrant('lock')
 def exchange(i: uint256, j: uint256, dx: uint256, min_dy: uint256) -> (uint256, uint256):
@@ -852,7 +853,7 @@ def remove_liquidity(
         makerDToken: uint256,
         takerPosSize: int256,
         takerOpenNotional: uint256
-    ) -> (int256, uint256, int256, uint256[N_COINS]):
+    ) -> (int256, uint256, uint256, int256, uint256[N_COINS]):
     """
     This withdrawal method is very safe, does no complex math
     """
@@ -877,8 +878,7 @@ def remove_liquidity(
     self.D = D
     self.totalSupply -= amount
 
-    log RemoveLiquidity(msg.sender, d_balances, self.totalSupply)
-    return makerPosSize, totalOpenNotional, feeAdjustedPnl, d_balances
+    return makerPosSize, makerOpenNotional, totalOpenNotional, feeAdjustedPnl, d_balances
 
 @internal
 @view

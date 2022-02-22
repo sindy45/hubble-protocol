@@ -193,7 +193,7 @@ async function setupAmm(governance, args, ammOptions) {
             '146000000000000', // adjustment_step
             0, // admin_fee
             600, // ma_half_time
-            _1e18.mul(initialRate)
+            // _1e18.mul(initialRate)
         ]),
         { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit }
     )
@@ -206,22 +206,38 @@ async function setupAmm(governance, args, ammOptions) {
         { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit }
     )
     const amm = await ethers.getContractAt('AMM', ammProxy.address)
-    if (ammState) {
-        await amm.setAmmState(ammState, { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit })
-    }
     await vamm.setAMM(amm.address, { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit })
-    await clearingHouse.whitelistAmm(amm.address, { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit })
 
-    if (initialLiquidity) {
-        await addLiquidity(index, initialLiquidity, initialRate)
+    if (initialRate) {
+        // amm.liftOff() needs the price for the underlying to be set
+        await oracle.setUnderlyingTwapPrice(await amm.underlyingAsset(), _1e6.mul(initialRate))
     }
+
+    if (ammState > 0) { // Ignition or Active
+        await clearingHouse.whitelistAmm(amm.address, { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit })
+        if (initialLiquidity) {
+            await commitLiquidity(index, initialLiquidity, initialRate)
+        }
+        if (ammState == 2) { // Active
+            await amm.liftOff()
+        }
+    }
+
     return { amm, vamm }
 }
 
-async function addLiquidity(index, initialLiquidity, rate) {
+async function commitLiquidity(index, initialLiquidity, rate) {
     maker = (await ethers.getSigners())[9]
-    await addMargin(maker, _1e6.mul(initialLiquidity * rate * 2))
-    await clearingHouse.connect(maker).addLiquidity(index, _1e18.mul(initialLiquidity), 0)
+    const netUSD = _1e6.mul(initialLiquidity * rate * 2)
+    await addMargin(maker, netUSD)
+    await clearingHouse.connect(maker).commitLiquidity(index, netUSD)
+}
+
+async function addLiquidity(index, liquidity, rate, minDtoken = 0) {
+    maker = (await ethers.getSigners())[9]
+    const netUSD = _1e6.mul(liquidity * rate * 2)
+    await addMargin(maker, netUSD)
+    await clearingHouse.connect(maker).addLiquidity(index, _1e18.mul(liquidity), minDtoken)
 }
 
 async function setupRestrictedTestToken(name, symbol, decimals) {
@@ -348,7 +364,6 @@ async function stopImpersonateAcccount(address) {
 }
 
 async function gotoNextFundingTime(amm) {
-    // @todo check that blockTimeStamp is not already > nextFundingTime
     return network.provider.send('evm_setNextBlockTimestamp', [(await amm.nextFundingTime()).toNumber()]);
 }
 
@@ -459,6 +474,26 @@ function bnToFloat(num, decimals = 6) {
     return parseFloat(ethers.utils.formatUnits(num.toString(), decimals))
 }
 
+async function unbondAndRemoveLiquidity(signer, amm, index, dToken, minQuote, minBase) {
+    await amm.connect(signer).unbondLiquidity(dToken)
+    await gotoNextUnbondEpoch(amm, signer.address)
+    return clearingHouse.connect(signer).removeLiquidity(index, dToken, minQuote, minBase)
+}
+
+async function gotoNextWithdrawEpoch(amm, maker) {
+    return network.provider.send(
+        'evm_setNextBlockTimestamp',
+        [(await amm.makers(maker)).unbondTime.toNumber() + 86401]
+    );
+}
+
+async function gotoNextUnbondEpoch(amm, maker) {
+    return network.provider.send(
+        'evm_setNextBlockTimestamp',
+        [(await amm.makers(maker)).unbondTime.toNumber()]
+    );
+}
+
 module.exports = {
     constants: { _1e6, _1e8, _1e12, _1e18, ZERO },
     BigNumber,
@@ -481,6 +516,10 @@ module.exports = {
     assertBounds,
     generateConfig,
     sleep,
+    commitLiquidity,
     addLiquidity,
-    bnToFloat
+    bnToFloat,
+    unbondAndRemoveLiquidity,
+    gotoNextWithdrawEpoch,
+    gotoNextUnbondEpoch
 }

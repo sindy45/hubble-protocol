@@ -9,6 +9,7 @@
     "compile:CurveMath": "vyper -f abi,bytecode contracts/curve-v2/CurveMath.vy > contracts/curve-v2/CurveMath.txt",
     "compile:views": "vyper -f abi,bytecode contracts/curve-v2/Views.vy > contracts/curve-v2/Views.txt",
     "vyper-compile": "npm run compile:swap && npm run compile:CurveMath && npm run compile:views",
+    "compile:all": "npm run vyper-compile && npm run compile",
     "test": "npx hardhat test",
     "coverage": "hardhat coverage",
     "gas-reporter": "REPORT_GAS=true npx hardhat test"

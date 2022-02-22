@@ -10,6 +10,7 @@ const {
     gotoNextFundingTime,
     parseRawEvent,
     assertBounds,
+    unbondAndRemoveLiquidity,
     BigNumber
 } = utils
 
@@ -393,7 +394,7 @@ describe('Maker Tests', async function() {
             let { quoteAsset } = await getTradeDetails(tx)
             // maker1 removes all liquidity
             const { baseAsset: minBase, quoteAsset: minQuote } = await hubbleViewer.calcWithdrawAmounts(maker1Liquidity, 0)
-            tx = await clearingHouse.connect(maker1).removeLiquidity(0, maker1Liquidity, minQuote, minBase)
+            tx = await unbondAndRemoveLiquidity(maker1, amm, 0, maker1Liquidity, minQuote, minBase)
             const { realizedPnl } = (await parseRawEvent(tx, amm, 'LiquidityRemoved')).args
 
             expect(realizedPnl).to.eq(ZERO) // no reducePosition, fee profit is less than market loss
@@ -431,7 +432,7 @@ describe('Maker Tests', async function() {
             let { quoteAsset } = await getTradeDetails(tx)
             // maker1 removes all liquidity
             const { baseAsset: minBase, quoteAsset: minQuote } = await hubbleViewer.calcWithdrawAmounts(maker1Liquidity, 0)
-            tx = await clearingHouse.connect(maker1).removeLiquidity(0, maker1Liquidity, minQuote, minBase)
+            tx = await unbondAndRemoveLiquidity(maker1, amm, 0, maker1Liquidity, minQuote, minBase)
             const { realizedPnl } = (await parseRawEvent(tx, amm, 'LiquidityRemoved')).args
 
             expect(realizedPnl).to.eq(ZERO) // no reducePosition, fee profit is less than market loss
@@ -512,7 +513,7 @@ describe('Maker Tests', async function() {
 
             // maker1 removes all liquidity
             const { dToken: maker1Liquidity } = await amm.makers(maker1.address)
-            await clearingHouse.connect(maker1).removeLiquidity(0, maker1Liquidity, _1e6.mul(1e6), _1e18.mul(997))
+            await unbondAndRemoveLiquidity(maker1, amm, 0, maker1Liquidity, _1e6.mul(1e6), _1e18.mul(997))
 
             const takerNotionalPosition = await amm.getCloseQuote(baseAssetQuantity)
             expect(notionalPosition).eq(_1e6.mul(2e6).add(takerNotionalPosition))
@@ -557,7 +558,7 @@ describe('Maker Tests', async function() {
             assertBounds(unrealizedPnl, _1e6.mul(-5), ZERO) // -3.30
             // maker1 removes all liquidity
             const { dToken: maker1Liquidity } = await amm.makers(maker1.address)
-            await clearingHouse.connect(maker1).removeLiquidity(0, maker1Liquidity, _1e6.mul(997000), _1e18.mul(1000))
+            await unbondAndRemoveLiquidity(maker1, amm, 0, maker1Liquidity, _1e6.mul(997000), _1e18.mul(1000))
 
             const takerNotionalPosition = await amm.getCloseQuote(baseAssetQuantity)
             expect(notionalPosition).eq(_1e6.mul(2e6).add(takerNotionalPosition))
@@ -604,7 +605,7 @@ describe('Maker Tests', async function() {
 
             // maker1 removes all liquidity
             const { dToken: maker1Liquidity } = await amm.makers(maker1.address)
-            tx = await clearingHouse.connect(maker1).removeLiquidity(0, maker1Liquidity, _1e6.mul(0), _1e18.mul(0))
+            tx = await unbondAndRemoveLiquidity(maker1, amm, 0, maker1Liquidity, 0, 0)
 
             const newNotional = await amm.getCloseQuote(size)
             const maker1Notional = newNotional.mul(maker1Position).div(size.abs())
@@ -660,7 +661,7 @@ describe('Maker Tests', async function() {
 
             // maker1 removes all liquidity
             const { dToken: maker1Liquidity } = await amm.makers(maker1.address)
-            tx = await clearingHouse.connect(maker1).removeLiquidity(0, maker1Liquidity, _1e6.mul(0), _1e18.mul(0))
+            tx = await unbondAndRemoveLiquidity(maker1, amm, 0, maker1Liquidity, 0, 0)
 
             const newNotional = await amm.getCloseQuote(size)
             const maker1Notional = newNotional.mul(maker1Position.abs()).div(size)
@@ -720,7 +721,7 @@ describe('Maker Tests', async function() {
 
             // maker1 removes all liquidity
             const { dToken: maker1Liquidity } = await amm.makers(maker1.address)
-            tx = await clearingHouse.connect(maker1).removeLiquidity(0, maker1Liquidity, _1e6.mul(0), _1e18.mul(0))
+            tx = await unbondAndRemoveLiquidity(maker1, amm, 0, maker1Liquidity, 0, 0)
 
             const newNotional = await amm.getCloseQuote(size)
             const closedNotional = newNotional.mul(baseAssetQuantity.abs()).div(size)
@@ -776,7 +777,7 @@ describe('Maker Tests', async function() {
 
             // maker1 removes all liquidity
             const { dToken: maker1Liquidity } = await amm.makers(maker1.address)
-            tx = await clearingHouse.connect(maker1).removeLiquidity(0, maker1Liquidity, _1e6.mul(0), _1e18.mul(0))
+            tx = await unbondAndRemoveLiquidity(maker1, amm, 0, maker1Liquidity, 0, 0)
 
             const newNotional = await amm.getCloseQuote(size)
             const closedNotional = newNotional.mul(baseAssetQuantity).div(size.abs())
@@ -828,6 +829,7 @@ describe('Maker Tests', async function() {
             const amount = _1e18.mul(5)
             const { dToken } = await hubbleViewer.getMakerQuote(0, amount, true, true)
             await clearingHouse.connect(maker3).addLiquidity(0, amount, dToken)
+
             // maker3 longs
             const baseAssetQuantity = _1e18.mul(30)
             let tx = await clearingHouse.connect(maker3).openPosition(0, baseAssetQuantity, ethers.constants.MaxUint256)
@@ -839,18 +841,15 @@ describe('Maker Tests', async function() {
             await clearingHouse.openPosition(0, _1e18.mul(-200), 0)
 
             expect(await clearingHouse.isAboveMaintenanceMargin(maker3.address)).to.be.false // taker+maker marginFraction < MM
-            const initialIFBalance = await vusd.balanceOf(insuranceFund.address)
 
             // liquidate maker position
             await expect(clearingHouse.liquidateTaker(maker3.address)).to.be.revertedWith('CH: Remove Liquidity First')
             const { position: maker3Pos } = await hubbleViewer.getMakerPositionAndUnrealizedPnl(maker3.address, 0)
             tx = await clearingHouse.connect(signers[2]).liquidateMaker(maker3.address)
-            const { realizedPnl, quoteAsset } = (await parseRawEvent(tx, amm, 'LiquidityRemoved')).args
+            const { realizedPnl } = (await parseRawEvent(tx, amm, 'LiquidityRemoved')).args
 
-            const liquidationPenalty = quoteAsset.mul(2).mul(5e4).div(_1e6)
-            const toInsurance = liquidationPenalty.div(2)
-            expect(await vusd.balanceOf(signers[2].address)).to.eq(liquidationPenalty.sub(toInsurance)) // liquidation penalty
-            expect(await vusd.balanceOf(insuranceFund.address)).to.eq(toInsurance.add(initialIFBalance))
+            const liquidationPenalty = _1e6.mul(20) // fixed
+            expect(await vusd.balanceOf(signers[2].address)).to.eq(liquidationPenalty)
             expect(await marginAccount.margin(0, maker3.address)).eq(maker3Margin.sub(fee).add(realizedPnl).sub(liquidationPenalty))
 
             const makerPosition = await amm.makers(maker3.address)
@@ -886,10 +885,8 @@ describe('Maker Tests', async function() {
             tx = await clearingHouse.connect(signers[3]).liquidateMaker(maker3.address)
             const { realizedPnl, quoteAsset } = (await parseRawEvent(tx, amm, 'LiquidityRemoved')).args
 
-            let liquidationPenalty = quoteAsset.mul(2).mul(5e4).div(_1e6)
-            let toInsurance = liquidationPenalty.div(2)
-            expect(await vusd.balanceOf(signers[3].address)).to.eq(liquidationPenalty.sub(toInsurance)) // liquidation penalty
-            expect(await vusd.balanceOf(insuranceFund.address)).to.eq(toInsurance.add(initialIFBalance))
+            let liquidationPenalty = _1e6.mul(20)
+            expect(await vusd.balanceOf(signers[3].address)).to.eq(liquidationPenalty)
             expect(await marginAccount.margin(0, maker3.address)).eq(maker3Margin.sub(fee).add(realizedPnl).sub(liquidationPenalty))
 
             const makerPosition = await amm.makers(maker3.address)
@@ -1060,7 +1057,7 @@ describe('Maker Tests', async function() {
 
             // maker1 removes 1/3 liquidity
             const { quoteAsset, baseAsset } = await hubbleViewer.calcWithdrawAmounts(maker1Liquidity.div(3), 0)
-            await clearingHouse.connect(maker1).removeLiquidity(0, maker1Liquidity.div(3), quoteAsset, baseAsset.sub(1))
+            await unbondAndRemoveLiquidity(maker1, amm, 0, maker1Liquidity.div(3), quoteAsset, baseAsset.sub(1))
 
             tx = await clearingHouse.settleFunding() // funding event - 2
             const premium2 = (await parseRawEvent(tx, amm, 'FundingRateUpdated')).args.premiumFraction

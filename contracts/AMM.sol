@@ -16,6 +16,10 @@ contract AMM is IAMM, Governable {
     uint256 public constant fundingPeriod = 1 hours;
     int256 constant BASE_PRECISION = 1e18;
 
+    /* ****************** */
+    /*       Storage      */
+    /* ****************** */
+
     // System-wide config
 
     IOracle public oracle;
@@ -45,16 +49,9 @@ contract AMM is IAMM, Governable {
     }
     mapping(address => Position) override public positions;
 
-    struct Maker {
-        uint vUSD;
-        uint vAsset;
-        uint dToken;
-        int pos; // position
-        int posAccumulator; // value of global.posAccumulator until which pos has been updated
-        int lastPremiumFraction;
-        int lastPremiumPerDtoken;
-    }
-    mapping(address => Maker) override public makers;
+    mapping(address => Maker) internal _makers;
+    uint256 public withdrawPeriod;
+    uint256 public unbondPeriod;
 
     struct ReserveSnapshot {
         uint256 lastPrice;
@@ -63,22 +60,40 @@ contract AMM is IAMM, Governable {
     }
     ReserveSnapshot[] public reserveSnapshots;
 
-    /**
-    * @dev We do not deliberately have a Pause state. There is only a master-level pause at clearingHouse level
-    */
-    enum AMMState { Inactive, Ignition, Active }
-    AMMState public ammState;
+    // Ignition stuff
+
+    struct Ignition {
+        uint quoteAsset;
+        uint baseAsset;
+        uint dToken;
+    }
+    Ignition public ignition;
+    mapping (address => uint) public ignitionMap;
+
+    IAMM.AMMState override public ammState;
+
+    struct VarGroup1 {
+        uint minQuote;
+        uint minBase;
+        bool isLiquidation;
+    }
 
     uint256[50] private __gap;
 
-    // Events
+    /* ****************** */
+    /*       Events       */
+    /* ****************** */
 
-    event PositionChanged(address indexed trader, int256 size, uint256 openNotional, int256 realizedPnl);
+    // Generic AMM related events
     event FundingRateUpdated(int256 premiumFraction, int256 rate, uint256 underlyingPrice, uint256 timestamp, uint256 blockNumber);
     event FundingPaid(address indexed trader, int256 takerPosSize, int256 takerFundingPayment, int256 makerFundingPayment, int256 latestCumulativePremiumFraction, int256 latestPremiumPerDtoken);
     event Swap(int256 baseAsset, uint256 quoteAsset, uint256 lastPrice, uint256 openInterestNotional);
-    event LiquidityAdded(address indexed maker, uint dToken, uint baseAsset, uint quoteAsset, uint timestamp);
-    event LiquidityRemoved(address indexed maker, uint dToken, uint baseAsset, uint quoteAsset, uint timestamp, int256 realizedPnl);
+
+    // Trader related events
+    event PositionChanged(address indexed trader, int256 size, uint256 openNotional, int256 realizedPnl);
+    event LiquidityAdded(address indexed trader, uint dToken, uint baseAsset, uint quoteAsset, uint timestamp);
+    event LiquidityRemoved(address indexed trader, uint dToken, uint baseAsset, uint quoteAsset, int256 realizedPnl, bool isLiquidation, uint timestamp);
+    event PositionTranslated(address indexed trader, int256 baseAsset, uint256 quoteAsset);
 
     modifier onlyClearingHouse() {
         require(msg.sender == clearingHouse, "Only clearingHouse");
@@ -103,6 +118,8 @@ contract AMM is IAMM, Governable {
         underlyingAsset = _underlyingAsset;
         name = _name;
         fundingBufferPeriod = 15 minutes;
+        unbondPeriod = 3 days;
+        withdrawPeriod = 1 days;
 
         syncDeps(_registry);
     }
@@ -165,7 +182,7 @@ contract AMM is IAMM, Governable {
         Position storage position = positions[trader];
         position.lastPremiumFraction = latestCumulativePremiumFraction;
 
-        Maker storage maker = makers[trader];
+        Maker storage maker = _makers[trader];
         maker.lastPremiumFraction = latestCumulativePremiumFraction;
         maker.lastPremiumPerDtoken = latestPremiumPerDtoken;
 
@@ -178,12 +195,19 @@ contract AMM is IAMM, Governable {
         }
     }
 
+    /* ****************** */
+    /*       Makers       */
+    /* ****************** */
+
     function addLiquidity(address maker, uint baseAssetQuantity, uint minDToken)
         override
         external
         onlyClearingHouse
+        returns (uint dToken)
     {
-        require(ammState != AMMState.Inactive, "AMM.addLiquidity.amm_inactive");
+        require(ammState == AMMState.Active, "AMM.addLiquidity.not_active");
+        _ignitionCheck(maker);
+
         uint quoteAsset;
         uint baseAssetBal = vamm.balances(1);
         if (baseAssetBal == 0) {
@@ -192,73 +216,119 @@ contract AMM is IAMM, Governable {
             quoteAsset = baseAssetQuantity * vamm.balances(0) / baseAssetBal;
         }
 
-        uint _dToken = vamm.add_liquidity([quoteAsset, baseAssetQuantity], minDToken);
+        dToken = vamm.add_liquidity([quoteAsset, baseAssetQuantity], minDToken);
 
         // updates
-        Maker storage _maker = makers[maker];
+        Maker storage _maker = _makers[maker];
         if (_maker.dToken > 0) { // Maker only accumulates position when they had non-zero liquidity
             _maker.pos += (posAccumulator - _maker.posAccumulator) * _maker.dToken.toInt256() / 1e18;
         }
         _maker.vUSD += quoteAsset;
         _maker.vAsset += baseAssetQuantity;
-        _maker.dToken += _dToken;
+        _maker.dToken += dToken;
         _maker.posAccumulator = posAccumulator;
-        emit LiquidityAdded(maker, _dToken, baseAssetQuantity, quoteAsset, _blockTimestamp());
+        emit LiquidityAdded(maker, dToken, baseAssetQuantity, quoteAsset, _blockTimestamp());
+    }
+
+    function unbondLiquidity(uint dToken) external {
+        require(ammState == AMMState.Active, "AMM.unbondLiquidity.not_active");
+        address maker = msg.sender;
+        Maker storage _maker = _makers[maker];
+        require(_maker.dToken >= dToken, "AMM.unbondLiquidity.unbonding_too_much");
+        _maker.unbondAmount = dToken;
+        // club all withdrawals at the start of day
+        _maker.unbondTime = ((_blockTimestamp() + unbondPeriod) / 1 days) * 1 days;
+    }
+
+    function forceRemoveLiquidity(address maker)
+        override
+        external
+        onlyClearingHouse
+        returns (int256 realizedPnl, bool isMaker)
+    {
+        if (ammState == AMMState.Ignition) {
+            ignition.quoteAsset -= ignitionMap[maker];
+            ignitionMap[maker] = 0;
+            // amms being in ignition is not a frequent event, so do not charge a liquidation fee
+            return (0, false);
+        }
+
+        uint dToken = _makers[maker].dToken;
+        if (dToken > 0) {
+            isMaker = true;
+            // @todo partial liquidations
+            // @todo put checks on slippage
+            VarGroup1 memory varGroup1 = VarGroup1(0,0,true);
+            realizedPnl = _removeLiquidity(maker, dToken, varGroup1);
+        }
     }
 
     function removeLiquidity(address maker, uint amount, uint minQuote, uint minBase)
         override
         external
         onlyClearingHouse
-        returns (int256 /* realizedPnl */, uint /* quoteAsset */)
+        returns (int256 /* realizedPnl */)
     {
-        Maker memory _maker = makers[maker];
-        if (_maker.dToken == 0) {
-            return (0,0);
-        }
 
-        Position memory _taker = positions[maker];
+        Maker storage _maker = _makers[maker];
+        _maker.unbondAmount -= amount; // will revert if removing more than unbondAmount
+        uint _now = _blockTimestamp();
+        require(_now >= _maker.unbondTime, "still_unbonding");
+        require(_now <= _maker.unbondTime + withdrawPeriod, "withdraw_period_over");
+        // there's no need to reset the unbondTime, unbondAmount will take care of everything
+
+        VarGroup1 memory varGroup1 = VarGroup1(minQuote, minBase, false);
+        return _removeLiquidity(maker, amount, varGroup1);
+    }
+
+    function _removeLiquidity(address maker, uint amount, VarGroup1 memory varGroup1)
+        internal
+        returns (int256 /* realizedPnl */)
+    {
+        _ignitionCheck(maker);
+
+        if (amount == 0) return 0;
+
+        Maker storage _maker = _makers[maker];
+        Position storage position = positions[maker];
         // amount <= _maker.dToken will be asserted when updating maker.dToken
         (
             int256 makerPosition,
+            uint256 makerOpenNotional,
             uint256 totalOpenNotional,
-            int256 feeAdjustedPnl,
+            int256 realizedPnl, // feeAdjustedPnl
             uint[2] memory dBalances
         ) = vamm.remove_liquidity(
             amount,
-            [minQuote /* minimum QuoteAsset amount */, minBase /* minimum BaseAsset amount */],
+            [varGroup1.minQuote, varGroup1.minBase],
             _maker.vUSD,
             _maker.vAsset,
             _maker.dToken,
-            _taker.size,
-            _taker.openNotional
+            position.size,
+            position.openNotional
         );
 
+        // update maker info
         {
-            // update maker info
-            Maker storage __maker = makers[maker];
             uint diff = _maker.dToken - amount;
-
             if (diff == 0) {
-                __maker.pos = 0;
-                __maker.vAsset = 0;
-                __maker.vUSD = 0;
-                __maker.dToken = 0;
+                _maker.pos = 0;
+                _maker.vAsset = 0;
+                _maker.vUSD = 0;
+                _maker.dToken = 0;
             } else {
                 // muitiply by diff because a taker position will also be opened while removing liquidity and its funding payment is calculated seperately
-                __maker.pos = _maker.pos + (posAccumulator - _maker.posAccumulator) * diff.toInt256() / 1e18;
-                __maker.vAsset = _maker.vAsset * diff / _maker.dToken;
-                __maker.vUSD = _maker.vUSD * diff / _maker.dToken;
-                __maker.dToken = diff;
+                _maker.pos = _maker.pos + (posAccumulator - _maker.posAccumulator) * diff.toInt256() / 1e18;
+                _maker.vAsset = _maker.vAsset * diff / _maker.dToken;
+                _maker.vUSD = _maker.vUSD * diff / _maker.dToken;
+                _maker.dToken = diff;
             }
-            __maker.posAccumulator = posAccumulator;
+            _maker.posAccumulator = posAccumulator;
         }
 
-        int256 realizedPnl = feeAdjustedPnl;
         {
             if (makerPosition != 0) {
                 // translate impermanent position to a permanent one
-                Position storage position = positions[maker];
                 if (makerPosition * position.size < 0) { // reducing or reversing position
                     uint newNotional = getCloseQuote(position.size + makerPosition);
                     int256 reducePositionPnl = _getPnlWhileReducingPosition(position.size, position.openNotional, makerPosition, newNotional);
@@ -267,6 +337,8 @@ contract AMM is IAMM, Governable {
                 position.openNotional = totalOpenNotional;
                 position.size += makerPosition;
 
+                emit PositionTranslated(maker, makerPosition, makerOpenNotional);
+                _emitPositionChanged(maker, realizedPnl);
                 // update long and short open interest notional
                 if (makerPosition > 0) {
                     longOpenInterestNotional += makerPosition.toUint256();
@@ -276,11 +348,17 @@ contract AMM is IAMM, Governable {
             }
         }
 
-        emit LiquidityRemoved(maker, amount, dBalances[1] /** baseAsset */,
-            dBalances[0] /** quoteAsset */, _blockTimestamp(), realizedPnl);
-        return (realizedPnl, dBalances[0]);
+        emit LiquidityRemoved(
+            maker,
+            amount,
+            dBalances[1], // baseAsset
+            dBalances[0], // quoteAsset
+            realizedPnl,
+            varGroup1.isLiquidation,
+            _blockTimestamp()
+        );
+        return realizedPnl;
     }
-
 
     function getOpenNotionalWhileReducingPosition(
         int256 positionSize,
@@ -378,6 +456,44 @@ contract AMM is IAMM, Governable {
             : minNextValidFundingTime;
     }
 
+    function commitLiquidity(address maker, uint quoteAsset)
+        override
+        external
+        onlyClearingHouse
+    {
+        require(ammState == AMMState.Ignition, "AMM.addLiquidity.not_ignition");
+
+        // only need to track the USD side
+        quoteAsset /= 2;
+        ignitionMap[maker] += quoteAsset;
+        ignition.quoteAsset += quoteAsset;
+    }
+
+    function liftOff() external onlyGovernance {
+        require(ammState == AMMState.Ignition, "amm.liftOff.not_ignition");
+
+        uint256 underlyingPrice = getUnderlyingTwapPrice(15 minutes).toUint256();
+        require(underlyingPrice > 0, "amm.liftOff.underlyingPrice_not_set");
+        vamm.setinitialPrice(underlyingPrice * 1e12); // Swap.vy expect 18 decimal scale
+
+        if (ignition.quoteAsset > 0) {
+            ignition.baseAsset = ignition.quoteAsset * 1e18 / underlyingPrice;
+            ignition.dToken = vamm.add_liquidity([ignition.quoteAsset, ignition.baseAsset], 0);
+        }
+
+        ammState = AMMState.Active;
+        nextFundingTime = ((_blockTimestamp() + fundingPeriod) / 1 hours) * 1 hours;
+    }
+
+    function _ignitionCheck(address maker) internal {
+        if (ignitionMap[maker] == 0) return;
+        Maker storage _maker = _makers[maker];
+        _maker.vUSD = ignitionMap[maker];
+        _maker.vAsset = ignition.baseAsset * _maker.vUSD / ignition.quoteAsset;
+        _maker.dToken = ignition.dToken * _maker.vUSD / ignition.quoteAsset;
+        ignitionMap[maker] = 0;
+    }
+
     // View
 
     function getSnapshotLen() external view returns (uint256) {
@@ -398,8 +514,12 @@ contract AMM is IAMM, Governable {
         view
         returns(uint256 notionalPosition, int256 unrealizedPnl, int256 size, uint256 openNotional)
     {
+        if (ammState == AMMState.Ignition) {
+            return (ignitionMap[trader] * 2, 0, 0, 0);
+        }
+
         Position memory _taker = positions[trader];
-        Maker memory _maker = makers[trader];
+        Maker memory _maker = _makers[trader];
 
         (notionalPosition, size, unrealizedPnl, openNotional) = vamm.get_notional(
             _maker.dToken,
@@ -431,7 +551,7 @@ contract AMM is IAMM, Governable {
         // Maker funding payment
         latestPremiumPerDtoken = cumulativePremiumPerDtoken;
 
-        Maker memory maker = makers[trader];
+        Maker memory maker = _makers[trader];
         int256 dToken = maker.dToken.toInt256();
         if (dToken > 0) {
             int256 cpf = latestCumulativePremiumFraction - maker.lastPremiumFraction;
@@ -472,6 +592,10 @@ contract AMM is IAMM, Governable {
 
     function openInterestNotional() public view returns (uint256) {
         return longOpenInterestNotional + shortOpenInterestNotional;
+    }
+
+    function makers(address maker) override external view returns(Maker memory) {
+        return _makers[maker];
     }
 
     // internal
@@ -719,12 +843,8 @@ contract AMM is IAMM, Governable {
 
     // Governance
 
-    function setAmmState(AMMState _state) external onlyGovernance {
-        require(ammState != _state, "AMM.setAmmState.sameState");
-        ammState = _state;
-        if (_state == AMMState.Active) {
-            nextFundingTime = ((_blockTimestamp() + fundingPeriod) / 1 hours) * 1 hours;
-        }
+    function putAmmInIgnition() external onlyClearingHouse {
+        ammState = AMMState.Ignition;
     }
 
     function syncDeps(address _registry) public onlyGovernance {

@@ -20,8 +20,8 @@ interface IOracle {
 interface IClearingHouse {
     function openPosition(uint idx, int256 baseAssetQuantity, uint quoteAssetLimit) external;
     function closePosition(uint idx, uint quoteAssetLimit) external;
-    function addLiquidity(uint idx, uint256 baseAssetQuantity, uint minDToken) external;
-    function removeLiquidity(uint idx, uint256 amount, uint minQuoteValue, uint minBaseValue) external;
+    function addLiquidity(uint idx, uint256 baseAssetQuantity, uint minDToken) external returns (uint dToken);
+    function removeLiquidity(uint idx, uint256 dToken, uint minQuoteValue, uint minBaseValue) external;
     function settleFunding() external;
     function getTotalNotionalPositionAndUnrealizedPnl(address trader)
         external
@@ -32,7 +32,7 @@ interface IClearingHouse {
     function updatePositions(address trader) external;
     function getMarginFraction(address trader) external view returns(int256);
     function getTotalFunding(address trader) external view returns(int256 totalFunding);
-    function getAmmsLength() external view returns(uint);
+    function getAmmsLength() external view returns(uint8);
     function amms(uint idx) external view returns(IAMM);
     function maintenanceMargin() external view returns(int256);
     function minAllowableMargin() external view returns(int256);
@@ -46,6 +46,7 @@ interface IClearingHouse {
     function liquidate(address trader) external;
     function liquidateMaker(address trader) external;
     function liquidateTaker(address trader) external;
+    function commitLiquidity(uint idx, uint quoteAsset) external;
 }
 
 interface ERC20Detailed {
@@ -57,11 +58,30 @@ interface IInsuranceFund {
 }
 
 interface IAMM {
+    struct Maker {
+        uint vUSD;
+        uint vAsset;
+        uint dToken;
+        int pos; // position
+        int posAccumulator; // value of global.posAccumulator until which pos has been updated
+        int lastPremiumFraction;
+        int lastPremiumPerDtoken;
+        uint unbondTime;
+        uint unbondAmount;
+    }
+
+    /**
+    * @dev We do not deliberately have a Pause state. There is only a master-level pause at clearingHouse level
+    */
+    enum AMMState { Inactive, Ignition, Active }
+    function ammState() external returns(AMMState);
+
     function openPosition(address trader, int256 baseAssetQuantity, uint quoteAssetLimit)
         external
         returns (int realizedPnl, uint quoteAsset, bool isPositionIncreased);
-    function addLiquidity(address trader, uint baseAssetQuantity, uint minDToken) external;
-    function removeLiquidity(address maker, uint amount, uint minQuote, uint minBase) external returns (int256 realizedPnl, uint quoteAsset);
+    function addLiquidity(address trader, uint baseAssetQuantity, uint minDToken) external returns (uint dToken);
+    function removeLiquidity(address maker, uint amount, uint minQuote, uint minBase) external returns (int256 realizedPnl);
+    function forceRemoveLiquidity(address maker) external returns (int256 realizedPnl, bool isMaker);
     function getNotionalPositionAndUnrealizedPnl(address trader)
         external
         view
@@ -86,8 +106,10 @@ interface IAMM {
         external
         pure
         returns(uint256 remainOpenNotional, int realizedPnl);
-    function makers(address maker) external view returns(uint,uint,uint,int,int,int,int);
+    function makers(address maker) external view returns(Maker memory);
     function vamm() external view returns(IVAMM);
+    function commitLiquidity(address maker, uint quoteAsset) external;
+    function putAmmInIgnition() external;
 }
 
 interface IMarginAccount {
@@ -161,9 +183,10 @@ interface IVAMM {
         uint256 makerDToken,
         int256 takerPosSize,
         uint256 takerOpenNotional
-        ) external returns (int256, uint256, int256, uint[2] calldata);
+    ) external returns (int256, uint256, uint256, int256, uint[2] calldata);
     function get_maker_position(uint256 amount, uint256 vUSD, uint256 vAsset, uint256 makerDToken) external view returns (int256, uint256, int256);
     function totalSupply() external view returns (uint256);
+    function setinitialPrice(uint) external;
 }
 
 interface AggregatorV3Interface {
