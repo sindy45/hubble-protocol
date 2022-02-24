@@ -4,6 +4,7 @@ require('hardhat-spdx-license-identifier')
 require('solidity-coverage')
 require("hardhat-gas-reporter")
 require('hardhat-docgen')
+require('hardhat-contract-sizer')
 
 const PRIVATE_KEY = `0x${process.env.PRIVATE_KEY || 'ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80'}`
 
@@ -11,7 +12,15 @@ const PRIVATE_KEY = `0x${process.env.PRIVATE_KEY || 'ac0974bec39a17e36ba4a6b4d23
  * @type import('hardhat/config').HardhatUserConfig
  */
 module.exports = {
-    solidity: "0.8.9",
+    solidity: {
+        version: "0.8.9",
+        settings: {
+            optimizer: {
+                enabled: true,
+                runs: 10000
+            }
+        }
+    },
     networks: {
         /*** When forking fuji locally ***/
         // local: {
@@ -26,10 +35,9 @@ module.exports = {
         // },
         local: {
             url: 'http://localhost:8545',
-            chainId: 1337
+            chainId: 1337,
         },
         hardhat: {
-            allowUnlimitedContractSize: true,
             chainId: 1337
         },
         fuji: {

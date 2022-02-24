@@ -23,6 +23,7 @@ contract HubbleViewer is IHubbleViewer {
         uint256 openNotional;
         int256 unrealizedPnl;
         uint256 avgOpen;
+        int256 funding;
     }
 
     /// @dev UI Helper
@@ -116,18 +117,21 @@ contract HubbleViewer is IHubbleViewer {
     */
     function makerPositions(address maker) external view returns(Position[] memory positions) {
         uint l = clearingHouse.getAmmsLength();
+        IAMM amm;
         positions = new Position[](l);
         for (uint i = 0; i < l; i++) {
+            amm = clearingHouse.amms(i);
             (
                 positions[i].size,
                 positions[i].openNotional,
                 positions[i].unrealizedPnl
-            ) = getMakerPositionAndUnrealizedPnl(maker, i);
+            ) = _getMakerPositionAndUnrealizedPnl(maker, amm);
             if (positions[i].size == 0) {
                 positions[i].avgOpen = 0;
             } else {
                 positions[i].avgOpen = positions[i].openNotional * 1e18 / _abs(positions[i].size).toUint256();
             }
+            (,positions[i].funding,,) = amm.getPendingFundingPayment(maker);
         }
     }
 
@@ -244,11 +248,17 @@ contract HubbleViewer is IHubbleViewer {
         view
         returns (int256 position, uint openNotional, int256 unrealizedPnl)
     {
-        IAMM amm = clearingHouse.amms(idx);
-        IVAMM vamm = amm.vamm();
+        return _getMakerPositionAndUnrealizedPnl(_maker, clearingHouse.amms(idx));
+    }
 
+    function _getMakerPositionAndUnrealizedPnl(address _maker, IAMM amm)
+        internal
+        view
+        returns (int256 /* position */, uint /* openNotional */, int256 /* unrealizedPnl */)
+    {
+        IVAMM vamm = amm.vamm();
         IAMM.Maker memory maker = amm.makers(_maker);
-        (position, openNotional, unrealizedPnl) = vamm.get_maker_position(maker.dToken, maker.vUSD, maker.vAsset, maker.dToken);
+        return vamm.get_maker_position(maker.dToken, maker.vUSD, maker.vAsset, maker.dToken);
     }
 
     /**

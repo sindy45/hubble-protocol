@@ -29,6 +29,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
 
     event PositionModified(address indexed trader, uint indexed idx, int256 baseAsset, uint quoteAsset, uint256 timestamp);
     event PositionLiquidated(address indexed trader, uint indexed idx, int256 baseAsset, uint256 quoteAsset, uint256 timestamp);
+    event PositionTranslated(address indexed trader, uint indexed idx, int256 baseAsset, uint256 quoteAsset, uint256 timestamp);
     event MarketAdded(uint indexed idx, address indexed amm);
 
     constructor(address _trustedForwarder) HubbleBase(_trustedForwarder) {}
@@ -134,10 +135,14 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     *   Both the above params enable capping slippage in either direction.
     */
     function removeLiquidity(uint idx, uint256 dToken, uint minQuoteValue, uint minBaseValue) override external whenNotPaused {
+        require(dToken > 0, "dToken=0");
         address maker = _msgSender();
         updatePositions(maker);
-        int256 realizedPnl = amms[idx].removeLiquidity(maker, dToken, minQuoteValue, minBaseValue);
+        (int256 realizedPnl, uint quoteAsset, int baseAssetQuantity) = amms[idx].removeLiquidity(maker, dToken, minQuoteValue, minBaseValue);
         marginAccount.realizePnL(maker, realizedPnl);
+        if (baseAssetQuantity != 0) {
+            emit PositionTranslated(maker, idx, baseAssetQuantity, quoteAsset, _blockTimestamp());
+        }
     }
 
     function updatePositions(address trader) override public whenNotPaused {
@@ -191,21 +196,32 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         );
 
         int256 realizedPnl;
-        bool isMaker;
+        bool _isMaker;
 
         // in-loop reusable var
         int256 _realizedPnl;
-        bool _isMaker;
+        uint256 quoteAsset;
+        int256 baseAssetQuantity;
 
         uint8 l = getAmmsLength();
         for (uint8 i = 0; i < l; i++) {
-            (_realizedPnl, _isMaker) = amms[i].forceRemoveLiquidity(maker);
+            IAMM.Maker memory _maker = amms[i].makers(maker);
+            if (_maker.dToken == 0 && _maker.ignition == 0) continue;
+            (_realizedPnl, quoteAsset, baseAssetQuantity) = amms[i].forceRemoveLiquidity(maker);
+            _isMaker = true;
             realizedPnl += _realizedPnl;
-            isMaker = isMaker || _isMaker;
+            if (baseAssetQuantity != 0) {
+                emit PositionTranslated(maker, i, baseAssetQuantity, quoteAsset, _blockTimestamp());
+            }
         }
-        if (isMaker) {
-            marginAccount.realizePnL(maker, realizedPnl - fixedMakerLiquidationFee.toInt256());
+
+        // charge a fixed liquidation only if the account is a maker in atleast 1 of the markets
+        if (_isMaker) {
+            realizedPnl -= fixedMakerLiquidationFee.toInt256();
             marginAccount.transferOutVusd(_msgSender(), fixedMakerLiquidationFee);
+        }
+        if (realizedPnl != 0) {
+            marginAccount.realizePnL(maker, realizedPnl);
         }
     }
 

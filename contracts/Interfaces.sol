@@ -68,6 +68,7 @@ interface IAMM {
         int lastPremiumPerDtoken;
         uint unbondTime;
         uint unbondAmount;
+        uint ignition;
     }
 
     /**
@@ -80,8 +81,8 @@ interface IAMM {
         external
         returns (int realizedPnl, uint quoteAsset, bool isPositionIncreased);
     function addLiquidity(address trader, uint baseAssetQuantity, uint minDToken) external returns (uint dToken);
-    function removeLiquidity(address maker, uint amount, uint minQuote, uint minBase) external returns (int256 realizedPnl);
-    function forceRemoveLiquidity(address maker) external returns (int256 realizedPnl, bool isMaker);
+    function removeLiquidity(address maker, uint amount, uint minQuote, uint minBase) external returns (int /* realizedPnl */, uint /* makerOpenNotional */, int /* makerPosition */);
+    function forceRemoveLiquidity(address maker) external returns (int realizedPnl, uint makerOpenNotional, int makerPosition);
     function getNotionalPositionAndUnrealizedPnl(address trader)
         external
         view
