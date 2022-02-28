@@ -27,7 +27,6 @@ async function setupContracts(options = {}) {
             governance: signers[0].address,
             setupAMM: true,
             testOracle: true,
-            mockMarginAccount: false
         },
         options
     )
@@ -45,7 +44,7 @@ async function setupContracts(options = {}) {
         ethers.getContractFactory('MarginAccountHelper'),
         ethers.getContractFactory('Registry'),
         ethers.getContractFactory('ERC20Mintable'),
-        ethers.getContractFactory('AMM'),
+        ethers.getContractFactory(options.amm && options.amm.testAmm ? 'TestAmm' : 'AMM'),
         ethers.getContractFactory('contracts/MinimalForwarder.sol:MinimalForwarder'),
         ethers.getContractFactory('TransparentUpgradeableProxy'),
         ethers.getContractFactory('ProxyAdmin')
@@ -170,7 +169,7 @@ async function setupUpgradeableProxy(contract, admin, initArgs, deployArgs = [])
 }
 
 async function setupAmm(governance, args, ammOptions) {
-    const { initialRate, initialLiquidity, fee, ammState, index } = Object.assign(
+    const { initialRate, initialLiquidity, fee, ammState, index, testAmm } = Object.assign(
         {
             index: 0,
             initialRate: 1000, // for ETH perp
@@ -205,12 +204,15 @@ async function setupAmm(governance, args, ammOptions) {
         ammImpl.interface.encodeFunctionData('initialize', args.concat([ vamm.address, governance ])),
         { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit }
     )
-    const amm = await ethers.getContractAt('AMM', ammProxy.address)
+    const amm = await ethers.getContractAt(testAmm ? 'TestAmm' : 'AMM', ammProxy.address)
     await vamm.setAMM(amm.address, { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit })
 
     if (initialRate) {
         // amm.liftOff() needs the price for the underlying to be set
-        await oracle.setUnderlyingTwapPrice(await amm.underlyingAsset(), _1e6.mul(initialRate))
+        // set index price within price spread
+        const underlyingAsset = await amm.underlyingAsset();
+        await oracle.setUnderlyingTwapPrice(underlyingAsset, _1e6.mul(initialRate))
+        await oracle.setUnderlyingPrice(underlyingAsset, _1e6.mul(initialRate))
     }
 
     if (ammState > 0) { // Ignition or Active

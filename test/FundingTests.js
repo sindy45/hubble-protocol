@@ -228,9 +228,8 @@ describe('Funding Tests', function() {
 
     it('alice is in liquidation zone but saved by positive funding payment', async () => {
         ;({ swap, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, oracle, weth, insuranceFund } = await setupContracts())
-        await oracle.setUnderlyingPrice(weth.address, 1e6 * 2000) // $2k
         await marginAccount.whitelistCollateral(weth.address, 0.7 * 1e6) // weight = 0.7
-        wethAmount = _1e18
+        wethAmount = _1e18.mul(2)
         await weth.mint(alice, wethAmount)
         await weth.approve(marginAccount.address, wethAmount)
         await marginAccount.addMargin(1, wethAmount);
@@ -240,14 +239,15 @@ describe('Funding Tests', function() {
         await gotoNextFundingTime(amm)
 
         // alice margin falls below maintenance margin
-        const oracleTwap = _1e6.mul(700)
-        await oracle.setUnderlyingPrice(weth.address, oracleTwap) // reduces margin
-        await oracle.setUnderlyingTwapPrice(weth.address, oracleTwap) // +ve funding rate
+        await addMargin(bob, _1e6.mul(30000))
+        await clearingHouse.connect(bob).openPosition(0, _1e18.mul(84), ethers.constants.MaxUint256)
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
 
         await clearingHouse.connect(liquidator1).callStatic.liquidateTaker(alice) // doesn't throw exception
 
         // funding settled
+        const oracleTwap = _1e6.mul(700)
+        await oracle.setUnderlyingTwapPrice(weth.address, oracleTwap) // +ve funding rate
         await clearingHouse.settleFunding()
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.true
         await expect(

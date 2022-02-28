@@ -24,14 +24,14 @@ describe('Liquidation Tests', async function() {
     })
 
     it('addCollateral', async () => {
-        oraclePrice = 1e6 * 2000 // $2k
+        oraclePrice = 1e6 * 1000 // $1k
         await oracle.setUnderlyingPrice(weth.address, oraclePrice)
         await marginAccount.whitelistCollateral(weth.address, 0.7 * 1e6) // weight = 0.7
         expect((await marginAccount.isLiquidatable(alice, true))[0]).to.eq(2)
     })
 
     it('addMargin', async () => {
-        wethMargin = _1e18.div(2)
+        wethMargin = _1e18
         await weth.mint(alice, wethMargin)
         await weth.approve(marginAccount.address, wethMargin)
 
@@ -109,10 +109,10 @@ describe('Liquidation Tests', async function() {
     })
 
     it('liquidateExactSeize (incentivePerDollar = 5%)', async function() {
-        // the alice's debt is ~ -968, whereas .5 eth at weight = 0.7 and price = 2k allows for $700 margin
-        const seizeAmount = _1e18.div(10) // 0.1 ETH
+        // the alice's debt is ~ -968, whereas 1 eth at weight = 0.7 and price = 1k allows for $700 margin
+        const seizeAmount = _1e18.mul(2).div(10) // 0.2 ETH
 
-        // .1 * 2000 / (1 + .05) = ~190
+        // .2 * 1000 / (1 + .05) = ~190
         const repayAmount = seizeAmount.mul(oraclePrice).div(_1e18).mul(_1e6).div(incentivePerDollar)
         await vusd.connect(admin).mint(liquidator2.address, repayAmount)
         await vusd.connect(liquidator2).approve(marginAccount.address, repayAmount)
@@ -181,7 +181,7 @@ describe('Multi-collateral Liquidation Tests', async function() {
 
         // addCollateral
         avax = await setupRestrictedTestToken('AVAX', 'AVAX', 6)
-        oraclePrice = 1e6 * 2000 // $2k
+        oraclePrice = 1e6 * 1000 // $1k
         avaxOraclePrice = 1e6 * 50 // $50
         await Promise.all([
             oracle.setUnderlyingPrice(weth.address, oraclePrice),
@@ -192,7 +192,7 @@ describe('Multi-collateral Liquidation Tests', async function() {
         expect((await marginAccount.isLiquidatable(alice, true))[0]).to.eq(2) // NO_DEBT
 
         // addMargin
-        wethMargin = _1e18.div(4) // $500
+        wethMargin = _1e18.div(2) // $500
         avaxMargin = _1e6.mul(10) // $500
         await Promise.all([
             weth.mint(alice, wethMargin),

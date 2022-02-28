@@ -2,11 +2,10 @@
 
 pragma solidity 0.8.9;
 
-import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 import { Governable } from "./legos/Governable.sol";
-import { ERC20Detailed, IOracle, IRegistry, IVAMM, IAMM } from "./Interfaces.sol";
+import { ERC20Detailed, IOracle, IRegistry, IVAMM, IAMM, IClearingHouse } from "./Interfaces.sol";
 
 contract AMM is IAMM, Governable {
     using SafeCast for uint256;
@@ -39,6 +38,7 @@ contract AMM is IAMM, Governable {
 
     uint256 public longOpenInterestNotional;
     uint256 public shortOpenInterestNotional;
+    uint256 public MAX_ORACLE_SPREAD_RATIO; // scaled 2 decimals
 
     enum Side { LONG, SHORT }
     struct Position {
@@ -134,6 +134,7 @@ contract AMM is IAMM, Governable {
         fundingBufferPeriod = 15 minutes;
         unbondPeriod = 3 days;
         withdrawPeriod = 1 days;
+        MAX_ORACLE_SPREAD_RATIO = 20;
 
         syncDeps(_registry);
     }
@@ -172,9 +173,9 @@ contract AMM is IAMM, Governable {
         bool isLongPosition = position.size > 0 ? true : false;
         // sending market orders can fk the trader. @todo put some safe guards around price of liquidations
         if (isLongPosition) {
-            (realizedPnl, quoteAsset) = _reducePosition(trader, -position.size, 0);
+            (realizedPnl, quoteAsset) = _reducePosition(trader, -position.size, 0, true /* isLiquidation */);
         } else {
-            (realizedPnl, quoteAsset) = _reducePosition(trader, -position.size, type(uint).max);
+            (realizedPnl, quoteAsset) = _reducePosition(trader, -position.size, type(uint).max, true /* isLiquidation */);
         }
         _emitPositionChanged(trader, realizedPnl);
     }
@@ -544,9 +545,54 @@ contract AMM is IAMM, Governable {
             return (_makers[trader].ignition * 2, 0, 0, 0);
         }
 
-        Position memory _taker = positions[trader];
-        Maker memory _maker = _makers[trader];
+        (notionalPosition, size, unrealizedPnl, openNotional) = vamm.get_notional(
+            _makers[trader].dToken,
+            _makers[trader].vUSD,
+            _makers[trader].vAsset,
+            positions[trader].size,
+            positions[trader].openNotional
+        );
+    }
 
+    /**
+    * @notice returns false if
+    * (1-maxSpreadRatio)*indexPrice < markPrice < (1+maxSpreadRatio)*indexPrice
+    * else, true
+    */
+    function isOverSpreadLimit() external view returns(bool) {
+        if (ammState != AMMState.Active) return false;
+
+        uint oraclePrice = uint(oracle.getUnderlyingPrice(underlyingAsset));
+        uint markPrice = lastPrice();
+        uint oracleSpreadRatioAbs;
+        if (markPrice > oraclePrice) {
+            oracleSpreadRatioAbs = markPrice - oraclePrice;
+        } else {
+            oracleSpreadRatioAbs = oraclePrice - markPrice;
+        }
+        oracleSpreadRatioAbs = oracleSpreadRatioAbs * 100 / oraclePrice;
+
+        if (oracleSpreadRatioAbs >= MAX_ORACLE_SPREAD_RATIO) {
+            return true;
+        }
+        return false;
+    }
+
+    /**
+    * @notice returns notionalPosition and unrealizedPnl when isOverSpreadLimit()
+    * calculate margin fraction using markPrice and oraclePrice
+    * if mode = Maintenance_Margin, return values which have maximum margin fraction
+    * if mode = min_allowable_margin, return values which have minimum margin fraction
+    */
+    function getOracleBasedPnl(address trader, int256 margin, IClearingHouse.Mode mode) override external view returns (uint notionalPosition, int256 unrealizedPnl) {
+        Maker memory _maker = _makers[trader];
+        if (ammState == AMMState.Ignition) {
+            return (_maker.ignition * 2, 0);
+        }
+
+        Position memory _taker = positions[trader];
+        int256 size;
+        uint openNotional;
         (notionalPosition, size, unrealizedPnl, openNotional) = vamm.get_notional(
             _maker.dToken,
             _maker.vUSD,
@@ -554,6 +600,47 @@ contract AMM is IAMM, Governable {
             _taker.size,
             _taker.openNotional
         );
+
+        if (notionalPosition == 0) {
+            return (0, 0);
+        }
+
+        int256 marginFraction = (margin + unrealizedPnl) * 1e6 / notionalPosition.toInt256();
+        (int oracleBasedNotional, int256 oracleBasedUnrealizedPnl, int256 oracleBasedMF) = _getOracleBasedMarginFraction(
+            trader,
+            margin,
+            openNotional,
+            size
+        );
+
+        if (mode == IClearingHouse.Mode.Maintenance_Margin) {
+            if (oracleBasedMF > marginFraction) {
+                notionalPosition = oracleBasedNotional.toUint256();
+                unrealizedPnl = oracleBasedUnrealizedPnl;
+            }
+        } else if (oracleBasedMF < marginFraction) { // IClearingHouse.Mode.Min_Allowable_Margin
+            notionalPosition = oracleBasedNotional.toUint256();
+            unrealizedPnl = oracleBasedUnrealizedPnl;
+        }
+    }
+
+    function _getOracleBasedMarginFraction(address trader, int256 margin, uint256 openNotional, int256 size)
+        internal
+        view
+        returns (int oracleBasedNotional, int256 oracleBasedUnrealizedPnl, int256 marginFraction)
+    {
+        int256 oraclePrice = oracle.getUnderlyingPrice(underlyingAsset);
+        oracleBasedNotional = oraclePrice * abs(size) / BASE_PRECISION;
+        if (size > 0) {
+            oracleBasedUnrealizedPnl = oracleBasedNotional - openNotional.toInt256();
+        } else if (size < 0) {
+            oracleBasedUnrealizedPnl = openNotional.toInt256() - oracleBasedNotional;
+        }
+        // notionalPostion = max(makerDebt, makerPositionNotional) + takerPositionalNotional
+        // = max(makerDebt + takerPositionNotional, makerPositionNotional + takerPositionNotional)
+        int256 oracleBasedTakerNotional = oraclePrice * abs(positions[trader].size) / BASE_PRECISION;
+        oracleBasedNotional = _max(2 * _makers[trader].vUSD.toInt256() + oracleBasedTakerNotional, oracleBasedNotional);
+        marginFraction = (margin + oracleBasedUnrealizedPnl) * 1e6 / oracleBasedNotional;
     }
 
     function getPendingFundingPayment(address trader)
@@ -638,10 +725,11 @@ contract AMM is IAMM, Governable {
     * @dev Go long on an asset
     * @param baseAssetQuantity Exact base asset quantity to go long
     * @param max_dx Maximum amount of quote asset to be used while longing baseAssetQuantity. Lower means longing at a lower price (desirable).
+    * @param isLiquidation true if liquidaiton else false
     * @return quoteAssetQuantity quote asset utilised. quoteAssetQuantity / baseAssetQuantity was the average rate.
       quoteAssetQuantity <= max_dx
     */
-    function _long(int256 baseAssetQuantity, uint max_dx) internal returns (uint256 quoteAssetQuantity) {
+    function _long(int256 baseAssetQuantity, uint max_dx, bool isLiquidation) internal returns (uint256 quoteAssetQuantity) {
         require(baseAssetQuantity > 0, "VAMM._long: baseAssetQuantity is <= 0");
 
         uint _lastPrice;
@@ -651,6 +739,13 @@ contract AMM is IAMM, Governable {
             baseAssetQuantity.toUint256(), // long exactly. Note that statement asserts that baseAssetQuantity >= 0
             max_dx
         ); // 6 decimals precision
+
+        // longs not allowed if market price > (1 + MAX_ORACLE_SPREAD_RATIO)*index price
+        uint256 oraclePrice = uint(oracle.getUnderlyingPrice(underlyingAsset));
+        oraclePrice = oraclePrice * (100 + MAX_ORACLE_SPREAD_RATIO) / 100;
+        if (!isLiquidation && _lastPrice > oraclePrice) {
+            revert("VAMM._long: longs not allowed");
+        }
 
         _addReserveSnapshot(_lastPrice);
         // since maker position will be opposite of the trade
@@ -662,10 +757,11 @@ contract AMM is IAMM, Governable {
     * @dev Go short on an asset
     * @param baseAssetQuantity Exact base asset quantity to short
     * @param min_dy Minimum amount of quote asset to be used while shorting baseAssetQuantity. Higher means shorting at a higher price (desirable).
+    * @param isLiquidation true if liquidaiton else false
     * @return quoteAssetQuantity quote asset utilised. quoteAssetQuantity / baseAssetQuantity was the average short rate.
       quoteAssetQuantity >= min_dy.
     */
-    function _short(int256 baseAssetQuantity, uint min_dy) internal returns (uint256 quoteAssetQuantity) {
+    function _short(int256 baseAssetQuantity, uint min_dy, bool isLiquidation) internal returns (uint256 quoteAssetQuantity) {
         require(baseAssetQuantity < 0, "VAMM._short: baseAssetQuantity is >= 0");
 
         uint _lastPrice;
@@ -676,6 +772,12 @@ contract AMM is IAMM, Governable {
             min_dy
         );
 
+        // shorts not allowed if market price < (1 - MAX_ORACLE_SPREAD_RATIO)*index price
+        uint256 oraclePrice = uint(oracle.getUnderlyingPrice(underlyingAsset));
+        oraclePrice = oraclePrice * (100 - MAX_ORACLE_SPREAD_RATIO) / 100;
+        if (!isLiquidation && _lastPrice < oraclePrice) {
+            revert("VAMM._short: shorts not allowed");
+        }
         _addReserveSnapshot(_lastPrice);
         // since maker position will be opposite of the trade
         posAccumulator -= baseAssetQuantity * 1e18 / vamm.totalSupply().toInt256();
@@ -734,10 +836,10 @@ contract AMM is IAMM, Governable {
     {
         if (baseAssetQuantity > 0) { // Long - purchase baseAssetQuantity
             longOpenInterestNotional += baseAssetQuantity.toUint256();
-            quoteAsset = _long(baseAssetQuantity, quoteAssetLimit);
+            quoteAsset = _long(baseAssetQuantity, quoteAssetLimit, false /* isLiquidation */);
         } else { // Short - sell baseAssetQuantity
             shortOpenInterestNotional += (-baseAssetQuantity).toUint256();
-            quoteAsset = _short(baseAssetQuantity, quoteAssetLimit);
+            quoteAsset = _short(baseAssetQuantity, quoteAssetLimit, false /* isLiquidation */);
         }
         positions[trader].size += baseAssetQuantity; // -ve baseAssetQuantity will increase short position
         positions[trader].openNotional += quoteAsset;
@@ -749,10 +851,10 @@ contract AMM is IAMM, Governable {
     {
         Position memory position = positions[trader];
         if (abs(position.size) >= abs(baseAssetQuantity)) {
-            (realizedPnl, quoteAsset) = _reducePosition(trader, baseAssetQuantity, quoteAssetLimit);
+            (realizedPnl, quoteAsset) = _reducePosition(trader, baseAssetQuantity, quoteAssetLimit, false /* isLiqudation */);
         } else {
             uint closedRatio = (quoteAssetLimit * abs(position.size).toUint256()) / abs(baseAssetQuantity).toUint256();
-            (realizedPnl, quoteAsset) = _reducePosition(trader, -position.size, closedRatio);
+            (realizedPnl, quoteAsset) = _reducePosition(trader, -position.size, closedRatio, false /* isLiqudation */);
 
             // this is required because the user might pass a very less value (slippage-prone) while shorting
             if (quoteAssetLimit >= quoteAsset) {
@@ -766,7 +868,7 @@ contract AMM is IAMM, Governable {
     /**
     * @dev validate that baseAssetQuantity <= position.size should be performed before the call to _reducePosition
     */
-    function _reducePosition(address trader, int256 baseAssetQuantity, uint quoteAssetLimit)
+    function _reducePosition(address trader, int256 baseAssetQuantity, uint quoteAssetLimit, bool isLiquidation)
         internal
         returns (int realizedPnl, uint256 quoteAsset)
     {
@@ -777,10 +879,10 @@ contract AMM is IAMM, Governable {
 
         if (isLongPosition) {
             longOpenInterestNotional -= (-baseAssetQuantity).toUint256();
-            quoteAsset = _short(baseAssetQuantity, quoteAssetLimit);
+            quoteAsset = _short(baseAssetQuantity, quoteAssetLimit, isLiquidation);
         } else {
             shortOpenInterestNotional -= baseAssetQuantity.toUint256();
-            quoteAsset = _long(baseAssetQuantity, quoteAssetLimit);
+            quoteAsset = _long(baseAssetQuantity, quoteAssetLimit, isLiquidation);
         }
         uint256 notionalPosition = getCloseQuote(position.size + baseAssetQuantity);
         (position.openNotional, realizedPnl) = getOpenNotionalWhileReducingPosition(position.size, notionalPosition, unrealizedPnl, baseAssetQuantity);
@@ -882,10 +984,13 @@ contract AMM is IAMM, Governable {
 
     // Pure
 
-    function abs(int x) private pure returns (int) {
+    function abs(int x) internal pure returns (int) {
         return x >= 0 ? x : -x;
     }
 
+    function _max(int x, int y) private pure returns (int) {
+        return x >= y ? x : y;
+    }
     // Governance
 
     function putAmmInIgnition() external onlyClearingHouse {

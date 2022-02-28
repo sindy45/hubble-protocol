@@ -31,6 +31,7 @@ contract Oracle is Governable {
             return stablePrice[underlying];
         }
         (,answer,,,) = AggregatorV3Interface(chainLinkAggregatorMap[underlying]).latestRoundData();
+        require(answer > 0, "Oracle.getUnderlyingPrice.non_positive");
         answer /= 100;
     }
 

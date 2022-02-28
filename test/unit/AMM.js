@@ -8,6 +8,7 @@ const {
     addMargin,
     commitLiquidity,
     gotoNextWithdrawEpoch,
+    setupRestrictedTestToken,
     gotoNextUnbondEpoch
 } = utils
 
@@ -309,6 +310,7 @@ describe('AMM states', async function() {
         expect(markets.length).to.eq(1)
         expect(markets[0].amm).to.eq(amm.address)
         expect(markets[0].underlying).to.eq(weth.address)
+        expect(await amm.ammState()).to.eq(1)
     })
 
     it('commitLiquidity works when ammState=Ignition', async () => {
@@ -327,6 +329,7 @@ describe('AMM states', async function() {
 
     it('set ammState=Active', async () => {
         await amm.liftOff()
+        expect(await amm.ammState()).to.eq(2)
     })
 
     it('[add,unbond]Liquidity/openPosition works when ammState=Active', async () => {
@@ -432,6 +435,191 @@ describe('AMM states', async function() {
             clearingHouse.openPosition(0, -10000, 0)
         ])
     }
+})
+
+describe('Price Spread Check', async function() {
+    beforeEach(async function() {
+        signers = await ethers.getSigners()
+        ;([ alice ] = signers.map(s => s.address))
+        bob = signers[1]
+
+        contracts = await setupContracts({ tradeFee: TRADE_FEE, amm: { testAmm: true }})
+        ;({ marginAccount, oracle, clearingHouse, amm, vusd, weth, swap, hubbleViewer } = contracts)
+
+        // addCollateral, using a different collateral to make a trader liquidable easily
+        avax = await setupRestrictedTestToken('AVAX', 'AVAX', 6)
+        avaxOraclePrice = 1e6 * 100 // $100
+        await Promise.all([
+            oracle.setUnderlyingPrice(avax.address, avaxOraclePrice),
+            marginAccount.whitelistCollateral(avax.address, 0.8 * 1e6) // weight = 0.8
+        ])
+
+        // addMargin
+        avaxMargin = _1e6.mul(20) // $2000
+        await Promise.all([
+            avax.mint(alice, avaxMargin),
+            avax.approve(marginAccount.address, avaxMargin),
+        ])
+        await marginAccount.addMargin(1, avaxMargin)
+    })
+
+    it('only longs allowed when markPrice is below price spread', async function() {
+        // markPrice = 1000, indexPrice = 1000/0.8 = 1250
+        await oracle.setUnderlyingPrice(weth.address, _1e6.mul(1250))
+        expect(await amm.isOverSpreadLimit()).to.be.true
+        await expect(
+            clearingHouse.openPosition(0, _1e18.mul(-5), 0)
+        ).to.be.revertedWith('VAMM._short: shorts not allowed')
+
+        // longs allowed
+        await clearingHouse.openPosition(0, _1e18.mul(5), ethers.constants.MaxUint256)
+    })
+
+    it('only shorts allowed when markPrice is above price spread', async function() {
+        // markPrice = 1000, indexPrice = 1000/1.2 = 833
+        await oracle.setUnderlyingPrice(weth.address, _1e6.mul(833))
+        expect(await amm.isOverSpreadLimit()).to.be.true
+        await expect(
+            clearingHouse.openPosition(0, _1e18.mul(5), ethers.constants.MaxUint256)
+        ).to.be.revertedWith('VAMM._long: longs not allowed')
+
+        // shorts allowed
+        await clearingHouse.openPosition(0, _1e18.mul(-5), 0)
+    })
+
+    // marginFraction < maintenanceMargin < minAllowableMargin < oracleBasedMF
+    it('amm isOverSpreadLimit on long side', async function() {
+        expect(await amm.isOverSpreadLimit()).to.be.false
+        await clearingHouse.openPosition(0, _1e18.mul(-5), 0)
+
+        // bob makes counter-trade to drastically reduce amm based marginFraction
+        avaxMargin = _1e6.mul(2000)
+        await Promise.all([
+            avax.mint(bob.address, avaxMargin),
+            avax.connect(bob).approve(marginAccount.address, avaxMargin),
+        ])
+        await marginAccount.connect(bob).addMargin(1, avaxMargin)
+        await clearingHouse.connect(bob).openPosition(0, _1e18.mul(120), ethers.constants.MaxUint256)
+
+        // Get amm over spread limit
+        await oracle.setUnderlyingPrice(weth.address, _1e6.mul(700))
+        expect(await amm.isOverSpreadLimit()).to.be.true
+
+        // evaluate both MFs independently from the AMM
+        const margin = await marginAccount.getNormalizedMargin(alice) // avaxMargin * avaxOraclePrice * .8 - tradeFee and no funding payments
+        ;([
+            { unrealizedPnl, notionalPosition },
+            { marginFraction: oracleBasedMF },
+            minAllowableMargin,
+            maintenanceMargin,
+        ] = await Promise.all([
+            amm.getNotionalPositionAndUnrealizedPnl(alice),
+            amm.getOracleBasedMarginFraction(alice, margin),
+            clearingHouse.minAllowableMargin(),
+            clearingHouse.maintenanceMargin()
+        ]))
+        const marginFraction = margin.add(unrealizedPnl).mul(_1e6).div(notionalPosition)
+
+        // asserting that we have indeed created the conditions we are testing in this test case
+        expect(marginFraction.lt(maintenanceMargin)).to.be.true
+        expect(maintenanceMargin.lt(minAllowableMargin)).to.be.true
+        expect(minAllowableMargin.lt(oracleBasedMF)).to.be.true
+
+        // then assert that clearingHouse has indeed to oracle based pricing for liquidations but marginFraction for trades
+        expect(
+            await clearingHouse.calcMarginFraction(alice, true, 0)
+        ).to.eq(oracleBasedMF)
+        expect(
+            await clearingHouse.calcMarginFraction(alice, true, 1)
+        ).to.eq(marginFraction)
+
+        // cannot make a trade
+        await expect(
+            clearingHouse.assertMarginRequirement(alice)
+        ).to.be.revertedWith('CH: Below Minimum Allowable Margin')
+
+        // However, when it comes to liquidation, oracle based pricing will kick in again
+        expect(await clearingHouse.calcMarginFraction(alice, false, 0 /* Maintenance_Margin */)).to.eq(oracleBasedMF)
+        await expect(
+            clearingHouse.liquidate(alice)
+        ).to.be.revertedWith('CH: Above Maintenance Margin')
+
+        // Finally, trader will be liquidable once both MFs are < maintenanceMargin
+        await oracle.setUnderlyingPrice(weth.address, _1e6.mul(1500))
+        ;({ marginFraction: oracleBasedMF } = await amm.getOracleBasedMarginFraction(alice, margin))
+        expect(oracleBasedMF.lt(maintenanceMargin)).to.be.true
+        await clearingHouse.liquidate(alice)
+    })
+
+    // we will assert that oracle based pricing kicks in when lastPrice = ~998, indexPrice = 1300
+    // oracleBasedMF < maintenanceMargin < minAllowableMargin < marginFraction
+    it('amm isOverSpreadLimit on short side', async function() {
+        expect(await amm.isOverSpreadLimit()).to.be.false
+        await clearingHouse.openPosition(0, _1e18.mul(-5), 0)
+
+        await oracle.setUnderlyingPrice(weth.address, _1e6.mul(1300))
+        expect(await amm.isOverSpreadLimit()).to.be.true
+
+        // evaluate both MFs independently from the AMM
+        let margin = await marginAccount.getNormalizedMargin(alice) // avaxMargin * avaxOraclePrice * .8 - tradeFee and no funding payments
+        ;([
+            { unrealizedPnl, notionalPosition },
+            { marginFraction: oracleBasedMF },
+            minAllowableMargin,
+            maintenanceMargin,
+        ] = await Promise.all([
+            amm.getNotionalPositionAndUnrealizedPnl(alice),
+            amm.getOracleBasedMarginFraction(alice, margin),
+            clearingHouse.minAllowableMargin(),
+            clearingHouse.maintenanceMargin()
+        ]))
+        let marginFraction = margin.add(unrealizedPnl).mul(_1e6).div(notionalPosition)
+
+        // asserting that we have indeed created the conditions we are testing in this test case
+        expect(oracleBasedMF.lt(maintenanceMargin)).to.be.true
+        expect(maintenanceMargin.lt(minAllowableMargin)).to.be.true
+        expect(minAllowableMargin.lt(marginFraction)).to.be.true // trade would be allowed based on amm alone
+
+        // then assert that clearingHouse has indeed to oracle based pricing for trades but marginFraction for liquidations
+        expect(
+            await clearingHouse.calcMarginFraction(alice, true, 0)
+        ).to.eq(marginFraction)
+        expect(
+            await clearingHouse.calcMarginFraction(alice, true, 1)
+        ).to.eq(oracleBasedMF)
+
+        // cannot make a trade
+        await expect(
+            clearingHouse.assertMarginRequirement(alice)
+        ).to.be.revertedWith('CH: Below Minimum Allowable Margin')
+
+        // can reduce position however (doesn't revert)
+        await clearingHouse.callStatic.closePosition(0, ethers.constants.MaxUint256)
+
+        // However, when it comes to liquidation, amm based marginFraction will kick in again
+        expect(await clearingHouse.calcMarginFraction(alice, false, 0 /* Maintenance_Margin */)).to.eq(marginFraction)
+        await expect(
+            clearingHouse.liquidate(alice)
+        ).to.be.revertedWith('CH: Above Maintenance Margin')
+
+        // Finally, trader will be liquidable once both MFs are < maintenanceMargin
+        // dropping collateral price to make amm based MF fall below maintenanceMargin
+        await oracle.setUnderlyingPrice(avax.address, _1e6.mul(30))
+        margin = await marginAccount.getNormalizedMargin(alice)
+        ;([
+            { unrealizedPnl, notionalPosition },
+            { marginFraction: oracleBasedMF }
+        ] = await Promise.all([
+            amm.getNotionalPositionAndUnrealizedPnl(alice),
+            amm.getOracleBasedMarginFraction(alice, margin)
+        ]))
+        marginFraction = margin.add(unrealizedPnl).mul(_1e6).div(notionalPosition)
+        // oracleBasedMF < marginFraction < maintenanceMargin
+        expect(oracleBasedMF.lt(marginFraction)).to.be.true
+        expect(marginFraction.lt(maintenanceMargin)).to.be.true
+
+        await clearingHouse.liquidate(alice)
+    })
 })
 
 async function increaseEvmTime(timeInSeconds) {

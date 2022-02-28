@@ -56,18 +56,6 @@ contract HubbleViewer is IHubbleViewer {
         }
     }
 
-    function getNotionalPositionAndMargin(address[] calldata traders)
-        external
-        view
-        returns(uint256[] memory notionalPositions, int256[] memory margins)
-    {
-        notionalPositions = new uint256[](traders.length);
-        margins = new int256[](traders.length);
-        for (uint i = 0; i < traders.length; i++) {
-            (notionalPositions[i], margins[i]) = clearingHouse.getNotionalPositionAndMargin(traders[i], true /* includeFundingPayments */);
-        }
-    }
-
     function marginAccountLiquidatationStatus(address[] calldata traders)
         external
         view
@@ -162,7 +150,7 @@ contract HubbleViewer is IHubbleViewer {
         quoteAssetQuantity = getQuote(baseAssetQuantity, idx);
 
         // get total notionalPosition and margin (including unrealizedPnL and funding)
-        (uint256 notionalPosition, int256 margin) = clearingHouse.getNotionalPositionAndMargin(trader, true /* includeFundingPayments */);
+        (uint256 notionalPosition, int256 margin) = clearingHouse.getNotionalPositionAndMargin(trader, true /* includeFundingPayments */, IClearingHouse.Mode.Min_Allowable_Margin);
 
         // get market specific position info
         (int256 takerPosSize,,) = amm.positions(trader);
@@ -190,7 +178,7 @@ contract HubbleViewer is IHubbleViewer {
         returns (int256 expectedMarginFraction, uint256 liquidationPrice)
     {
         // get total notionalPosition and margin (including unrealizedPnL and funding)
-        (uint256 notionalPosition, int256 margin) = clearingHouse.getNotionalPositionAndMargin(trader, true /* includeFundingPayments */);
+        (uint256 notionalPosition, int256 margin) = clearingHouse.getNotionalPositionAndMargin(trader, true /* includeFundingPayments */, IClearingHouse.Mode.Min_Allowable_Margin);
 
         IAMM amm = clearingHouse.amms(idx);
 
@@ -229,7 +217,7 @@ contract HubbleViewer is IHubbleViewer {
 
     function getLiquidationPrice(address trader, uint idx) external view returns (uint liquidationPrice) {
         // get total notionalPosition and margin (including unrealizedPnL and funding)
-        (uint256 notionalPosition, int256 margin) = clearingHouse.getNotionalPositionAndMargin(trader, true /* includeFundingPayments */);
+        (uint256 notionalPosition, int256 margin) = clearingHouse.getNotionalPositionAndMargin(trader, true /* includeFundingPayments */, IClearingHouse.Mode.Maintenance_Margin);
         IAMM amm = clearingHouse.amms(idx);
         liquidationPrice = _getLiquidationPrice(trader, amm, notionalPosition, margin, 0, 0);
     }
@@ -308,20 +296,31 @@ contract HubbleViewer is IHubbleViewer {
     *   vAssetBalance - base token liquidity in the pool
     *   vUSDBalance - quote token liquidity in the pool
     */
-    function getMakerLiquidity(address _maker, uint idx) external view returns (uint vAsset, uint vUSD, uint totalDeposited, uint dToken, uint vAssetBalance, uint vUSDBalance) {
+    function getMakerLiquidity(address _maker, uint idx)
+        external
+        view
+        returns (uint vAsset, uint vUSD, uint totalDeposited, uint dToken, uint unbondTime, uint unbondAmount, uint vAssetBalance, uint vUSDBalance)
+    {
         IAMM amm = clearingHouse.amms(idx);
         IVAMM vamm = amm.vamm();
         IAMM.Maker memory maker = amm.makers(_maker);
-        dToken = maker.dToken;
 
-        totalDeposited = 2 * maker.vUSD;
-        uint totalDTokenSupply = vamm.totalSupply();
-        vUSDBalance = vamm.balances(0);
-        vAssetBalance = vamm.balances(1);
+        if (amm.ammState() == IAMM.AMMState.Active) {
+            unbondTime = maker.unbondTime;
+            unbondAmount = maker.unbondAmount;
+            dToken = maker.dToken;
+            totalDeposited = 2 * maker.vUSD;
 
-        if (totalDTokenSupply > 0) {
-            vUSD = vUSDBalance * dToken / totalDTokenSupply;
-            vAsset = vAssetBalance * dToken / totalDTokenSupply;
+            vUSDBalance = vamm.balances(0);
+            vAssetBalance = vamm.balances(1);
+            uint totalDTokenSupply = vamm.totalSupply();
+            if (totalDTokenSupply > 0) {
+                vUSD = vUSDBalance * dToken / totalDTokenSupply;
+                vAsset = vAssetBalance * dToken / totalDTokenSupply;
+            }
+        } else {
+            totalDeposited = 2 * maker.ignition;
+            vUSD = totalDeposited;
         }
     }
 
@@ -399,7 +398,7 @@ contract HubbleViewer is IHubbleViewer {
         int256 margin;
         (margin, totalCollateral) = marginAccount.weightedAndSpotCollateral(trader);
         marginFraction = clearingHouse.getMarginFraction(trader);
-        (notionalPosition, unrealizedPnl) = clearingHouse.getTotalNotionalPositionAndUnrealizedPnl(trader);
+        (notionalPosition, unrealizedPnl) = clearingHouse.getTotalNotionalPositionAndUnrealizedPnl(trader, margin, IClearingHouse.Mode.Min_Allowable_Margin);
         int256 minAllowableMargin = clearingHouse.minAllowableMargin();
         freeMargin = margin + unrealizedPnl - clearingHouse.getTotalFunding(trader) - notionalPosition.toInt256() * minAllowableMargin / PRECISION_INT;
     }
@@ -463,7 +462,10 @@ contract HubbleViewer is IHubbleViewer {
             _liquidationPrice = (openNotional.toInt256() - pnlForLiquidation) * 1e18 / (-totalPosSize);
         }
 
-        if (_liquidationPrice < 0) { // is this possible?
+        // negative liquidation price is possible when position size is small compared to margin added and
+        // hence pnl will not be big enough to reach liquidation
+        // in this case, (openNotional + pnlForLiquidation) < 0 because of high margin
+        if (_liquidationPrice < 0) {
             _liquidationPrice = 0;
         }
         return _liquidationPrice.toUint256();

@@ -89,7 +89,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         marginAccount.transferOutVusd(address(insuranceFund), _tradeFee);
 
         if (isPositionIncreased) {
-            _assertMarginRequirement(trader);
+            assertMarginRequirement(trader);
         }
         emit PositionModified(trader, idx, baseAssetQuantity, quoteAsset, _blockTimestamp());
     }
@@ -105,7 +105,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         address maker = _msgSender();
         updatePositions(maker);
         amms[idx].commitLiquidity(maker, quoteAsset);
-        _assertMarginRequirement(maker);
+        assertMarginRequirement(maker);
     }
     /**
     * @notice Add liquidity to the amm. The free margin from margin account is utilized for the same
@@ -119,11 +119,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         address maker = _msgSender();
         updatePositions(maker);
         dToken = amms[idx].addLiquidity(maker, baseAssetQuantity, minDToken);
-        _assertMarginRequirement(maker);
-    }
-
-    function _assertMarginRequirement(address trader) internal view {
-        require(isAboveMinAllowableMargin(trader), "CH: Below Minimum Allowable Margin");
+        assertMarginRequirement(maker);
     }
 
     /**
@@ -190,10 +186,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     /* ********************* */
 
     function _liquidateMaker(address maker) internal {
-        require(
-            _calcMarginFraction(maker, false) < maintenanceMargin,
-            "CH: Above Maintenance Margin"
-        );
+        _assertLiquidationRequirement(maker);
 
         int256 realizedPnl;
         bool _isMaker;
@@ -226,7 +219,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     }
 
     function _liquidateTaker(address trader) internal {
-        require(_calcMarginFraction(trader, false /* check funding payments again */) < maintenanceMargin, "Above Maintenance Margin");
+        _assertLiquidationRequirement(trader);
         int realizedPnl;
         uint quoteAsset;
         int256 size;
@@ -273,16 +266,9 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     /*        View        */
     /* ****************** */
 
-    function isAboveMaintenanceMargin(address trader) override external view returns(bool) {
-        return getMarginFraction(trader) >= maintenanceMargin;
-    }
-
-    function isAboveMinAllowableMargin(address trader) override public view returns(bool) {
-        return getMarginFraction(trader) >= minAllowableMargin;
-    }
-
-    function getMarginFraction(address trader) override public view returns(int256) {
-        return _calcMarginFraction(trader, true /* includeFundingPayments */);
+    function calcMarginFraction(address trader, bool includeFundingPayments, Mode mode) public view returns(int256) {
+        (uint256 notionalPosition, int256 margin) = getNotionalPositionAndMargin(trader, includeFundingPayments, mode);
+        return _getMarginFraction(margin, notionalPosition);
     }
 
     function isMaker(address trader) override public view returns(bool) {
@@ -304,7 +290,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         }
     }
 
-    function getTotalNotionalPositionAndUnrealizedPnl(address trader)
+    function getTotalNotionalPositionAndUnrealizedPnl(address trader, int256 margin, Mode mode)
         override
         public
         view
@@ -313,25 +299,29 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         uint256 _notionalPosition;
         int256 _unrealizedPnl;
         for (uint i = 0; i < amms.length; i++) {
-            (_notionalPosition, _unrealizedPnl,,) = amms[i].getNotionalPositionAndUnrealizedPnl(trader);
+            if (amms[i].isOverSpreadLimit()) {
+                (_notionalPosition, _unrealizedPnl) = amms[i].getOracleBasedPnl(trader, margin, mode);
+            } else {
+                (_notionalPosition, _unrealizedPnl,,) = amms[i].getNotionalPositionAndUnrealizedPnl(trader);
+            }
             notionalPosition += _notionalPosition;
             unrealizedPnl += _unrealizedPnl;
         }
     }
 
-    function getNotionalPositionAndMargin(address trader, bool includeFundingPayments)
+    function getNotionalPositionAndMargin(address trader, bool includeFundingPayments, Mode mode)
         override
         public
         view
         returns(uint256 notionalPosition, int256 margin)
     {
         int256 unrealizedPnl;
-        (notionalPosition, unrealizedPnl) = getTotalNotionalPositionAndUnrealizedPnl(trader);
         margin = marginAccount.getNormalizedMargin(trader);
-        margin += unrealizedPnl;
         if (includeFundingPayments) {
             margin -= getTotalFunding(trader); // -ve fundingPayment means trader should receive funds
         }
+        (notionalPosition, unrealizedPnl) = getTotalNotionalPositionAndUnrealizedPnl(trader, margin, mode);
+        margin += unrealizedPnl;
     }
 
     function getAmmsLength() override public view returns(uint8) {
@@ -343,8 +333,41 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     }
 
     /* ****************** */
+    /*   Test/UI Helpers  */
+    /* ****************** */
+
+    function isAboveMaintenanceMargin(address trader) override external view returns(bool) {
+        return calcMarginFraction(trader, true, Mode.Maintenance_Margin) >= maintenanceMargin;
+    }
+
+    /**
+    * @dev deprecated Use the nested call instead
+    *   calcMarginFraction(trader, true, Mode.Min_Allowable_Margin)
+    */
+    function getMarginFraction(address trader) override external view returns(int256) {
+        return calcMarginFraction(trader, true /* includeFundingPayments */, Mode.Min_Allowable_Margin);
+    }
+
+    /* ****************** */
     /*   Internal View    */
     /* ****************** */
+
+    /**
+    * @dev This method assumes that pending funding has been settled
+    */
+    function assertMarginRequirement(address trader) public view {
+        require(
+            calcMarginFraction(trader, false, Mode.Min_Allowable_Margin) >= minAllowableMargin,
+            "CH: Below Minimum Allowable Margin"
+        );
+    }
+
+    /**
+    * @dev This method assumes that pending funding has been credited
+    */
+    function _assertLiquidationRequirement(address trader) internal view {
+        require(calcMarginFraction(trader, false, Mode.Maintenance_Margin) < maintenanceMargin, "CH: Above Maintenance Margin");
+    }
 
     function _calculateTradeFee(uint quoteAsset) internal view returns (uint) {
         return quoteAsset * tradeFee / PRECISION;
@@ -352,11 +375,6 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
 
     function _calculateLiquidationPenalty(uint quoteAsset) internal view returns (uint) {
         return quoteAsset * liquidationPenalty / PRECISION;
-    }
-
-    function _calcMarginFraction(address trader, bool includeFundingPayments) internal view returns(int256) {
-        (uint256 notionalPosition, int256 margin) = getNotionalPositionAndMargin(trader, includeFundingPayments);
-        return _getMarginFraction(margin, notionalPosition);
     }
 
     /* ****************** */

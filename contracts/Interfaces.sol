@@ -18,17 +18,18 @@ interface IOracle {
 }
 
 interface IClearingHouse {
+    enum Mode { Maintenance_Margin, Min_Allowable_Margin }
     function openPosition(uint idx, int256 baseAssetQuantity, uint quoteAssetLimit) external;
     function closePosition(uint idx, uint quoteAssetLimit) external;
     function addLiquidity(uint idx, uint256 baseAssetQuantity, uint minDToken) external returns (uint dToken);
     function removeLiquidity(uint idx, uint256 dToken, uint minQuoteValue, uint minBaseValue) external;
     function settleFunding() external;
-    function getTotalNotionalPositionAndUnrealizedPnl(address trader)
+    function getTotalNotionalPositionAndUnrealizedPnl(address trader, int256 margin, Mode mode)
         external
         view
         returns(uint256 notionalPosition, int256 unrealizedPnl);
     function isAboveMaintenanceMargin(address trader) external view returns(bool);
-    function isAboveMinAllowableMargin(address trader) external view returns(bool);
+    function assertMarginRequirement(address trader) external view;
     function updatePositions(address trader) external;
     function getMarginFraction(address trader) external view returns(int256);
     function getTotalFunding(address trader) external view returns(int256 totalFunding);
@@ -38,7 +39,7 @@ interface IClearingHouse {
     function minAllowableMargin() external view returns(int256);
     function tradeFee() external view returns(uint256);
     function liquidationPenalty() external view returns(uint256);
-    function getNotionalPositionAndMargin(address trader, bool includeFundingPayments)
+    function getNotionalPositionAndMargin(address trader, bool includeFundingPayments, Mode mode)
         external
         view
         returns(uint256 notionalPosition, int256 margin);
@@ -75,7 +76,7 @@ interface IAMM {
     * @dev We do not deliberately have a Pause state. There is only a master-level pause at clearingHouse level
     */
     enum AMMState { Inactive, Ignition, Active }
-    function ammState() external returns(AMMState);
+    function ammState() external view returns(AMMState);
 
     function openPosition(address trader, int256 baseAssetQuantity, uint quoteAssetLimit)
         external
@@ -111,6 +112,8 @@ interface IAMM {
     function vamm() external view returns(IVAMM);
     function commitLiquidity(address maker, uint quoteAsset) external;
     function putAmmInIgnition() external;
+    function isOverSpreadLimit() external view returns (bool);
+    function getOracleBasedPnl(address trader, int256 margin, IClearingHouse.Mode mode) external view returns (uint, int256);
 }
 
 interface IMarginAccount {

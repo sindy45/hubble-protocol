@@ -177,7 +177,7 @@ contract MarginAccount is IMarginAccount, HubbleBase {
         margin[idx][trader] -= amount.toInt256();
 
         // Check minimum margin requirement after withdrawal
-        require(clearingHouse.isAboveMinAllowableMargin(trader), "MA.removeMargin.Below_MM");
+        clearingHouse.assertMarginRequirement(trader);
 
         if (idx == VUSD_IDX) {
             _transferOutVusd(trader, amount);
@@ -241,7 +241,7 @@ contract MarginAccount is IMarginAccount, HubbleBase {
             return (IMarginAccount.LiquidationStatus.NO_DEBT, 0, 0);
         }
 
-        (uint256 notionalPosition,) = clearingHouse.getTotalNotionalPositionAndUnrealizedPnl(trader);
+        (uint256 notionalPosition,) = clearingHouse.getTotalNotionalPositionAndUnrealizedPnl(trader, 0, IClearingHouse.Mode.Min_Allowable_Margin); // last two arguments are irrelevent as we are checking only for zero/non-zero notional position in next step
         if (notionalPosition != 0) { // Liquidate positions before liquidating margin account
             return (IMarginAccount.LiquidationStatus.OPEN_POSITIONS, 0, 0);
         }
@@ -350,7 +350,7 @@ contract MarginAccount is IMarginAccount, HubbleBase {
     * @param trader Account for which the bad debt needs to be settled
     */
     function settleBadDebt(address trader) external whenNotPaused {
-        (uint256 notionalPosition,) = clearingHouse.getTotalNotionalPositionAndUnrealizedPnl(trader);
+        (uint256 notionalPosition,) = clearingHouse.getTotalNotionalPositionAndUnrealizedPnl(trader, 0, IClearingHouse.Mode.Min_Allowable_Margin); // last two arguments are irrelevent as we are checking only for zero/non-zero notional position in next step
         require(notionalPosition == 0, "Liquidate positions before settling bad debt");
 
         // The spot value of their collateral minus their vUSD obligation is a negative value

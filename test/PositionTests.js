@@ -492,7 +492,14 @@ describe('Position Tests', async function() {
             ;({ unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(alice))
             expect(unrealizedPnl.lt(0)).to.be.true // loss
 
-            tx = await clearingHouse.openPosition(0, _1e18.mul(5), _1e6.mul(100100))
+            const markPrice = await amm.lastPrice() // 1135.95
+            const amount = _1e6.mul(100100)
+            await expect(
+                clearingHouse.openPosition(0, _1e18.mul(5), amount)
+            ).to.be.revertedWith('VAMM._long: longs not allowed') // price after trade 1330.17
+            await oracle.setUnderlyingPrice(weth.address, markPrice)
+
+            tx = await clearingHouse.openPosition(0, _1e18.mul(5), amount)
             const trade2 = await getTradeDetails(tx, TRADE_FEE)
             let fee = trade1.fee.add(trade2.fee)
 
