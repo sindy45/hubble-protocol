@@ -38,7 +38,12 @@ jobs:
       run: npm install
     - name: Compile contracts
       run: npm run compile
+    - name: Local deploy script
+      run: |
+        npx hardhat node > /dev/null 2>&1 &
+        npx hardhat run scripts/deploy-local.js --network local
     - name: Run Tests
       env:
         ALCHEMY: ${{ secrets.ALCHEMY }}
       run: npm run gas-reporter
+

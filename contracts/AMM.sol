@@ -15,6 +15,9 @@ contract AMM is IAMM, Governable {
     uint256 public constant fundingPeriod = 1 hours;
     int256 constant BASE_PRECISION = 1e18;
 
+    address public immutable clearingHouse;
+    uint256 public immutable unbondRoundOff;
+
     /* ****************** */
     /*       Storage      */
     /* ****************** */
@@ -22,7 +25,6 @@ contract AMM is IAMM, Governable {
     // System-wide config
 
     IOracle public oracle;
-    address public clearingHouse;
 
     // AMM config
 
@@ -38,7 +40,7 @@ contract AMM is IAMM, Governable {
 
     uint256 public longOpenInterestNotional;
     uint256 public shortOpenInterestNotional;
-    uint256 public MAX_ORACLE_SPREAD_RATIO; // scaled 2 decimals
+    uint256 public maxOracleSpreadRatio; // scaled 2 decimals
 
     enum Side { LONG, SHORT }
     struct Position {
@@ -119,24 +121,29 @@ contract AMM is IAMM, Governable {
         _;
     }
 
+    constructor(address _clearingHouse, uint _unbondRoundOff) {
+        clearingHouse = _clearingHouse;
+        unbondRoundOff = _unbondRoundOff;
+    }
+
     function initialize(
-        address _registry,
-        address _underlyingAsset,
         string memory _name,
+        address _underlyingAsset,
+        address _oracle,
         address _vamm,
         address _governance
     ) external initializer {
+        name = _name;
+        underlyingAsset = _underlyingAsset;
+        oracle = IOracle(_oracle);
+        vamm = IVAMM(_vamm);
         _setGovernace(_governance);
 
-        vamm = IVAMM(_vamm);
-        underlyingAsset = _underlyingAsset;
-        name = _name;
+        // values that most likely wouldn't need to change frequently
         fundingBufferPeriod = 15 minutes;
-        unbondPeriod = 3 days;
         withdrawPeriod = 1 days;
-        MAX_ORACLE_SPREAD_RATIO = 20;
-
-        syncDeps(_registry);
+        maxOracleSpreadRatio = 20;
+        unbondPeriod = 3 days;
     }
 
     /**
@@ -258,7 +265,7 @@ contract AMM is IAMM, Governable {
         Maker storage _maker = _makers[maker];
         require(_maker.dToken >= dToken, "unbonding_too_much");
         _maker.unbondAmount = dToken;
-        _maker.unbondTime = ((_blockTimestamp() + unbondPeriod) / 1 days) * 1 days;
+        _maker.unbondTime = ((_blockTimestamp() + unbondPeriod) / unbondRoundOff) * unbondRoundOff;
         emit Unbonded(maker, dToken, _maker.unbondTime, _blockTimestamp());
     }
 
@@ -353,10 +360,9 @@ contract AMM is IAMM, Governable {
         // translate impermanent position to a permanent one
         {
             if (makerPosition != 0) {
-                if (makerPosition * position.size < 0) { // reducing or reversing position
-                    uint newNotional = getCloseQuote(position.size + makerPosition);
-                    int256 reducePositionPnl = _getPnlWhileReducingPosition(position.size, position.openNotional, makerPosition, newNotional);
-                    realizedPnl += reducePositionPnl;
+                // reducing or reversing position
+                if (makerPosition * position.size < 0) { // this ensures takerPosition !=0
+                    realizedPnl += _getPnlWhileReducingPosition(position.size, position.openNotional, makerPosition);
                 }
                 position.openNotional = totalOpenNotional;
                 position.size += makerPosition;
@@ -532,7 +538,7 @@ contract AMM is IAMM, Governable {
     }
 
     function getTwapPrice(uint256 _intervalInSeconds) public view returns (int256) {
-        return int256(_calcTwap(_intervalInSeconds));
+        return _calcTwap(_intervalInSeconds).toInt256();
     }
 
     function getNotionalPositionAndUnrealizedPnl(address trader)
@@ -572,7 +578,7 @@ contract AMM is IAMM, Governable {
         }
         oracleSpreadRatioAbs = oracleSpreadRatioAbs * 100 / oraclePrice;
 
-        if (oracleSpreadRatioAbs >= MAX_ORACLE_SPREAD_RATIO) {
+        if (oracleSpreadRatioAbs >= maxOracleSpreadRatio) {
             return true;
         }
         return false;
@@ -740,9 +746,9 @@ contract AMM is IAMM, Governable {
             max_dx
         ); // 6 decimals precision
 
-        // longs not allowed if market price > (1 + MAX_ORACLE_SPREAD_RATIO)*index price
+        // longs not allowed if market price > (1 + maxOracleSpreadRatio)*index price
         uint256 oraclePrice = uint(oracle.getUnderlyingPrice(underlyingAsset));
-        oraclePrice = oraclePrice * (100 + MAX_ORACLE_SPREAD_RATIO) / 100;
+        oraclePrice = oraclePrice * (100 + maxOracleSpreadRatio) / 100;
         if (!isLiquidation && _lastPrice > oraclePrice) {
             revert("VAMM._long: longs not allowed");
         }
@@ -772,9 +778,9 @@ contract AMM is IAMM, Governable {
             min_dy
         );
 
-        // shorts not allowed if market price < (1 - MAX_ORACLE_SPREAD_RATIO)*index price
+        // shorts not allowed if market price < (1 - maxOracleSpreadRatio)*index price
         uint256 oraclePrice = uint(oracle.getUnderlyingPrice(underlyingAsset));
-        oraclePrice = oraclePrice * (100 - MAX_ORACLE_SPREAD_RATIO) / 100;
+        oraclePrice = oraclePrice * (100 - maxOracleSpreadRatio) / 100;
         if (!isLiquidation && _lastPrice < oraclePrice) {
             revert("VAMM._short: shorts not allowed");
         }
@@ -793,24 +799,19 @@ contract AMM is IAMM, Governable {
         emit MakerPositionChanged(maker, _makers[maker]);
     }
 
-    // @dev check takerPosition != 0 before calling
+    /**
+    * @dev Get PnL to be realized for the part of the position that is being closed
+    *   Check takerPosition != 0 before calling
+    */
     function _getPnlWhileReducingPosition(
         int256 takerPosition,
         uint takerOpenNotional,
-        int256 makerPosition,
-        uint newNotional
-    ) internal pure returns (int256 pnlToBeRealized) {
-        /**
-            makerNotional = newNotional * makerPos / totalPos
-            if (side remains same)
-                reducedOpenNotional = takerOpenNotional * makerPos / takerPos
-                pnl = makerNotional - reducedOpenNotional
-            else (reverse position)
-                closedPositionNotional = newNotional * takerPos / totalPos
-                pnl = closePositionNotional - takerOpenNotional
-         */
-
+        int256 makerPosition
+    ) internal view returns (int256 pnlToBeRealized) {
+        // notional of the combined new position
+        uint newNotional = getCloseQuote(takerPosition + makerPosition);
         uint totalPosition = abs(makerPosition + takerPosition).toUint256();
+
         if (abs(takerPosition) > abs(makerPosition)) { // taker position side remains same
             uint reducedOpenNotional = takerOpenNotional * abs(makerPosition).toUint256() / abs(takerPosition).toUint256();
             uint makerNotional = newNotional * abs(makerPosition).toUint256() / totalPosition;
@@ -991,19 +992,22 @@ contract AMM is IAMM, Governable {
     function _max(int x, int y) private pure returns (int) {
         return x >= y ? x : y;
     }
+
     // Governance
 
     function putAmmInIgnition() external onlyClearingHouse {
         ammState = AMMState.Ignition;
     }
 
-    function syncDeps(address _registry) public onlyGovernance {
-        IRegistry registry = IRegistry(_registry);
-        clearingHouse = registry.clearingHouse();
-        oracle = IOracle(registry.oracle());
+    function changeOracle(address _oracle) public onlyGovernance {
+        oracle = IOracle(_oracle);
     }
 
     function setFundingBufferPeriod(uint _fundingBufferPeriod) external onlyGovernance {
         fundingBufferPeriod = _fundingBufferPeriod;
+    }
+
+    function setUnbondPeriod(uint _unbondPeriod) external onlyGovernance {
+        unbondPeriod = _unbondPeriod;
     }
 }

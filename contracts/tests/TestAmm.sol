@@ -9,6 +9,8 @@ import "../AMM.sol";
 contract TestAmm is AMM {
     using SafeCast for uint256;
 
+    constructor(address _clearingHouse, uint _unbondRoundOff) AMM(_clearingHouse, _unbondRoundOff) {}
+
     function getOracleBasedMarginFraction(address trader, int256 margin)
         external
         view

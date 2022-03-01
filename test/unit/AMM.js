@@ -6,7 +6,6 @@ const {
     filterEvent,
     setupContracts,
     addMargin,
-    commitLiquidity,
     gotoNextWithdrawEpoch,
     setupRestrictedTestToken,
     gotoNextUnbondEpoch
@@ -274,6 +273,7 @@ describe('AMM states', async function() {
     before(async function() {
         signers = await ethers.getSigners()
         ;([ alice ] = signers.map(s => s.address))
+        maker = signers[9]
 
         contracts = await setupContracts({ amm: { initialLiquidity: 0, ammState: 0 }})
         ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, swap, hubbleViewer } = contracts)
@@ -285,7 +285,7 @@ describe('AMM states', async function() {
 
     it('[commit,unbond]Liquidity/openPosition fails when ammState=InActive', async () => {
         await expect(
-            commitLiquidity(0, 1000, 1000)
+            clearingHouse.commitLiquidity(0, 1)
         ).to.be.revertedWith('Array accessed at an out-of-bounds or negative index')
 
         // CH doesn't know about the AMM yet
@@ -314,7 +314,13 @@ describe('AMM states', async function() {
     })
 
     it('commitLiquidity works when ammState=Ignition', async () => {
-        await clearingHouse.connect(maker).commitLiquidity(0, _1e6.mul(_1e6).mul(2)) // 2 mil
+        const initialLiquidity = 1000 // eth
+        const rate = 1000 // $1k
+        const vUSD = _1e6.mul(initialLiquidity * rate)
+        await utils.addMargin(maker, vUSD)
+        const { expectedMarginFraction } = await hubbleViewer.getMakerExpectedMFAndLiquidationPrice(maker.address, 0, vUSD, false)
+        expect(expectedMarginFraction).to.eq('500000')
+        await clearingHouse.connect(maker).commitLiquidity(0, vUSD.mul(2))
     })
 
     it('openPosition,unbondLiquidity fails when ammState=Ignition', async () => {
@@ -350,7 +356,7 @@ describe('AMM states', async function() {
         avax = await utils.setupRestrictedTestToken('avax', 'avax', 6)
         ;({ amm: avaxAmm } = await utils.setupAmm(
             alice,
-            [ registry.address, avax.address, 'AVAX-PERP' ],
+            [ 'AVAX-PERP', avax.address, oracle.address ],
             {
                 initialRate: 65,
                 initialLiquidity: 0,

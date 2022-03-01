@@ -669,7 +669,6 @@ def calc_token_fee(amounts: uint256[N_COINS], xp: uint256[N_COINS]) -> uint256:
 def add_liquidity(amounts: uint256[N_COINS], min_mint_amount: uint256) -> (uint256):
     assert msg.sender == self.amm, 'VAMM: OnlyAMM'
     assert not self.is_killed  # dev: the pool is killed
-    assert msg.sender == self.amm
 
     A_gamma: uint256[2] = self._A_gamma()
 
@@ -926,7 +925,6 @@ def get_notional(
         takerPosSize: int256,
         takerOpenNotional: uint256
     ) -> (uint256, int256, int256, uint256):
-    assert msg.sender == self.amm, 'VAMM: OnlyAMM'
     makerPosSize: int256 = 0
     makerOpenNotional: uint256 = 0
     D: uint256 = 0

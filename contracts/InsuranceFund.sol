@@ -31,8 +31,8 @@ contract InsuranceFund is VanillaGovernable, ERC20Upgradeable {
         _;
     }
 
-    function initialize(address _governance) external {
-        __ERC20_init("Hubble-Insurance-Fund", "HIF"); // has initializer modifier
+    function initialize(address _governance) external initializer {
+        __ERC20_init("Hubble-Insurance-Fund", "HIF");
         _setGovernace(_governance);
     }
 

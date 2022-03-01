@@ -26,6 +26,11 @@ describe('vUSD Unit Tests', function() {
             minterRole = await vusd.MINTER_ROLE()
         })
 
+        it('reverts when initializing again', async function() {
+            await expect(vusd.init()).to.be.revertedWith('Initializable: contract is already initialized')
+            await expect(vusd.initialize("dummy name", "DUM")).to.be.revertedWith('Initializable: contract is already initialized')
+        })
+
         it('mint fails without minter role', async function() {
             expect(await vusd.hasRole(minterRole, admin.address)).to.be.false
             await expect(
@@ -168,11 +173,6 @@ describe('vUSD Unit Tests', function() {
     }
 
     function setupVusd() {
-        return utils.setupUpgradeableProxy(
-            'VUSD',
-            proxyAdmin.address,
-            [ admin.address ],
-            [ usdc.address ]
-        )
+        return utils.setupUpgradeableProxy('VUSD', proxyAdmin.address, [], [ usdc.address ])
     }
 })

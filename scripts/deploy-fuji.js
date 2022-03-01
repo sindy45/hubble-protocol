@@ -20,7 +20,8 @@ async function main() {
     // so if you run this script with --network local, uncomment the following 2 lines
     // await network.provider.send("evm_setAutomine", [false])
     // await network.provider.send("evm_setIntervalMining", [500])
-    // await web3.eth.sendTransaction({ from: governance, to: governance, value: _1e18 })
+    // just need this so that nonce is non-zero for txOptions.nonce ? _ : _ works
+    await web3.eth.sendTransaction({ from: governance, to: governance, value: _1e18 })
 
     txOptions.nonce = await signers[0].getTransactionCount()
     txOptions.gasLimit = gasLimit
@@ -47,52 +48,34 @@ async function main() {
     await marginAccount.whitelistCollateral(weth.address, 8e5, { nonce: txOptions.nonce++, gasLimit })
     await marginAccount.whitelistCollateral(btc.address, 8e5, { nonce: txOptions.nonce++, gasLimit })
 
-    // 3. Mint and Add Margin
-    const margin = _1e6.mul(_1e6).mul(4)
-    await vusd.mint(governance, margin, { nonce: txOptions.nonce++, gasLimit })
-    await vusd.approve(marginAccount.address, margin, { nonce: txOptions.nonce++, gasLimit })
-    await marginAccount.addMargin(0, margin, { nonce: txOptions.nonce++, gasLimit })
-
-    console.log('setup AMMs...')
     // 4. AMMs
-    await setupAmm(
-        governance,
-        [ registry.address, avax.address, 'AVAX-PERP' ],
-        {
-            index: 0,
-            initialRate: 90,
-            initialLiquidity: 0,
-            fee: 5000000, // .05%
-        }
-    )
-    await clearingHouse.addLiquidity(0, _1e18.mul(5555), 0, { nonce: txOptions.nonce++, gasLimit })
+    console.log('setup AMMs...')
+    const ammOptions = {
+        initialRate: 0,
+        initialLiquidity: 0,
+        fee: 5000000, // .05%
+        ammState: 1 // Ignition
+    }
 
     await setupAmm(
         governance,
-        [ registry.address, weth.address, 'ETH-PERP' ],
-        {
-            index: 1,
-            initialRate: 3110,
-            initialLiquidity: 0,
-            fee: 5000000, // .05%
-        }
+        [ 'AVAX-PERP', avax.address, oracle.address ],
+        Object.assign(ammOptions, { index: 0 })
     )
-    await clearingHouse.addLiquidity(1, _1e18.mul(160), 0, { nonce: txOptions.nonce++, gasLimit })
 
     await setupAmm(
         governance,
-        [ registry.address, btc.address, 'BTC-PERP' ],
-        {
-            index: 2,
-            initialRate: 43500,
-            initialLiquidity: 0,
-            fee: 5000000, // .05%
-        }
+        [ 'ETH-PERP', weth.address, oracle.address ],
+        Object.assign(ammOptions, { index: 1 })
     )
-    await clearingHouse.addLiquidity(2, _1e18.mul(11), 0, { nonce: txOptions.nonce++, gasLimit })
 
-    console.log('sleeping for 10s...')
-    await sleep(10)
+    await setupAmm(
+        governance,
+        [ 'BTC-PERP', btc.address, oracle.address ],
+        Object.assign(ammOptions, { index: 2 })
+    )
+
+    await sleep(1) // 10s on fuji
     console.log(JSON.stringify(await generateConfig(leaderboard.address), null, 2))
 
     // 4. Setup Faucet
@@ -141,7 +124,7 @@ async function testFaucet(recipient) {
     await web3.eth.sendTransaction({ from: signers[0].address, to: faucet, value: _1e18 })
     await executor.connect(ethers.provider.getSigner(faucet)).execute(...tx)
 
-    await sleep(2)
+    await sleep(1)
     expect(await vusd.balanceOf(recipient)).to.eq(airdropAmounts.vusd)
     expect(await avax.balanceOf(recipient)).to.eq(airdropAmounts.avax)
     expect(await weth.balanceOf(recipient)).to.eq(airdropAmounts.weth)

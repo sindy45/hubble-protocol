@@ -15,13 +15,9 @@ import { Governable } from "./Governable.sol";
 contract HubbleBase is Governable, Pausable, ERC2771Context {
 
     /**
-    * @dev _trustedForwarder is an immutable var in ERC2771Context
+    * @dev _trustedForwarder is a private immutable var in ERC2771Context
     */
     constructor(address _trustedForwarder) ERC2771Context(_trustedForwarder) {}
-
-    function trustedForwarder() external view returns(address) {
-        return _trustedForwarder;
-    }
 
     /* ****************** */
     /*   Internal View    */

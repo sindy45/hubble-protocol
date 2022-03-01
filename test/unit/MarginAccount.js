@@ -110,6 +110,7 @@ describe('MarginAccount Unit Tests', function() {
             ])
             await marginAccount.whitelistCollateral(avax.address, 0.8 * 1e6)
             await marginAccount.whitelistCollateral(weth.address, 0.8 * 1e6)
+            await vusd.grantRole(await vusd.MINTER_ROLE(), admin.address)
         })
 
         it('liquidateFlexible', async function() {
@@ -132,7 +133,7 @@ describe('MarginAccount Unit Tests', function() {
             expect(incentivePerDollar).to.eq('1017241')
 
             // otherwise liquidation will revert due to insufficient balances
-            await vusd.mint(liquidator.address, debt)
+            await vusd.connect(admin).mint(liquidator.address, debt)
             await avax.mint(marginAccount.address, avaxMargin)
             await weth.mint(marginAccount.address, wethMargin)
 
@@ -171,7 +172,7 @@ describe('MarginAccount Unit Tests', function() {
             expect(weighted).to.eq(_1e6.mul(-1400))
             expect((await marginAccount.isLiquidatable(alice, true))[0]).to.eq(0) // IS_LIQUIDATABLE
 
-            await vusd.mint(liquidator.address, debt)
+            await vusd.connect(admin).mint(liquidator.address, debt)
             await avax.mint(marginAccount.address, avaxMargin) // otherwise seizing will fail
 
             await vusd.connect(liquidator).approve(marginAccount.address, debt)

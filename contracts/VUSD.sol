@@ -6,9 +6,7 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import { ERC20PresetMinterPauserUpgradeable } from "@openzeppelin/contracts-upgradeable/token/ERC20/presets/ERC20PresetMinterPauserUpgradeable.sol";
 
-import { VanillaGovernable } from "./legos/Governable.sol";
-
-contract VUSD is VanillaGovernable, ERC20PresetMinterPauserUpgradeable {
+contract VUSD is ERC20PresetMinterPauserUpgradeable {
     using SafeERC20 for IERC20;
 
     struct Withdrawal {
@@ -34,27 +32,27 @@ contract VUSD is VanillaGovernable, ERC20PresetMinterPauserUpgradeable {
         reserveToken = IERC20(_reserveToken);
     }
 
-    function init(address _governance) external {
-        super.initialize("Hubble USD", "hUSD"); // has initializer modifier
-        _setGovernace(_governance);
+    function init() external {
+        initialize("Hubble USD", "hUSD"); // has initializer modifier
+        // _revokeRole(MINTER_ROLE, _msgSender()); // __ERC20PresetMinterPauser_init_unchained grants this but is not required
         maxWithdrawalProcesses = 100;
     }
 
-    function mintWithReserve(address to, uint amount) external {
+    function mintWithReserve(address to, uint amount) external whenNotPaused {
         reserveToken.safeTransferFrom(msg.sender, address(this), amount);
         _mint(to, amount);
     }
 
-    function withdraw(uint amount) external {
+    function withdraw(uint amount) external whenNotPaused {
         burn(amount);
         withdrawals.push(Withdrawal(msg.sender, amount));
     }
 
-    function processWithdrawals() external {
+    function processWithdrawals() external whenNotPaused {
         uint reserve = reserveToken.balanceOf(address(this));
         require(reserve >= withdrawals[start].amount, 'Cannot process withdrawals at this time: Not enough balance');
         uint i = start;
-        while (i < withdrawals.length && (i - start) <= maxWithdrawalProcesses) {
+        while (i < withdrawals.length && (i - start) < maxWithdrawalProcesses) {
             Withdrawal memory withdrawal = withdrawals[i];
             if (reserve < withdrawal.amount) {
                 break;
@@ -70,7 +68,8 @@ contract VUSD is VanillaGovernable, ERC20PresetMinterPauserUpgradeable {
         return 6;
     }
 
-    function setMaxWithdrawalProcesses(uint _maxWithdrawalProcesses) external onlyGovernance {
+    function setMaxWithdrawalProcesses(uint _maxWithdrawalProcesses) external {
+        require(hasRole(DEFAULT_ADMIN_ROLE, _msgSender()), "ERC20PresetMinterPauser: must have admin role");
         maxWithdrawalProcesses = _maxWithdrawalProcesses;
     }
 }

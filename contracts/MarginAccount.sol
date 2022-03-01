@@ -519,6 +519,7 @@ contract MarginAccount is IMarginAccount, HubbleBase {
         Collateral memory _collateral;
 
         for (uint i = 0; i < assets.length; i++) {
+            if (margin[i][trader] == 0) continue;
             _collateral = assets[i];
 
             int numerator = margin[i][trader] * oracle.getUnderlyingPrice(address(assets[i].token));

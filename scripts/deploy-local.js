@@ -10,17 +10,28 @@ const {
 const _1e8 = BigNumber.from(10).pow(8)
 
 /**
+ * Deploying ETH amm in active mode with $2m liquidity (1k eth at $1k) added
+ * Deploying BTC amm in ignition mode  with $2m liquidity (30 BTC at $35k) commited.
+ * Unbond period for both is 5mins
+ *
  * After deployment
- * maker1 - signers[9]
- * maker2 - signers[8]
  * governance - signers[0]
+ * maker - signers[9]
  * signers[1], signers[2] have 1000 vUSD and 200 avax each
+ * call btcAMM.liftOff() with governance to put AMM in active mode
  */
 
 async function main() {
     signers = await ethers.getSigners()
+    governance = signers[0].address
 
-    await setupContracts()
+    await setupContracts({
+        governance,
+        unbondRoundOff: 1, // 1s
+        amm: {
+            unbondPeriod: 300, // 5 mins
+        }
+    })
 
     // provide some vusd to signers[1], signers[2]
     const initialVusdAmount = _1e6.mul(1000)
@@ -38,19 +49,18 @@ async function main() {
     const btc = await setupRestrictedTestToken('Bitcoin', 'BTC', 8)
     await utils.setupAmm(
         governance,
-        [ registry.address, btc.address, 'BTC-PERP' ],
-        50000, // initialRate => btc = $50000
-        25, // initialLiquidity = 25 btc
-        false, // isPause
-        1 // index
+        [ 'BTC-PERP', btc.address, oracle.address ],
+        {
+            index: 1,
+            initialRate: 35000,
+            initialLiquidity: 30, // maker1 will commit this 2 * liquidity in USD
+            fee: 10000000, // 0.1%
+            ammState: 1, // Ignition
+            unbondPeriod: 300, // 5 mins
+        }
     )
 
-    // maker2 adds liquidity
-    await utils.addMargin(signers[8], _1e6.mul(4.1e5))
-    await clearingHouse.connect(signers[8]).addLiquidity(0, _1e18.mul(500), 0)
-    await clearingHouse.connect(signers[8]).addLiquidity(1, _1e18.mul(10), 0)
-
-    console.log(await generateConfig(hubbleViewer.address))
+    console.log(JSON.stringify(await generateConfig(leaderboard.address), null, 2))
 
     async function addVUSDWithReserve(trader, amount) {
         await usdc.mint(trader.address, amount)

@@ -61,6 +61,13 @@ contract RestrictedVusd is VUSD {
         transfersAllowed = true;
     }
 
+    function grantRoles(bytes32[] calldata roles, address[] calldata accounts) external {
+        require(roles.length == accounts.length, "Invalid");
+        for (uint i; i < roles.length; i++) {
+            grantRole(roles[i], accounts[i]);
+        }
+    }
+
     function _beforeTokenTransfer(
         address from,
         address to,

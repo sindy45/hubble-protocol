@@ -27,6 +27,7 @@ async function setupContracts(options = {}) {
             governance: signers[0].address,
             setupAMM: true,
             testOracle: true,
+            unbondRoundOff: 86400, // 1 day
         },
         options
     )
@@ -55,7 +56,7 @@ async function setupContracts(options = {}) {
         MinimalForwarder.deploy({ nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit }),
         ERC20Mintable.deploy('USD Coin', 'USDC', 6, { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit }),
     ]))
-    vusd = await setupUpgradeableProxy(options.restrictedVUSD ? 'RestrictedVusd' : 'VUSD', proxyAdmin.address, [ governance ], [ usdc.address ])
+    vusd = await setupUpgradeableProxy(options.restrictedVUSD ? 'RestrictedVusd' : 'VUSD', proxyAdmin.address, [], [ usdc.address ])
 
     marginAccount = await setupUpgradeableProxy(
         `${options.mockMarginAccount ? 'Mock' : ''}MarginAccount`,
@@ -67,12 +68,12 @@ async function setupContracts(options = {}) {
     insuranceFund = await setupUpgradeableProxy('InsuranceFund', proxyAdmin.address, [ governance ])
 
     if (options.restrictedVUSD) {
-        const transferRole = await vusd.TRANSFER_ROLE()
-        await Promise.all([
-            vusd.grantRole(transferRole, marginAccountHelper.address, { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit }),
-            vusd.grantRole(transferRole, marginAccount.address, { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit }),
-            vusd.grantRole(transferRole, insuranceFund.address, { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit })
-        ])
+        const transferRole = ethers.utils.id('TRANSFER_ROLE')
+        await vusd.grantRoles(
+            [ transferRole, transferRole, transferRole ],
+            [ marginAccountHelper.address, marginAccount.address, insuranceFund.address ],
+            { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit }
+        )
     }
 
     oracle = await setupUpgradeableProxy(options.testOracle ? 'TestOracle' : 'Oracle', proxyAdmin.address, [ governance ])
@@ -93,7 +94,7 @@ async function setupContracts(options = {}) {
         ],
         [ forwarder.address ]
     )
-    await vusd.grantRole(await vusd.MINTER_ROLE(), marginAccount.address, { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit })
+    await vusd.grantRole(ethers.utils.id('MINTER_ROLE'), marginAccount.address, { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit })
     registry = await Registry.deploy(oracle.address, clearingHouse.address, insuranceFund.address, marginAccount.address, vusd.address, { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit })
     await Promise.all([
         marginAccount.syncDeps(registry.address, 5e4, { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit }), // liquidationIncentive = 5% = .05 scaled 6 decimals
@@ -117,7 +118,7 @@ async function setupContracts(options = {}) {
     ;([ curveMath, vammImpl, ammImpl ] = await Promise.all([
         CurveMath.deploy({ nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit }),
         Swap.deploy({ nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit }),
-        AMM.deploy({ nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit })
+        AMM.deploy(clearingHouse.address, options.unbondRoundOff, { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit })
     ]))
     views = await Views.deploy(curveMath.address, { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit })
     // amm deps complete
@@ -141,7 +142,7 @@ async function setupContracts(options = {}) {
         weth = await setupRestrictedTestToken('Hubble Ether', 'hWETH', 18)
         ;({ amm, vamm } = await setupAmm(
             governance,
-            [ registry.address, weth.address, 'ETH-PERP' ],
+            [ 'ETH-PERP', weth.address, oracle.address ],
             options.amm
         ))
         Object.assign(res, { swap: vamm, amm, weth })
@@ -169,16 +170,19 @@ async function setupUpgradeableProxy(contract, admin, initArgs, deployArgs = [])
 }
 
 async function setupAmm(governance, args, ammOptions) {
-    const { initialRate, initialLiquidity, fee, ammState, index, testAmm } = Object.assign(
+    const options = Object.assign(
         {
             index: 0,
             initialRate: 1000, // for ETH perp
             initialLiquidity: 1000, // 1000 eth
             fee: 10000000, // 0.1%
             ammState: 2, // Active
+            unbondPeriod: 3 * 86400 // 3 days
         },
         ammOptions
     )
+    const { initialRate, initialLiquidity, fee, ammState, index, testAmm, unbondPeriod } = options
+
     const vammProxy = await TransparentUpgradeableProxy.deploy(
         vammImpl.address,
         proxyAdmin.address,
@@ -191,8 +195,7 @@ async function setupAmm(governance, args, ammOptions) {
             fee, 0, 0, 0, // mid_fee, out_fee, allowed_extra_profit, fee_gamma
             '146000000000000', // adjustment_step
             0, // admin_fee
-            600, // ma_half_time
-            // _1e18.mul(initialRate)
+            600 // ma_half_time
         ]),
         { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit }
     )
@@ -205,14 +208,17 @@ async function setupAmm(governance, args, ammOptions) {
         { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit }
     )
     const amm = await ethers.getContractAt(testAmm ? 'TestAmm' : 'AMM', ammProxy.address)
+    if (unbondPeriod != 86400*3) { // not default value
+        await amm.setUnbondPeriod(unbondPeriod, { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit })
+    }
     await vamm.setAMM(amm.address, { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit })
 
     if (initialRate) {
         // amm.liftOff() needs the price for the underlying to be set
         // set index price within price spread
         const underlyingAsset = await amm.underlyingAsset();
-        await oracle.setUnderlyingTwapPrice(underlyingAsset, _1e6.mul(initialRate))
-        await oracle.setUnderlyingPrice(underlyingAsset, _1e6.mul(initialRate))
+        await oracle.setUnderlyingTwapPrice(underlyingAsset, _1e6.mul(initialRate), { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit })
+        await oracle.setUnderlyingPrice(underlyingAsset, _1e6.mul(initialRate), { nonce: txOptions.nonce ? txOptions.nonce++ : undefined, gasLimit })
     }
 
     if (ammState > 0) { // Ignition or Active
@@ -417,6 +423,7 @@ async function assertBounds(v, lowerBound, upperBound) {
     if (upperBound) expect(v).lt(upperBound)
 }
 
+// doesn't print inactive AMMs
 async function generateConfig(leaderboardAddress) {
     const leaderboard = await ethers.getContractAt('Leaderboard', leaderboardAddress)
     const hubbleViewer = await ethers.getContractAt('HubbleViewer', await leaderboard.hubbleViewer())
@@ -469,6 +476,7 @@ async function generateConfig(leaderboardAddress) {
 }
 
 function sleep(s) {
+    console.log(`Requested a sleep of ${s} seconds...`)
     return new Promise(resolve => setTimeout(resolve, s * 1000));
 }
 

@@ -51,7 +51,7 @@ contract Oracle is Governable {
         // 3 different timestamps, `previous`, `current`, `target`
         // `base` = now - intervalInSeconds
         // `current` = current round timestamp from aggregator
-        // `previous` = previous round timestamp form aggregator
+        // `previous` = previous round timestamp from aggregator
         // now >= previous > current > = < base
         //
         //  while loop i = 0
@@ -169,6 +169,7 @@ contract Oracle is Governable {
 
     function setStablePrice(address underlying, int256 price) external onlyGovernance {
         requireNonEmptyAddress(underlying);
+        require(price > 0, "stablePrice=0");
         stablePrice[underlying] = price;
     }
 }
