@@ -328,7 +328,7 @@ contract MarginAccount is IMarginAccount, HubbleBase {
     function liquidateFlexible(address trader, uint maxRepay, uint[] calldata idxs) external whenNotPaused {
         clearingHouse.updatePositions(trader); // credits/debits funding
         uint repayed;
-        for (uint i = 0; i < idxs.length; i++) {
+        for (uint i; i < idxs.length; i++) {
             LiquidationBuffer memory buffer = _getLiquidationInfo(trader, idxs[i]);
             // revert only if trader has open positions, otherwise fail silently
             if (buffer.status == IMarginAccount.LiquidationStatus.OPEN_POSITIONS) {
@@ -518,7 +518,7 @@ contract MarginAccount is IMarginAccount, HubbleBase {
         Collateral[] memory assets = supportedCollateral;
         Collateral memory _collateral;
 
-        for (uint i = 0; i < assets.length; i++) {
+        for (uint i; i < assets.length; i++) {
             if (margin[i][trader] == 0) continue;
             _collateral = assets[i];
 
@@ -550,7 +550,7 @@ contract MarginAccount is IMarginAccount, HubbleBase {
         require(_weight <= PRECISION, "weight > 1e6");
 
         Collateral[] memory _collaterals = supportedCollateral;
-        for (uint i = 0; i < _collaterals.length; i++) {
+        for (uint i; i < _collaterals.length; i++) {
             require(address(_collaterals[i].token) != _coin, "collateral exists");
         }
         supportedCollateral.push(

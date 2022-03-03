@@ -8,6 +8,7 @@ const {
     setupAmm,
     generateConfig,
     sleep,
+    getTxOptions,
     txOptions
 } = utils
 const gasLimit = 6e6
@@ -20,8 +21,6 @@ async function main() {
     // so if you run this script with --network local, uncomment the following 2 lines
     // await network.provider.send("evm_setAutomine", [false])
     // await network.provider.send("evm_setIntervalMining", [500])
-    // just need this so that nonce is non-zero for txOptions.nonce ? _ : _ works
-    await web3.eth.sendTransaction({ from: governance, to: governance, value: _1e18 })
 
     txOptions.nonce = await signers[0].getTransactionCount()
     txOptions.gasLimit = gasLimit
@@ -39,14 +38,14 @@ async function main() {
     btc = await setupRestrictedTestToken('Hubble BTC', 'hWBTC', 8)
 
     console.log('setting aggregators...')
-    await oracle.setAggregator(avax.address, '0x5498BB86BC934c8D34FDA08E81D444153d0D06aD', { nonce: txOptions.nonce++, gasLimit }) // AVAX / USD Feed
-    await oracle.setAggregator(weth.address, '0x86d67c3D38D2bCeE722E601025C25a575021c6EA', { nonce: txOptions.nonce++, gasLimit }) // ETH / USD Feed
-    await oracle.setAggregator(btc.address, '0x31CF013A08c6Ac228C94551d535d5BAfE19c602a', { nonce: txOptions.nonce++, gasLimit }) // BTC / USD Feed
+    await oracle.setAggregator(avax.address, '0x5498BB86BC934c8D34FDA08E81D444153d0D06aD', getTxOptions()) // AVAX / USD Feed
+    await oracle.setAggregator(weth.address, '0x86d67c3D38D2bCeE722E601025C25a575021c6EA', getTxOptions()) // ETH / USD Feed
+    await oracle.setAggregator(btc.address, '0x31CF013A08c6Ac228C94551d535d5BAfE19c602a', getTxOptions()) // BTC / USD Feed
 
     console.log('whitelistCollateral...')
-    await marginAccount.whitelistCollateral(avax.address, 8e5, { nonce: txOptions.nonce++, gasLimit }) // weight = 0.8e6
-    await marginAccount.whitelistCollateral(weth.address, 8e5, { nonce: txOptions.nonce++, gasLimit })
-    await marginAccount.whitelistCollateral(btc.address, 8e5, { nonce: txOptions.nonce++, gasLimit })
+    await marginAccount.whitelistCollateral(avax.address, 8e5, getTxOptions()) // weight = 0.8e6
+    await marginAccount.whitelistCollateral(weth.address, 8e5, getTxOptions())
+    await marginAccount.whitelistCollateral(btc.address, 8e5, getTxOptions())
 
     // 4. AMMs
     console.log('setup AMMs...')
@@ -82,7 +81,7 @@ async function main() {
     console.log('setting up faucet...')
     faucet = '0x40ac7FaFeBc2D746E6679b8Da77F1bD9a5F1484f'
     const Executor = await ethers.getContractFactory('Executor')
-    executor = await Executor.deploy({ nonce: txOptions.nonce++, gasLimit })
+    executor = await Executor.deploy(getTxOptions())
     console.log({ executor: executor.address })
 
     // mint test tokens to faucet
@@ -96,15 +95,15 @@ async function main() {
     const DEFAULT_ADMIN_ROLE = '0x' + '0'.repeat(64)
     const TRANSFER_ROLE = ethers.utils.id('TRANSFER_ROLE')
     await Promise.all([
-        executor.grantRole(DEFAULT_ADMIN_ROLE, faucet, { nonce: txOptions.nonce++, gasLimit }),
-        vusd.grantRole(TRANSFER_ROLE, executor.address, { nonce: txOptions.nonce++, gasLimit }),
-        avax.grantRole(TRANSFER_ROLE, executor.address, { nonce: txOptions.nonce++, gasLimit }),
-        weth.grantRole(TRANSFER_ROLE, executor.address, { nonce: txOptions.nonce++, gasLimit }),
-        btc.grantRole(TRANSFER_ROLE, executor.address, { nonce: txOptions.nonce++, gasLimit }),
-        vusd.mint(executor.address, airdropAmounts.vusd.mul(users), { nonce: txOptions.nonce++, gasLimit }),
-        avax.mint(executor.address, airdropAmounts.avax.mul(users), { nonce: txOptions.nonce++, gasLimit }),
-        weth.mint(executor.address, airdropAmounts.weth.mul(users), { nonce: txOptions.nonce++, gasLimit }),
-        btc.mint(executor.address, airdropAmounts.btc.mul(users), { nonce: txOptions.nonce++, gasLimit }),
+        executor.grantRole(DEFAULT_ADMIN_ROLE, faucet, getTxOptions()),
+        vusd.grantRole(TRANSFER_ROLE, executor.address, getTxOptions()),
+        avax.grantRole(TRANSFER_ROLE, executor.address, getTxOptions()),
+        weth.grantRole(TRANSFER_ROLE, executor.address, getTxOptions()),
+        btc.grantRole(TRANSFER_ROLE, executor.address, getTxOptions()),
+        vusd.mint(executor.address, airdropAmounts.vusd.mul(users), getTxOptions()),
+        avax.mint(executor.address, airdropAmounts.avax.mul(users), getTxOptions()),
+        weth.mint(executor.address, airdropAmounts.weth.mul(users), getTxOptions()),
+        btc.mint(executor.address, airdropAmounts.btc.mul(users), getTxOptions()),
     ])
 
     // await testFaucet(signers[1].address)

@@ -33,7 +33,7 @@ interface IClearingHouse {
     function updatePositions(address trader) external;
     function getMarginFraction(address trader) external view returns(int256);
     function getTotalFunding(address trader) external view returns(int256 totalFunding);
-    function getAmmsLength() external view returns(uint8);
+    function getAmmsLength() external view returns(uint);
     function amms(uint idx) external view returns(IAMM);
     function maintenanceMargin() external view returns(int256);
     function minAllowableMargin() external view returns(int256);

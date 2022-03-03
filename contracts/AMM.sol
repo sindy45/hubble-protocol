@@ -454,8 +454,10 @@ contract AMM is IAMM, Governable {
         external
         onlyClearingHouse
     {
-        if (ammState != AMMState.Active) return;
-        require(_blockTimestamp() >= nextFundingTime, "settle funding too early");
+        if (
+            ammState != AMMState.Active
+            || _blockTimestamp() < nextFundingTime
+        ) return;
 
         // premium = twapMarketPrice - twapIndexPrice
         // timeFraction = fundingPeriod(1 hour) / 1 day

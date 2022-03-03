@@ -9,14 +9,15 @@ import { ERC20PresetMinterPauserUpgradeable } from "@openzeppelin/contracts-upgr
 contract VUSD is ERC20PresetMinterPauserUpgradeable {
     using SafeERC20 for IERC20;
 
-    struct Withdrawal {
-        address usr;
-        uint amount;
-    }
+    uint8 private constant PRECISION = 6;
 
     /// @notice vUSD is backed 1:1 with reserveToken (USDC)
     IERC20 public immutable reserveToken;
 
+    struct Withdrawal {
+        address usr;
+        uint amount;
+    }
     Withdrawal[] public withdrawals;
 
     /// @dev withdrawals will start processing at withdrawals[start]
@@ -32,9 +33,9 @@ contract VUSD is ERC20PresetMinterPauserUpgradeable {
         reserveToken = IERC20(_reserveToken);
     }
 
-    function init() external {
-        initialize("Hubble USD", "hUSD"); // has initializer modifier
-        // _revokeRole(MINTER_ROLE, _msgSender()); // __ERC20PresetMinterPauser_init_unchained grants this but is not required
+    function initialize(string memory name, string memory symbol) public override virtual {
+        super.initialize(name, symbol); // has initializer modifier
+        _revokeRole(MINTER_ROLE, _msgSender()); // __ERC20PresetMinterPauser_init_unchained grants this but is not required
         maxWithdrawalProcesses = 100;
     }
 
@@ -44,6 +45,7 @@ contract VUSD is ERC20PresetMinterPauserUpgradeable {
     }
 
     function withdraw(uint amount) external whenNotPaused {
+        require(amount >= 5 * (10 ** PRECISION), "min withdraw is 5 vusd");
         burn(amount);
         withdrawals.push(Withdrawal(msg.sender, amount));
     }
@@ -57,15 +59,15 @@ contract VUSD is ERC20PresetMinterPauserUpgradeable {
             if (reserve < withdrawal.amount) {
                 break;
             }
-            reserveToken.safeTransfer(withdrawal.usr, withdrawal.amount);
             reserve -= withdrawal.amount;
+            reserveToken.safeTransfer(withdrawal.usr, withdrawal.amount);
             i += 1;
         }
         start = i;
     }
 
     function decimals() public pure override returns (uint8) {
-        return 6;
+        return PRECISION;
     }
 
     function setMaxWithdrawalProcesses(uint _maxWithdrawalProcesses) external {

@@ -22,19 +22,19 @@ contract BatchLiquidator is Ownable {
     }
 
     function liquidate(address[] calldata traders) external {
-        for (uint i = 0; i < traders.length; i++) {
+        for (uint i; i < traders.length; i++) {
             clearingHouse.liquidate(traders[i]);
         }
     }
 
     function liquidateMakers(address[] calldata traders) external {
-        for (uint i = 0; i < traders.length; i++) {
+        for (uint i; i < traders.length; i++) {
             clearingHouse.liquidateMaker(traders[i]);
         }
     }
 
     function liquidateTakers(address[] calldata traders) external {
-        for (uint i = 0; i < traders.length; i++) {
+        for (uint i; i < traders.length; i++) {
             clearingHouse.liquidateTaker(traders[i]);
         }
     }

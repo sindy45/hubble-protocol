@@ -9,10 +9,11 @@ describe('vUSD Unit Tests', function() {
         alice = signers[0].address
         admin = signers[11]
 
-        ;([ ERC20Mintable, TransparentUpgradeableProxy, ProxyAdmin ] = await Promise.all([
+        ;([ ERC20Mintable, TransparentUpgradeableProxy, ProxyAdmin, VUSD ] = await Promise.all([
             ethers.getContractFactory('ERC20Mintable'),
             ethers.getContractFactory('TransparentUpgradeableProxy'),
-            ethers.getContractFactory('ProxyAdmin')
+            ethers.getContractFactory('ProxyAdmin'),
+            ethers.getContractFactory('VUSD'),
         ]))
         proxyAdmin = await ProxyAdmin.deploy()
 
@@ -27,7 +28,6 @@ describe('vUSD Unit Tests', function() {
         })
 
         it('reverts when initializing again', async function() {
-            await expect(vusd.init()).to.be.revertedWith('Initializable: contract is already initialized')
             await expect(vusd.initialize("dummy name", "DUM")).to.be.revertedWith('Initializable: contract is already initialized')
         })
 
@@ -95,6 +95,16 @@ describe('vUSD Unit Tests', function() {
                 expect(await vusd.balanceOf(trader.address)).to.eq(_amount)
             }
             expect(await usdc.balanceOf(vusd.address)).to.eq(_1e6.mul(6765))
+        })
+
+        it('too [smol/big] withdraw fails', async function () {
+            await expect(
+                vusd.withdraw(_1e6.mul(5).sub(1))
+            ).to.be.revertedWith('min withdraw is 5 vusd')
+
+            await expect(
+                vusd.connect(signers[1]).withdraw(amount.add(1))
+            ).to.be.revertedWith('ERC20: burn amount exceeds balance')
         })
 
         it('multiple withdrawals', async function () {
@@ -172,7 +182,10 @@ describe('vUSD Unit Tests', function() {
         await vusd.connect(trader).mintWithReserve(trader.address, _amount)
     }
 
-    function setupVusd() {
-        return utils.setupUpgradeableProxy('VUSD', proxyAdmin.address, [], [ usdc.address ])
+    async function setupVusd() {
+        // bdw, not a proxy
+        const vusd = await VUSD.deploy(usdc.address)
+        await vusd.initialize('Hubble USD', 'hUSD')
+        return vusd
     }
 })

@@ -50,7 +50,7 @@ contract HubbleViewer is IHubbleViewer {
         uint len = traders.length;
         fractions = new int256[](len);
         isMaker = new bool[](len);
-        for (uint i = 0; i < len; i++) {
+        for (uint i; i < len; i++) {
             fractions[i] = clearingHouse.getMarginFraction(traders[i]);
             isMaker[i] = clearingHouse.isMaker(traders[i]);
         }
@@ -64,7 +64,7 @@ contract HubbleViewer is IHubbleViewer {
         isLiquidatable = new IMarginAccount.LiquidationStatus[](traders.length);
         repayAmount = new uint[](traders.length);
         incentivePerDollar = new uint[](traders.length);
-        for (uint i = 0; i < traders.length; i++) {
+        for (uint i; i < traders.length; i++) {
             (isLiquidatable[i], repayAmount[i], incentivePerDollar[i]) = marginAccount.isLiquidatable(traders[i], true);
         }
     }
@@ -81,7 +81,7 @@ contract HubbleViewer is IHubbleViewer {
     function userPositions(address trader) external view returns(Position[] memory positions) {
         uint l = clearingHouse.getAmmsLength();
         positions = new Position[](l);
-        for (uint i = 0; i < l; i++) {
+        for (uint i; i < l; i++) {
             IAMM amm = clearingHouse.amms(i);
             (positions[i].size, positions[i].openNotional, ) = amm.positions(trader);
             if (positions[i].size == 0) {
@@ -107,7 +107,7 @@ contract HubbleViewer is IHubbleViewer {
         uint l = clearingHouse.getAmmsLength();
         IAMM amm;
         positions = new Position[](l);
-        for (uint i = 0; i < l; i++) {
+        for (uint i; i < l; i++) {
             amm = clearingHouse.amms(i);
             (
                 positions[i].size,
@@ -126,7 +126,7 @@ contract HubbleViewer is IHubbleViewer {
     function markets() external view returns(MarketInfo[] memory _markets) {
         uint l = clearingHouse.getAmmsLength();
         _markets = new MarketInfo[](l);
-        for (uint i = 0; i < l; i++) {
+        for (uint i; i < l; i++) {
             IAMM amm = clearingHouse.amms(i);
             _markets[i] = MarketInfo(address(amm), amm.underlyingAsset());
         }
@@ -220,6 +220,72 @@ contract HubbleViewer is IHubbleViewer {
         (uint256 notionalPosition, int256 margin) = clearingHouse.getNotionalPositionAndMargin(trader, true /* includeFundingPayments */, IClearingHouse.Mode.Maintenance_Margin);
         IAMM amm = clearingHouse.amms(idx);
         liquidationPrice = _getLiquidationPrice(trader, amm, notionalPosition, margin, 0, 0);
+    }
+
+    /**
+    * @dev At liquidation,
+    * (margin + pnl) / notionalPosition = maintenanceMargin (MM)
+    * => pnl = MM * notionalPosition - margin
+    *
+    * for long, pnl = liquidationPrice * size - openNotional
+    * => liquidationPrice = (pnl + openNotional) / size
+    *
+    * for short, pnl = openNotional - liquidationPrice * size
+    * => liquidationPrice = (openNotional - pnl) / size
+    */
+    function _getLiquidationPrice(
+            address trader,
+            IAMM amm,
+            uint256 notionalPosition,
+            int256 margin,
+            int256 baseAssetQuantity,
+            uint quoteAssetQuantity
+        )
+        internal
+        view
+        returns(uint256 liquidationPrice)
+    {
+        if (notionalPosition == 0) {
+            return 0;
+        }
+
+        (, int256 unrealizedPnl, int256 totalPosSize, uint256 openNotional) = amm.getNotionalPositionAndUnrealizedPnl(trader);
+
+        if (baseAssetQuantity != 0) {
+            // Calculate effective position and openNotional
+            if (baseAssetQuantity * totalPosSize >= 0) { // increasingPosition i.e. same direction trade
+                openNotional += quoteAssetQuantity;
+            } else { // open reverse position
+                uint totalPosNotional = amm.getCloseQuote(totalPosSize + baseAssetQuantity);
+                if (_abs(totalPosSize) >= _abs(baseAssetQuantity)) { // position side remains same after the trade
+                    (openNotional,) = amm.getOpenNotionalWhileReducingPosition(
+                        totalPosSize,
+                        totalPosNotional,
+                        unrealizedPnl,
+                        baseAssetQuantity
+                    );
+                } else { // position side changes after the trade
+                    openNotional = totalPosNotional;
+                }
+            }
+            totalPosSize += baseAssetQuantity;
+        }
+
+        int256 pnlForLiquidation = clearingHouse.maintenanceMargin() * notionalPosition.toInt256() / PRECISION_INT - margin;
+        int256 _liquidationPrice;
+        if (totalPosSize > 0) {
+            _liquidationPrice = (openNotional.toInt256() + pnlForLiquidation) * 1e18 / totalPosSize;
+        } else if (totalPosSize < 0) {
+            _liquidationPrice = (openNotional.toInt256() - pnlForLiquidation) * 1e18 / (-totalPosSize);
+        }
+
+        // negative liquidation price is possible when position size is small compared to margin added and
+        // hence pnl will not be big enough to reach liquidation
+        // in this case, (openNotional + pnlForLiquidation) < 0 because of high margin
+        if (_liquidationPrice < 0) {
+            _liquidationPrice = 0;
+        }
+        return _liquidationPrice.toUint256();
     }
 
     /**
@@ -403,73 +469,14 @@ contract HubbleViewer is IHubbleViewer {
         freeMargin = margin + unrealizedPnl - clearingHouse.getTotalFunding(trader) - notionalPosition.toInt256() * minAllowableMargin / PRECISION_INT;
     }
 
-    // Internal
-
-    /**
-    * @dev At liquidation,
-    * (margin + pnl) / notionalPosition = maintenanceMargin (MM)
-    * => pnl = MM * notionalPosition - margin
-    *
-    * for long, pnl = liquidationPrice * size - openNotional
-    * => liquidationPrice = (pnl + openNotional) / size
-    *
-    * for short, pnl = openNotional - liquidationPrice * size
-    * => liquidationPrice = (openNotional - pnl) / size
-    */
-    function _getLiquidationPrice(
-            address trader,
-            IAMM amm,
-            uint256 notionalPosition,
-            int256 margin,
-            int256 baseAssetQuantity,
-            uint quoteAssetQuantity
-        )
-        internal
-        view
-        returns(uint256 liquidationPrice)
-    {
-        if (notionalPosition == 0) {
-            return 0;
+    function getTotalFunding(address[] calldata traders) external view returns(int[] memory pendingFundings) {
+        pendingFundings = new int[](traders.length);
+        for (uint i; i < traders.length; i++) {
+            pendingFundings[i] = clearingHouse.getTotalFunding(traders[i]);
         }
-
-        (, int256 unrealizedPnl, int256 totalPosSize, uint256 openNotional) = amm.getNotionalPositionAndUnrealizedPnl(trader);
-
-        if (baseAssetQuantity != 0) {
-            // Calculate effective position and openNotional
-            if (baseAssetQuantity * totalPosSize >= 0) { // increasingPosition i.e. same direction trade
-                openNotional += quoteAssetQuantity;
-            } else { // open reverse position
-                uint totalPosNotional = amm.getCloseQuote(totalPosSize + baseAssetQuantity);
-                if (_abs(totalPosSize) >= _abs(baseAssetQuantity)) { // position side remains same after the trade
-                    (openNotional,) = amm.getOpenNotionalWhileReducingPosition(
-                        totalPosSize,
-                        totalPosNotional,
-                        unrealizedPnl,
-                        baseAssetQuantity
-                    );
-                } else { // position side changes after the trade
-                    openNotional = totalPosNotional;
-                }
-            }
-            totalPosSize += baseAssetQuantity;
-        }
-
-        int256 pnlForLiquidation = clearingHouse.maintenanceMargin() * notionalPosition.toInt256() / PRECISION_INT - margin;
-        int256 _liquidationPrice;
-        if (totalPosSize > 0) {
-            _liquidationPrice = (openNotional.toInt256() + pnlForLiquidation) * 1e18 / totalPosSize;
-        } else if (totalPosSize < 0) {
-            _liquidationPrice = (openNotional.toInt256() - pnlForLiquidation) * 1e18 / (-totalPosSize);
-        }
-
-        // negative liquidation price is possible when position size is small compared to margin added and
-        // hence pnl will not be big enough to reach liquidation
-        // in this case, (openNotional + pnlForLiquidation) < 0 because of high margin
-        if (_liquidationPrice < 0) {
-            _liquidationPrice = 0;
-        }
-        return _liquidationPrice.toUint256();
     }
+
+    // Internal
 
     function _calculateTradeFee(uint quoteAsset) internal view returns (uint) {
         return quoteAsset * clearingHouse.tradeFee() / PRECISION_UINT;

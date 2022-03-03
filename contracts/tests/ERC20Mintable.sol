@@ -56,6 +56,11 @@ contract RestrictedVusd is VUSD {
 
     constructor(address _reserveToken) VUSD(_reserveToken) {}
 
+    function initialize(string memory name, string memory symbol) public override {
+        super.initialize(name, symbol);
+        _grantRole(MINTER_ROLE, _msgSender());
+    }
+
     function allowTransfers() external {
         require(hasRole(DEFAULT_ADMIN_ROLE, _msgSender()), "HubbleErc20.allowTransfers.noAuth");
         transfersAllowed = true;

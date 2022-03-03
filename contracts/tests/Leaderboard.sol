@@ -34,7 +34,7 @@ contract Leaderboard {
         }
 
         // loop over traders
-        for (uint i = 0; i < numTraders; i++) {
+        for (uint i; i < numTraders; i++) {
             (makerMargins[i], takerMargins[i]) = _calcMargin(traders[i], amms);
         }
     }

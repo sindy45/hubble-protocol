@@ -31,6 +31,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     event PositionLiquidated(address indexed trader, uint indexed idx, int256 baseAsset, uint256 quoteAsset, uint256 timestamp);
     event PositionTranslated(address indexed trader, uint indexed idx, int256 baseAsset, uint256 quoteAsset, uint256 timestamp);
     event MarketAdded(uint indexed idx, address indexed amm);
+    event FundingPaid(address indexed trader, int256 fundingPayment);
 
     constructor(address _trustedForwarder) HubbleBase(_trustedForwarder) {}
 
@@ -144,15 +145,18 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     function updatePositions(address trader) override public whenNotPaused {
         require(address(trader) != address(0), 'CH: 0x0 trader Address');
         int256 fundingPayment;
-        for (uint i = 0; i < amms.length; i++) {
+        uint numAmms = amms.length;
+        for (uint i; i < numAmms; ++i) {
             fundingPayment += amms[i].updatePosition(trader);
         }
         // -ve fundingPayment means trader should receive funds
         marginAccount.realizePnL(trader, -fundingPayment);
+        emit FundingPaid(trader, -fundingPayment);
     }
 
     function settleFunding() override external whenNotPaused {
-        for (uint i = 0; i < amms.length; i++) {
+        uint numAmms = amms.length;
+        for (uint i; i < numAmms; ++i) {
             amms[i].settleFunding();
         }
     }
@@ -196,8 +200,8 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         uint256 quoteAsset;
         int256 baseAssetQuantity;
 
-        uint8 l = getAmmsLength();
-        for (uint8 i = 0; i < l; i++) {
+        uint l = getAmmsLength();
+        for (uint i; i < l; ++i) {
             IAMM.Maker memory _maker = amms[i].makers(maker);
             if (_maker.dToken == 0 && _maker.ignition == 0) continue;
             (_realizedPnl, quoteAsset, baseAssetQuantity) = amms[i].forceRemoveLiquidity(maker);
@@ -224,7 +228,8 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         uint quoteAsset;
         int256 size;
         IAMM _amm;
-        for (uint i = 0; i < amms.length; i++) { // liquidate all positions
+        uint numAmms = amms.length;
+        for (uint i; i < numAmms; ++i) { // liquidate all positions
             _amm = amms[i];
             (size,,) = _amm.positions(trader);
             if (size != 0) {
@@ -272,7 +277,8 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     }
 
     function isMaker(address trader) override public view returns(bool) {
-        for (uint i = 0; i < amms.length; i++) {
+        uint numAmms = amms.length;
+        for (uint i; i < numAmms; ++i) {
             IAMM.Maker memory maker = amms[i].makers(trader);
             if (maker.dToken > 0) {
                 return true;
@@ -284,7 +290,8 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     function getTotalFunding(address trader) override public view returns(int256 totalFunding) {
         int256 takerFundingPayment;
         int256 makerFundingPayment;
-        for (uint i = 0; i < amms.length; i++) {
+        uint numAmms = amms.length;
+        for (uint i; i < numAmms; ++i) {
             (takerFundingPayment, makerFundingPayment,,) = amms[i].getPendingFundingPayment(trader);
             totalFunding += (takerFundingPayment + makerFundingPayment);
         }
@@ -298,7 +305,8 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     {
         uint256 _notionalPosition;
         int256 _unrealizedPnl;
-        for (uint i = 0; i < amms.length; i++) {
+        uint numAmms = amms.length;
+        for (uint i; i < numAmms; ++i) {
             if (amms[i].isOverSpreadLimit()) {
                 (_notionalPosition, _unrealizedPnl) = amms[i].getOracleBasedPnl(trader, margin, mode);
             } else {
@@ -324,8 +332,8 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         margin += unrealizedPnl;
     }
 
-    function getAmmsLength() override public view returns(uint8) {
-        return uint8(amms.length);
+    function getAmmsLength() override public view returns(uint) {
+        return amms.length;
     }
 
     function getAMMs() external view returns (IAMM[] memory) {
@@ -394,7 +402,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
 
     function whitelistAmm(address _amm) external onlyGovernance {
         uint l = amms.length;
-        for (uint i = 0; i < l; i++) {
+        for (uint i; i < l; ++i) {
             require(address(amms[i]) != _amm, "ch.whitelistAmm.duplicate_amm");
         }
         emit MarketAdded(l, _amm);
