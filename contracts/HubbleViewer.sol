@@ -16,6 +16,8 @@ contract HubbleViewer is IHubbleViewer {
 
     IClearingHouse public immutable clearingHouse;
     IMarginAccount public immutable marginAccount;
+
+    /// @dev not actually used but helps in utils.generateConfig
     address public immutable registry;
 
     struct Position {
@@ -372,9 +374,13 @@ contract HubbleViewer is IHubbleViewer {
         IAMM.Maker memory maker = amm.makers(_maker);
 
         if (amm.ammState() == IAMM.AMMState.Active) {
+            if (maker.ignition > 0) {
+                (,dToken) = amm.getIgnitionShare(maker.ignition);
+            } else {
+                dToken = maker.dToken;
+            }
             unbondTime = maker.unbondTime;
             unbondAmount = maker.unbondAmount;
-            dToken = maker.dToken;
             totalDeposited = 2 * maker.vUSD;
 
             vUSDBalance = vamm.balances(0);
@@ -469,10 +475,25 @@ contract HubbleViewer is IHubbleViewer {
         freeMargin = margin + unrealizedPnl - clearingHouse.getTotalFunding(trader) - notionalPosition.toInt256() * minAllowableMargin / PRECISION_INT;
     }
 
-    function getTotalFunding(address[] calldata traders) external view returns(int[] memory pendingFundings) {
-        pendingFundings = new int[](traders.length);
-        for (uint i; i < traders.length; i++) {
-            pendingFundings[i] = clearingHouse.getTotalFunding(traders[i]);
+    /**
+    * @dev Vanity function required for some analyses later
+    */
+    function getPendingFundings(address[] calldata traders)
+        external
+        view
+        returns(int[][] memory takerFundings, int[][] memory makerFundings)
+    {
+        uint l = clearingHouse.getAmmsLength();
+        uint t = traders.length;
+        takerFundings = new int[][](t);
+        makerFundings = new int[][](t);
+        for (uint j; j < t; j++) {
+            takerFundings[j] = new int[](l);
+            makerFundings[j] = new int[](l);
+            for (uint i; i < l; i++) {
+                IAMM amm = clearingHouse.amms(i);
+                (takerFundings[j][i],makerFundings[j][i],,) = amm.getPendingFundingPayment(traders[j]);
+            }
         }
     }
 

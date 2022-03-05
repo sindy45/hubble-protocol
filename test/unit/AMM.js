@@ -316,7 +316,7 @@ describe('AMM states', async function() {
     it('commitLiquidity works when ammState=Ignition', async () => {
         const initialLiquidity = 1000 // eth
         const rate = 1000 // $1k
-        const vUSD = _1e6.mul(initialLiquidity * rate)
+        vUSD = _1e6.mul(initialLiquidity * rate)
         await utils.addMargin(maker, vUSD)
         const { expectedMarginFraction } = await hubbleViewer.getMakerExpectedMFAndLiquidationPrice(maker.address, 0, vUSD, false)
         expect(expectedMarginFraction).to.eq('500000')
@@ -336,6 +336,10 @@ describe('AMM states', async function() {
     it('set ammState=Active', async () => {
         await amm.liftOff()
         expect(await amm.ammState()).to.eq(2)
+        expect((await hubbleViewer.getMakerLiquidity(maker.address, 0)).dToken.gt(0)).to.be.true
+        const { notionalPosition, unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(maker.address)
+        expect(notionalPosition).to.eq(vUSD.mul(2))
+        expect(unrealizedPnl).to.eq(ZERO)
     })
 
     it('[add,unbond]Liquidity/openPosition works when ammState=Active', async () => {

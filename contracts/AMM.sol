@@ -61,15 +61,7 @@ contract AMM is IAMM, Governable {
     }
     ReserveSnapshot[] public reserveSnapshots;
 
-    // Ignition stuff
-
-    struct Ignition {
-        uint quoteAsset;
-        uint baseAsset;
-        uint dToken;
-    }
-    Ignition public ignition;
-
+    Ignition override public ignition;
     IAMM.AMMState override public ammState;
 
     struct VarGroup1 {
@@ -99,7 +91,7 @@ contract AMM is IAMM, Governable {
     * @dev This is only emitted when maker funding related events are updated.
     * These fields are: ignition,dToken,lastPremiumFraction,pos,lastPremiumPerDtoken,posAccumulator
     */
-    event MakerPositionChanged(address indexed trader, Maker maker);
+    event MakerPositionChanged(address indexed trader, Maker maker, uint timestamp);
 
     modifier onlyClearingHouse() {
         require(msg.sender == clearingHouse, "Only clearingHouse");
@@ -195,6 +187,7 @@ contract AMM is IAMM, Governable {
     {
         if (ammState != AMMState.Active) return 0;
 
+        _setIgnitionShare(trader);
         Maker storage maker = _makers[trader];
         int256 takerFundingPayment;
         int256 makerFundingPayment;
@@ -229,8 +222,6 @@ contract AMM is IAMM, Governable {
         whenActive
         returns (uint dToken)
     {
-        _ignitionCheck(maker);
-
         uint quoteAsset;
         uint baseAssetBal = vamm.balances(1);
         if (baseAssetBal == 0) {
@@ -262,6 +253,8 @@ contract AMM is IAMM, Governable {
     */
     function unbondLiquidity(uint dToken) external whenActive {
         address maker = msg.sender;
+        // this needs to be invoked here because updatePosition is not called before unbondLiquidity
+        _setIgnitionShare(maker);
         Maker storage _maker = _makers[maker];
         require(_maker.dToken >= dToken, "unbonding_too_much");
         _maker.unbondAmount = dToken;
@@ -281,8 +274,8 @@ contract AMM is IAMM, Governable {
             VarGroup1 memory varGroup1 = VarGroup1(0,0,true);
             uint dToken = _maker.dToken;
             if (dToken == 0) {
-                // these will be assigned on _ignitionCheck(maker)
-                dToken = ignition.dToken * _maker.ignition / ignition.quoteAsset;
+                // these will be assigned on _setIgnitionShare(maker)
+                (,dToken) = getIgnitionShare(_maker.ignition);
             }
             return _removeLiquidity(maker, dToken, varGroup1);
         }
@@ -315,8 +308,6 @@ contract AMM is IAMM, Governable {
         internal
         returns (int realizedPnl, uint makerOpenNotional, int makerPosition)
     {
-        _ignitionCheck(maker);
-
         Maker storage _maker = _makers[maker];
         Position storage position = positions[maker];
 
@@ -518,15 +509,20 @@ contract AMM is IAMM, Governable {
         nextFundingTime = ((_blockTimestamp() + fundingPeriod) / 1 hours) * 1 hours;
     }
 
-    function _ignitionCheck(address maker) internal {
-        if (_makers[maker].ignition == 0) return;
+    function _setIgnitionShare(address maker) internal {
+        uint vUSD = _makers[maker].ignition;
+        if (vUSD == 0) return;
 
         Maker storage _maker = _makers[maker];
-        _maker.vUSD = _makers[maker].ignition;
-        _maker.vAsset = ignition.baseAsset * _maker.vUSD / ignition.quoteAsset;
-        _maker.dToken = ignition.dToken * _maker.vUSD / ignition.quoteAsset;
+        _maker.vUSD = vUSD;
+        (_maker.vAsset, _maker.dToken) = getIgnitionShare(vUSD);
         _maker.ignition = 0;
         _emitMakerPositionChanged(maker); // because dToken was updated
+    }
+
+    function getIgnitionShare(uint vUSD) override public view returns (uint vAsset, uint dToken) {
+        vAsset = ignition.baseAsset * vUSD / ignition.quoteAsset;
+        dToken = ignition.dToken * vUSD / ignition.quoteAsset;
     }
 
     // View
@@ -553,10 +549,21 @@ contract AMM is IAMM, Governable {
             return (_makers[trader].ignition * 2, 0, 0, 0);
         }
 
+        uint vUSD = _makers[trader].ignition;
+        uint vAsset;
+        uint dToken;
+        if (vUSD > 0) { // participated in ignition
+            (vAsset, dToken) = getIgnitionShare(vUSD);
+        } else {
+            vUSD = _makers[trader].vUSD;
+            vAsset = _makers[trader].vAsset;
+            dToken = _makers[trader].dToken;
+        }
+
         (notionalPosition, size, unrealizedPnl, openNotional) = vamm.get_notional(
-            _makers[trader].dToken,
-            _makers[trader].vUSD,
-            _makers[trader].vAsset,
+            dToken,
+            vUSD,
+            vAsset,
             positions[trader].size,
             positions[trader].openNotional
         );
@@ -676,8 +683,9 @@ contract AMM is IAMM, Governable {
 
         // Maker
         uint256 dToken;
-        if (_makers[trader].ignition > 0) {
-            dToken = (ignition.dToken * _makers[trader].ignition / ignition.quoteAsset);
+        uint vUSD = _makers[trader].ignition;
+        if (vUSD > 0) {
+            (,dToken) = getIgnitionShare(vUSD);
         } else {
             dToken = maker.dToken;
         }
@@ -798,7 +806,7 @@ contract AMM is IAMM, Governable {
     }
 
     function _emitMakerPositionChanged(address maker) internal {
-        emit MakerPositionChanged(maker, _makers[maker]);
+        emit MakerPositionChanged(maker, _makers[maker], _blockTimestamp());
     }
 
     /**

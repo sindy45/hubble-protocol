@@ -1028,13 +1028,28 @@ describe('Maker Tests', async function() {
                     takerFundingPayment: maker1TakerFunding,
                     makerFundingPayment: maker1MakerFunding
                 },
-                { makerFundingPayment: maker2Funding },
-                { takerFundingPayment: aliceFunding }
+                {
+                    takerFundingPayment: maker2TakerFunding,
+                    makerFundingPayment: maker2Funding
+                },
+                { takerFundingPayment: aliceFunding, makerFundingPayment: aliceMakerFunding },
+                pendingFundings
             ] = await Promise.all([
                 amm.getPendingFundingPayment(maker1.address),
                 amm.getPendingFundingPayment(maker2.address),
-                amm.getPendingFundingPayment(alice)
+                amm.getPendingFundingPayment(alice),
+                hubbleViewer.getPendingFundings([maker1.address,maker2.address,alice])
             ])
+            expect(
+                pendingFundings.takerFundings.map(t => t.toString())
+            ).to.eql(
+                [maker1TakerFunding,maker2TakerFunding,aliceFunding].map(t => t.toString())
+            )
+            expect(
+                pendingFundings.makerFundings.map(t => t.toString())
+            ).to.eql(
+                [maker1MakerFunding,maker2Funding,'0'].map(t => t.toString())
+            )
 
             // let's assert for takers
             let fundingPayment = premium.mul(baseAssetQuantity).div(_1e18) // -ve

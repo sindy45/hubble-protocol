@@ -47,7 +47,7 @@ async function main() {
     await marginAccount.whitelistCollateral(weth.address, 8e5, getTxOptions())
     await marginAccount.whitelistCollateral(btc.address, 8e5, getTxOptions())
 
-    // 4. AMMs
+    // 3. AMMs
     console.log('setup AMMs...')
     const ammOptions = {
         initialRate: 0,
@@ -74,16 +74,16 @@ async function main() {
         Object.assign(ammOptions, { index: 2 })
     )
 
-    await sleep(1) // 10s on fuji
-    console.log(JSON.stringify(await generateConfig(leaderboard.address), null, 2))
-
     // 4. Setup Faucet
     console.log('setting up faucet...')
     faucet = '0x40ac7FaFeBc2D746E6679b8Da77F1bD9a5F1484f'
     const Executor = await ethers.getContractFactory('Executor')
     executor = await Executor.deploy(getTxOptions())
-    console.log({ executor: executor.address })
 
+    await sleep(10) // 10s on fuji
+    console.log(JSON.stringify(await generateConfig(leaderboard.address, executor.address), null, 2))
+
+    // Print test tokens etc
     // mint test tokens to faucet
     airdropAmounts = {
         vusd: _1e6.mul(20000),

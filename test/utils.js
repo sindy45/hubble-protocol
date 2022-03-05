@@ -440,7 +440,7 @@ async function assertBounds(v, lowerBound, upperBound) {
 }
 
 // doesn't print inactive AMMs
-async function generateConfig(leaderboardAddress) {
+async function generateConfig(leaderboardAddress, executorAddress) {
     const leaderboard = await ethers.getContractAt('Leaderboard', leaderboardAddress)
     const hubbleViewer = await ethers.getContractAt('HubbleViewer', await leaderboard.hubbleViewer())
     const clearingHouse = await ethers.getContractAt('ClearingHouse', await hubbleViewer.clearingHouse())
@@ -471,7 +471,7 @@ async function generateConfig(leaderboardAddress) {
     // to find the genesis block, we will get the block in which the first amm was whitelisted
     const marketAddedEvents = await clearingHouse.queryFilter('MarketAdded')
     const genesisBlock = marketAddedEvents[0].blockNumber
-    return {
+    const res = {
         genesisBlock,
         timestamp: (await ethers.provider.getBlock(genesisBlock)).timestamp,
         contracts: {
@@ -481,6 +481,7 @@ async function generateConfig(leaderboardAddress) {
             Oracle: await marginAccount.oracle(),
             InsuranceFund: await marginAccount.insuranceFund(),
             Registry: await hubbleViewer.registry(),
+            Leaderboard: leaderboardAddress,
             amms,
             collateral,
         },
@@ -489,6 +490,10 @@ async function generateConfig(leaderboardAddress) {
             numCollateral: collateral.length
         }
     }
+    if (executorAddress) {
+        res.Executor = executorAddress
+    }
+    return res
 }
 
 function sleep(s) {

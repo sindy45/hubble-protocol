@@ -72,11 +72,19 @@ interface IAMM {
         uint ignition;
     }
 
+    struct Ignition {
+        uint quoteAsset;
+        uint baseAsset;
+        uint dToken;
+    }
+
     /**
     * @dev We do not deliberately have a Pause state. There is only a master-level pause at clearingHouse level
     */
     enum AMMState { Inactive, Ignition, Active }
     function ammState() external view returns(AMMState);
+    function ignition() external view returns(uint quoteAsset, uint baseAsset, uint dToken);
+    function getIgnitionShare(uint vUSD) external view returns (uint vAsset, uint dToken);
 
     function openPosition(address trader, int256 baseAssetQuantity, uint quoteAssetLimit)
         external

@@ -31,7 +31,6 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     event PositionLiquidated(address indexed trader, uint indexed idx, int256 baseAsset, uint256 quoteAsset, uint256 timestamp);
     event PositionTranslated(address indexed trader, uint indexed idx, int256 baseAsset, uint256 quoteAsset, uint256 timestamp);
     event MarketAdded(uint indexed idx, address indexed amm);
-    event FundingPaid(address indexed trader, int256 fundingPayment);
 
     constructor(address _trustedForwarder) HubbleBase(_trustedForwarder) {}
 
@@ -151,7 +150,6 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         }
         // -ve fundingPayment means trader should receive funds
         marginAccount.realizePnL(trader, -fundingPayment);
-        emit FundingPaid(trader, -fundingPayment);
     }
 
     function settleFunding() override external whenNotPaused {
