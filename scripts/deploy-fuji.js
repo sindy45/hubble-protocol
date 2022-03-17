@@ -77,8 +77,11 @@ async function main() {
     // 4. Setup Faucet
     console.log('setting up faucet...')
     faucet = '0x40ac7FaFeBc2D746E6679b8Da77F1bD9a5F1484f'
-    const Executor = await ethers.getContractFactory('Executor')
-    executor = await Executor.deploy(getTxOptions())
+
+    // const Executor = await ethers.getContractFactory('Executor')
+    // executor = await Executor.deploy(getTxOptions())
+
+    executor = await ethers.getContractAt('Executor', '0xC0BCb6F17Ef0Dd784dcb5a12Bb9Ea9253C1dd998')
 
     await sleep(10) // 10s on fuji
     console.log(JSON.stringify(await generateConfig(leaderboard.address, executor.address), null, 2))
@@ -86,16 +89,16 @@ async function main() {
     // Print test tokens etc
     // mint test tokens to faucet
     airdropAmounts = {
-        vusd: _1e6.mul(20000),
+        vusd: _1e6.mul(25000),
         avax: _1e18.mul(100),
         weth: _1e18.mul(3),
         btc: _1e8.mul(3).div(10)
     }
-    const users = 50
+    const users = 3000
     const DEFAULT_ADMIN_ROLE = '0x' + '0'.repeat(64)
     const TRANSFER_ROLE = ethers.utils.id('TRANSFER_ROLE')
     await Promise.all([
-        executor.grantRole(DEFAULT_ADMIN_ROLE, faucet, getTxOptions()),
+        // executor.grantRole(DEFAULT_ADMIN_ROLE, faucet, getTxOptions()),
         vusd.grantRole(TRANSFER_ROLE, executor.address, getTxOptions()),
         avax.grantRole(TRANSFER_ROLE, executor.address, getTxOptions()),
         weth.grantRole(TRANSFER_ROLE, executor.address, getTxOptions()),

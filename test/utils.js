@@ -491,7 +491,7 @@ async function generateConfig(leaderboardAddress, executorAddress) {
         }
     }
     if (executorAddress) {
-        res.Executor = executorAddress
+        res.contracts.Executor = executorAddress
     }
     return res
 }

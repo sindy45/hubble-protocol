@@ -21,6 +21,7 @@
     "@nomiclabs/hardhat-web3": "^2.0.0",
     "@openzeppelin/contracts": "4.5.0",
     "@openzeppelin/contracts-upgradeable": "^4.5.1",
+    "@tenderly/hardhat-tenderly": "^1.0.13",
     "chai": "^4.3.4",
     "csv-parser": "^3.0.0",
     "ethereum-waffle": "^3.4.0",

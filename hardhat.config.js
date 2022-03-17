@@ -5,6 +5,7 @@ require('solidity-coverage')
 require("hardhat-gas-reporter")
 require('hardhat-docgen')
 require('hardhat-contract-sizer')
+require("@tenderly/hardhat-tenderly");
 
 const PRIVATE_KEY = `0x${process.env.PRIVATE_KEY || 'ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80'}`
 
@@ -63,5 +64,9 @@ module.exports = {
     },
     docgen: {
         clear: true,
+    },
+    tenderly: {
+        project: "Supernova",
+        username: "atvanguard",
     }
 };

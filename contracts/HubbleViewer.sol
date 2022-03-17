@@ -314,6 +314,10 @@ contract HubbleViewer is IHubbleViewer {
     {
         IVAMM vamm = amm.vamm();
         IAMM.Maker memory maker = amm.makers(_maker);
+        if (maker.ignition != 0) {
+            maker.vUSD = maker.ignition;
+            (maker.vAsset, maker.dToken) = amm.getIgnitionShare(maker.vUSD);
+        }
         return vamm.get_maker_position(maker.dToken, maker.vUSD, maker.vAsset, maker.dToken);
     }
 

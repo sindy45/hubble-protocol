@@ -1020,4 +1020,8 @@ contract AMM is IAMM, Governable {
     function setUnbondPeriod(uint _unbondPeriod) external onlyGovernance {
         unbondPeriod = _unbondPeriod;
     }
+
+    function setMaxOracleSpreadRatio(uint _maxOracleSpreadRatio) external onlyGovernance {
+        maxOracleSpreadRatio = _maxOracleSpreadRatio;
+    }
 }

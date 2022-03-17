@@ -323,6 +323,13 @@ describe('AMM states', async function() {
         await clearingHouse.connect(maker).commitLiquidity(0, vUSD.mul(2))
     })
 
+    it('ignition liquidity is honored when ammState=Ignition', async () => {
+        const ml = await hubbleViewer.getMakerLiquidity(maker.address, 0)
+        // console.log(await hubbleViewer.getMakerPositionAndUnrealizedPnl(maker.address, 0))
+        expect(ml.vUSD).to.eq(vUSD.mul(2))
+        expect(ml.totalDeposited).to.eq(vUSD.mul(2))
+    })
+
     it('openPosition,unbondLiquidity fails when ammState=Ignition', async () => {
         await expect(
             clearingHouse.openPosition(0, -1, 0)
@@ -336,6 +343,9 @@ describe('AMM states', async function() {
     it('set ammState=Active', async () => {
         await amm.liftOff()
         expect(await amm.ammState()).to.eq(2)
+    })
+
+    it('ignition liquidity is honored when ammState=Active', async () => {
         expect((await hubbleViewer.getMakerLiquidity(maker.address, 0)).dToken.gt(0)).to.be.true
         const { notionalPosition, unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(maker.address)
         expect(notionalPosition).to.eq(vUSD.mul(2))

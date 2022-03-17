@@ -25,7 +25,8 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     IMarginAccount public marginAccount;
     IAMM[] override public amms;
 
-    uint256[50] private __gap;
+    address public blackList;
+    uint256[49] private __gap;
 
     event PositionModified(address indexed trader, uint indexed idx, int256 baseAsset, uint quoteAsset, uint256 timestamp);
     event PositionLiquidated(address indexed trader, uint indexed idx, int256 baseAsset, uint256 quoteAsset, uint256 timestamp);
@@ -70,7 +71,11 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     * @param quoteAssetLimit Rate at which the trade is executed in the AMM. Used to cap slippage.
     */
     function openPosition(uint idx, int256 baseAssetQuantity, uint quoteAssetLimit) override external whenNotPaused {
-        _openPosition(_msgSender(), idx, baseAssetQuantity, quoteAssetLimit);
+        address trader = _msgSender();
+        if (blackList != address(0)) {
+            require(!IBlackList(blackList).isBlocked(trader), "Blacklisted");
+        }
+        _openPosition(trader, idx, baseAssetQuantity, quoteAssetLimit);
     }
 
     function closePosition(uint idx, uint quoteAssetLimit) override external whenNotPaused {
@@ -419,4 +424,12 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         maintenanceMargin = _maintenanceMargin;
         minAllowableMargin = _minAllowableMargin;
     }
+
+    function setBlacklistContract(address _blackList) external onlyGovernance {
+        blackList = _blackList;
+    }
+}
+
+interface IBlackList {
+    function isBlocked(address user) external returns(bool);
 }

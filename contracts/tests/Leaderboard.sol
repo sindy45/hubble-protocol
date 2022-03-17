@@ -35,24 +35,20 @@ contract Leaderboard {
 
         // loop over traders
         for (uint i; i < numTraders; i++) {
-            (makerMargins[i], takerMargins[i]) = _calcMargin(traders[i], amms);
+            (makerMargins[i], takerMargins[i]) = _calcUnrealizedPnL(traders[i], amms);
         }
     }
 
-    function _calcMargin(address trader, IAMM[] memory amms)
+    function _calcUnrealizedPnL(address trader, IAMM[] memory amms)
         internal
         view
         returns(int makerMargin, int takerMargin)
     {
         // local vars
         IAMM amm;
-        uint dToken;
-        int margin;
         int unrealizedPnl;
         int takerFundingPayment;
         int makerFundingPayment;
-        bool isMaker;
-        bool isTaker;
 
         // loop over amms
         for (uint j = 0; j < amms.length; j++) {
@@ -61,27 +57,13 @@ contract Leaderboard {
 
             // maker
             IAMM.Maker memory maker = amm.makers(trader);
-            dToken = maker.dToken;
-            if (dToken > 0) {
-                isMaker = true;
+            if (maker.ignition != 0 || maker.dToken != 0) {
                 (,,unrealizedPnl) = hubbleViewer.getMakerPositionAndUnrealizedPnl(trader, j);
                 makerMargin += (unrealizedPnl - makerFundingPayment);
             }
 
-            // taker. using dToken to save a variable
-            (dToken,unrealizedPnl) = amm.getTakerNotionalPositionAndUnrealizedPnl(trader);
-            if (dToken > 0) {
-                isTaker = true;
-                takerMargin += (unrealizedPnl - takerFundingPayment);
-            }
-        }
-
-        margin = marginAccount.getSpotCollateralValue(trader);
-        if (isMaker) {
-            makerMargin += margin;
-        }
-        if (isTaker) {
-            takerMargin += margin;
+            (,unrealizedPnl) = amm.getTakerNotionalPositionAndUnrealizedPnl(trader);
+            takerMargin += (unrealizedPnl - takerFundingPayment);
         }
     }
 }

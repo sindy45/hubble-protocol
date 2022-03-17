@@ -35,7 +35,6 @@ describe('Hubble Viewer', async function() {
 
         it('leaderboard - takerMargins is 0', async function() {
             const { makerMargins, takerMargins } = await leaderboard.leaderboard([alice])
-            assertBounds(makerMargins[0], _1e6.mul(3999), _1e6.mul(4000))
             expect(takerMargins[0]).to.eq(ZERO)
         })
 
@@ -53,7 +52,7 @@ describe('Hubble Viewer', async function() {
             expect(parseInt(liquidationPrice.toNumber() / 1e6)).to.eq(903)
         })
 
-        it('leaderboard', async function() {
+        it.skip('leaderboard', async function() {
             const { makerMargins, takerMargins } = await leaderboard.leaderboard([alice])
             assertBounds(makerMargins[0], _1e6.mul(3990), _1e6.mul(3995))
             assertBounds(takerMargins[0], _1e6.mul(3974), _1e6.mul(3975))
