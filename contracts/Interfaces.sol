@@ -245,3 +245,7 @@ interface IHubbleViewer {
     function clearingHouse() external returns(IClearingHouse);
     function marginAccount() external returns(IMarginAccount);
 }
+
+interface IHubbleReferral {
+    function getTraderRefereeInfo(address trader) external view returns (address referrer);
+}

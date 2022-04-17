@@ -5,7 +5,7 @@ pragma solidity 0.8.9;
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 import { HubbleBase } from "./legos/HubbleBase.sol";
-import { IAMM, IInsuranceFund, IMarginAccount, IClearingHouse } from "./Interfaces.sol";
+import { IAMM, IInsuranceFund, IMarginAccount, IClearingHouse, IHubbleReferral } from "./Interfaces.sol";
 import { VUSD } from "./VUSD.sol";
 
 contract ClearingHouse is IClearingHouse, HubbleBase {
@@ -19,11 +19,14 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     uint override public liquidationPenalty;
     uint public fixedMakerLiquidationFee;
     int256 public minAllowableMargin;
+    uint public referralShare;
+    uint public tradingFeeDiscount;
 
     VUSD public vusd;
     IInsuranceFund public insuranceFund;
     IMarginAccount public marginAccount;
     IAMM[] override public amms;
+    IHubbleReferral public hubbleReferral;
 
     address public blackList;
     uint256[49] private __gap;
@@ -32,6 +35,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     event PositionLiquidated(address indexed trader, uint indexed idx, int256 baseAsset, uint256 quoteAsset, uint256 timestamp);
     event PositionTranslated(address indexed trader, uint indexed idx, int256 baseAsset, uint256 quoteAsset, uint256 timestamp);
     event MarketAdded(uint indexed idx, address indexed amm);
+    event ReferralBonusAdded(address indexed referrer, uint referralBonus);
 
     constructor(address _trustedForwarder) HubbleBase(_trustedForwarder) {}
 
@@ -40,9 +44,12 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         address _insuranceFund,
         address _marginAccount,
         address _vusd,
+        address _hubbleReferral,
         int256 _maintenanceMargin,
         int256 _minAllowableMargin,
         uint _tradeFee,
+        uint _referralShare,
+        uint _tradingFeeDiscount,
         uint _liquidationPenalty
     ) external initializer {
         _setGovernace(_governance);
@@ -50,11 +57,14 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         insuranceFund = IInsuranceFund(_insuranceFund);
         marginAccount = IMarginAccount(_marginAccount);
         vusd = VUSD(_vusd);
+        hubbleReferral = IHubbleReferral(_hubbleReferral);
 
         require(_maintenanceMargin > 0, "_maintenanceMargin < 0");
         maintenanceMargin = _maintenanceMargin;
         minAllowableMargin = _minAllowableMargin;
         tradeFee = _tradeFee;
+        referralShare = _referralShare;
+        tradingFeeDiscount = _tradingFeeDiscount;
         liquidationPenalty = _liquidationPenalty;
 
         fixedMakerLiquidationFee = 20 * PRECISION; // $20
@@ -265,8 +275,28 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         internal
         returns (uint fee)
     {
-        fee = isLiquidation ? _calculateLiquidationPenalty(quoteAsset) : _calculateTradeFee(quoteAsset);
-        int256 marginCharge = realizedPnl - fee.toInt256();
+        int256 marginCharge;
+        if (isLiquidation) {
+            fee = _calculateLiquidationPenalty(quoteAsset);
+            marginCharge = realizedPnl - fee.toInt256();
+        } else {
+            fee = _calculateTradeFee(quoteAsset);
+
+            address referrer = hubbleReferral.getTraderRefereeInfo(trader);
+            uint referralBonus;
+            if (referrer != address(0x0)) {
+                referralBonus = fee * referralShare / PRECISION;
+                fee -= fee * tradingFeeDiscount / PRECISION;
+                // add margin to the referrer
+                marginAccount.realizePnL(referrer, referralBonus.toInt256());
+                emit ReferralBonusAdded(referrer, referralBonus);
+            }
+
+            marginCharge = realizedPnl - fee.toInt256();
+            // deduct referral bonus from insurance fund share
+            fee -= referralBonus;
+        }
+
         marginAccount.realizePnL(trader, marginCharge);
     }
 

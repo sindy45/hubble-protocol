@@ -84,6 +84,8 @@ async function setupContracts(options = {}) {
     oracle = await setupUpgradeableProxy(options.testOracle ? 'TestOracle' : 'Oracle', proxyAdmin.address, [ governance ])
     await oracle.setStablePrice(vusd.address, 1e6, getTxOptions()) // $1
 
+    const hubbleReferral = await setupUpgradeableProxy('HubbleReferral', proxyAdmin.address)
+
     clearingHouse = await setupUpgradeableProxy(
         'ClearingHouse',
         proxyAdmin.address,
@@ -92,9 +94,12 @@ async function setupContracts(options = {}) {
             insuranceFund.address,
             marginAccount.address,
             vusd.address,
+            hubbleReferral.address,
             0.1 * 1e6, // 10% maintenance margin, 10x
             0.2 * 1e6, // 20% minimum allowable margin, 5x
             options.tradeFee,
+            0.1 * 1e6, // referralShare = 10%
+            0.05 * 1e6, // feeDiscount = 5%
             0.05 * 1e6, // liquidationPenalty = 5%
         ],
         [ forwarder.address ]
@@ -134,6 +139,7 @@ async function setupContracts(options = {}) {
         marginAccountHelper,
         clearingHouse,
         hubbleViewer,
+        hubbleReferral,
         vusd,
         usdc,
         oracle,
