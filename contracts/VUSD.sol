@@ -66,6 +66,15 @@ contract VUSD is ERC20PresetMinterPauserUpgradeable {
         start = i;
     }
 
+    function withdrawalQueue() external view returns(Withdrawal[] memory queue) {
+        uint l = _min(withdrawals.length-start, maxWithdrawalProcesses);
+        queue = new Withdrawal[](l);
+
+        for (uint i = 0; i < l; i++) {
+            queue[i] = withdrawals[start+i];
+        }
+    }
+
     function decimals() public pure override returns (uint8) {
         return PRECISION;
     }
@@ -73,5 +82,9 @@ contract VUSD is ERC20PresetMinterPauserUpgradeable {
     function setMaxWithdrawalProcesses(uint _maxWithdrawalProcesses) external {
         require(hasRole(DEFAULT_ADMIN_ROLE, _msgSender()), "ERC20PresetMinterPauser: must have admin role");
         maxWithdrawalProcesses = _maxWithdrawalProcesses;
+    }
+
+    function _min(uint256 a, uint256 b) internal pure returns (uint256) {
+        return a < b ? a : b;
     }
 }

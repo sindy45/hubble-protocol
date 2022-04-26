@@ -78,6 +78,10 @@ describe('vUSD Unit Tests', function() {
             await vusd.withdraw(amount)
             expect(await vusd.balanceOf(alice)).to.eq(ZERO)
             expect(await vusd.totalSupply()).to.eq(ZERO)
+
+            const withdrawalQueue = await vusd.withdrawalQueue()
+            expect(withdrawalQueue[0].usr).to.eq(alice)
+            expect(withdrawalQueue[0].amount).to.eq(amount)
         })
 
         it('processWithdrawals', async function() {
@@ -113,6 +117,15 @@ describe('vUSD Unit Tests', function() {
                 expect(await vusd.balanceOf(signers[i].address)).to.eq(ZERO)
             }
             expect(await vusd.totalSupply()).to.eq(ZERO)
+
+            const withdrawalQueue = await vusd.withdrawalQueue()
+            expect(withdrawalQueue.length).to.eq(10)
+            expect(withdrawalQueue[0].usr).to.eq(signers[1].address)
+            expect(withdrawalQueue[0].amount).to.eq(amount)
+            expect(withdrawalQueue[1].usr).to.eq(signers[2].address)
+            expect(withdrawalQueue[1].amount).to.eq(amount.mul(2))
+            expect(withdrawalQueue[9].usr).to.eq(signers[10].address)
+            expect(withdrawalQueue[9].amount).to.eq(amount.mul(10))
         })
 
         it('process multiple withdrawals', async function () {
