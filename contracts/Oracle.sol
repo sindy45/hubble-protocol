@@ -115,7 +115,7 @@ contract Oracle is Governable {
     {
         (uint80 round, int256 latestPrice, , uint256 latestTimestamp, ) = _aggregator.latestRoundData();
         finalPrice = uint256(latestPrice);
-        if (latestPrice < 0) {
+        if (latestPrice <= 0) {
             requireEnoughHistory(round);
             (round, finalPrice, latestTimestamp) = getRoundData(_aggregator, round - 1);
         }
@@ -132,7 +132,7 @@ contract Oracle is Governable {
         )
     {
         (uint80 round, int256 latestPrice, , uint256 latestTimestamp, ) = _aggregator.getRoundData(_round);
-        while (latestPrice < 0) {
+        while (latestPrice <= 0) {
             requireEnoughHistory(round);
             round = round - 1;
             (, latestPrice, , latestTimestamp, ) = _aggregator.getRoundData(round);
@@ -163,6 +163,8 @@ contract Oracle is Governable {
     function setAggregator(address underlying, address aggregator) external onlyGovernance {
         requireNonEmptyAddress(underlying);
         requireNonEmptyAddress(aggregator);
+        // oracle answer should be in 8 decimals
+        require(AggregatorV3Interface(aggregator).decimals() == 8, 'Expected oracle to have 8 decimals');
         chainLinkAggregatorMap[underlying] = aggregator;
         // AggregatorV3Interface(chainLinkAggregatorMap[underlying]).latestRoundData(); // sanity check
     }
