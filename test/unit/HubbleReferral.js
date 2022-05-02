@@ -25,7 +25,7 @@ describe('HubbleReferral Unit Tests', function() {
 
     it('two referrers cannot have same referral code', async function() {
         await expect(hubbleReferral.connect(bob).createReferralCode(
-            'aliceReferral')).to.be.revertedWith('HR: refrral code already exists')
+            'aliceReferral')).to.be.revertedWith('HR: referral code already exists')
     })
 
     it('referrer cannot update referral code once set', async function() {

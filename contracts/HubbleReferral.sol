@@ -33,7 +33,7 @@ contract HubbleReferral is Governable {
         require(bytes(_referralCode).length > 0, "HR: Provide a referral code");
 
         address existingReferrer = referralCodeToReferrerMap[_referralCode];
-        require(existingReferrer == address(0x0), "HR: refrral code already exists");
+        require(existingReferrer == address(0x0), "HR: referral code already exists");
 
         require(bytes(referrers[_referrer].referralCode).length == 0,
             "HR: referral code already exists for this address");
