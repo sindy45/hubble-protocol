@@ -20,9 +20,19 @@ contract InsuranceFund is VanillaGovernable, ERC20Upgradeable {
     address public marginAccount;
     uint public pendingObligation;
 
+    struct UnbondInfo {
+        uint shares;
+        uint unbondTime;
+    }
+    mapping(address => UnbondInfo) public unbond;
+    uint256 public withdrawPeriod;
+    uint256 public unbondPeriod;
+    uint256 public unbondRoundOff;
+
     uint256[50] private __gap;
 
     event FundsAdded(address indexed insurer, uint amount, uint timestamp);
+    event Unbonded(address indexed trader, uint256 unbondAmount, uint256 unbondTime, uint timestamp);
     event FundsWithdrawn(address indexed insurer, uint amount, uint timestamp);
     event BadDebtAccumulated(uint amount, uint timestamp);
 
@@ -34,6 +44,10 @@ contract InsuranceFund is VanillaGovernable, ERC20Upgradeable {
     function initialize(address _governance) external initializer {
         __ERC20_init("Hubble-Insurance-Fund", "HIF");
         _setGovernace(_governance);
+
+        unbondPeriod = 2 days;
+        withdrawPeriod = 1 days;
+        unbondRoundOff = 1 days;
     }
 
     function deposit(uint _amount) external {
@@ -56,16 +70,36 @@ contract InsuranceFund is VanillaGovernable, ERC20Upgradeable {
             shares = _amount * _totalSupply / _pool;
         }
         _mint(msg.sender, shares);
-        emit FundsAdded(msg.sender, _amount, block.timestamp);
+        emit FundsAdded(msg.sender, _amount, _blockTimestamp());
     }
 
-    function withdraw(uint _shares) external {
+    function unbondShares(uint shares) external {
+        address usr = _msgSender();
+        require(shares <= balanceOf(usr), "unbonding_too_much");
+        uint _now = _blockTimestamp();
+        uint unbondTime = ((_now + unbondPeriod) / unbondRoundOff) * unbondRoundOff;
+        unbond[usr] = UnbondInfo(shares, unbondTime);
+        emit Unbonded(usr, shares, unbondTime, _now);
+    }
+
+    function withdraw(uint shares) external {
+        // Checks
+        address usr = _msgSender();
+        require(unbond[usr].shares >= shares, "withdrawing_more_than_unbond");
+        uint _now = _blockTimestamp();
+        require(_now >= unbond[usr].unbondTime, "still_unbonding");
+        require(!_hasWithdrawPeriodElapsed(_now, unbond[usr].unbondTime), "withdraw_period_over");
+
+        // Effects
         settlePendingObligation();
         require(pendingObligation == 0, "IF.withdraw.pending_obligations");
-        uint amount = balance() * _shares / totalSupply();
-        _burn(msg.sender, _shares);
-        vusd.safeTransfer(msg.sender, amount);
-        emit FundsWithdrawn(msg.sender, amount, block.timestamp);
+        uint amount = balance() * shares / totalSupply();
+        unchecked { unbond[usr].shares -= shares; }
+        _burn(usr, shares);
+
+        // Interactions
+        vusd.safeTransfer(usr, amount);
+        emit FundsWithdrawn(usr, amount, _now);
     }
 
     function seizeBadDebt(uint amount) external onlyMarginAccount {
@@ -107,6 +141,25 @@ contract InsuranceFund is VanillaGovernable, ERC20Upgradeable {
 
     function decimals() public pure override returns (uint8) {
         return DECIMALS;
+    }
+
+    function _blockTimestamp() internal view virtual returns (uint256) {
+        return block.timestamp;
+    }
+
+    /* ****************** */
+    /*   Internal View    */
+    /* ****************** */
+
+    function _beforeTokenTransfer(address from, address to, uint256 amount) override internal view {
+        if (from == address(0) || to == address(0)) return; // gas optimisation for _mint and _burn
+        if (!_hasWithdrawPeriodElapsed(_blockTimestamp(), unbond[from].unbondTime)) {
+            require(amount <= balanceOf(from) - unbond[from].shares, "shares_are_unbonding");
+        }
+    }
+
+    function _hasWithdrawPeriodElapsed(uint _now, uint _unbondTime) internal view returns (bool) {
+        return _now > (_unbondTime + withdrawPeriod);
     }
 
     /* ****************** */

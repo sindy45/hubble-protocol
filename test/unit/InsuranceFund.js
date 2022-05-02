@@ -9,7 +9,7 @@ describe('Insurance Fund Unit Tests', function() {
     before('factories', async function() {
         signers = await ethers.getSigners()
         alice = signers[0].address
-        ;([ bob, mockMarginAccount, admin ] = signers.slice(10))
+        ;([ bob, charlie, mockMarginAccount, admin ] = signers.slice(10))
         ;({ marginAccount, vusd, oracle, clearingHouse, insuranceFund } = await setupContracts({ addLiquidity: false }))
         await vusd.grantRole(await vusd.MINTER_ROLE(), admin.address)
     })
@@ -38,16 +38,31 @@ describe('Insurance Fund Unit Tests', function() {
         expect(await insuranceFund.pricePerShare()).to.eq(_1e6.mul(15).div(10))
     })
 
-    it('partial withdraw', async function() {
-        withdraw = _1e6.mul(60) // half their shares
+    it('partial unbond', async function() {
+        await expect(
+            insuranceFund.unbondShares(deposit.add(1))
+        ).to.be.revertedWith('unbonding_too_much')
 
+        withdraw = _1e6.mul(60) // half their shares
+        await insuranceFund.unbondShares(withdraw)
+        await expect(
+            insuranceFund.withdraw(withdraw.add(1))
+        ).to.be.revertedWith('withdrawing_more_than_unbond')
+        await expect(
+            insuranceFund.withdraw(withdraw)
+        ).to.be.revertedWith('still_unbonding')
+    })
+
+    it('partial withdraw', async function() {
+        await gotoNextIFUnbondEpoch(insuranceFund, alice)
         await insuranceFund.withdraw(withdraw)
 
-        expect(await insuranceFund.balanceOf(alice)).to.eq(deposit.div(2))
+        // expect(await insuranceFund.balanceOf(alice)).to.eq(deposit.div(2))
         expect(await insuranceFund.totalSupply()).to.eq(deposit.div(2))
         // IF has 90 vusd now
         expect(await vusd.balanceOf(insuranceFund.address)).to.eq(_1e6.mul(90))
         expect(await vusd.balanceOf(alice)).to.eq(_1e6.mul(90))
+        expect(await insuranceFund.balanceOf(insuranceFund.address)).to.eq(0)
         expect(await insuranceFund.pricePerShare()).to.eq(_1e6.mul(15).div(10)) // remains same
     })
 
@@ -65,9 +80,11 @@ describe('Insurance Fund Unit Tests', function() {
     it('withdraws still possible', async function() {
         withdraw = _1e6.mul(15) // 25% their shares
 
+        await insuranceFund.unbondShares(_1e6.mul(60))
+        await gotoNextIFUnbondEpoch(insuranceFund, alice)
+
         await insuranceFund.withdraw(withdraw)
 
-        expect(await insuranceFund.balanceOf(alice)).to.eq(_1e6.mul(45))
         expect(await insuranceFund.totalSupply()).to.eq(_1e6.mul(45))
         expect(await vusd.balanceOf(insuranceFund.address)).to.eq(_1e6.mul(375).div(10)) // 50 * 3/4 = 37.5
         expect(await vusd.balanceOf(alice)).to.eq(_1e6.mul(1025).div(10)) // 90 + 50/4
@@ -103,11 +120,50 @@ describe('Insurance Fund Unit Tests', function() {
         await vusd.connect(admin).mint(bob.address, 1)
         await vusd.connect(bob).approve(insuranceFund.address, 1)
         await insuranceFund.connect(bob).deposit(1) // pps = 1 / 45
-        await insuranceFund.connect(bob).withdraw(45)
+
+        await insuranceFund.connect(bob).unbondShares(40)
+
+        // can't transfer unbonding shares
+        await expect(
+            insuranceFund.connect(bob).transfer(charlie.address, 6)
+        ).to.be.revertedWith('shares_are_unbonding')
+
+        // can transfer the rest
+        await insuranceFund.connect(bob).transfer(charlie.address, 5)
+        expect(await insuranceFund.balanceOf(charlie.address)).to.eq(5)
+        expect(await insuranceFund.balanceOf(bob.address)).to.eq(40)
+
+        await gotoNextIFUnbondEpoch(insuranceFund, bob.address)
+        await insuranceFund.connect(bob).withdraw(39) // leave 2 for next test
+
+        // can't transfer unbonding shares even in withdrawal state
+        await expect(
+            insuranceFund.connect(bob).transfer(charlie.address, 1)
+        ).to.be.revertedWith('shares_are_unbonding')
+    })
+
+    it('cant withdraw after withdraw period', async function() {
+        await network.provider.send(
+            'evm_setNextBlockTimestamp',
+            [(await insuranceFund.unbond(bob.address)).unbondTime.toNumber() + 86401]
+        );
+        await expect(
+            insuranceFund.connect(bob).withdraw(1)
+        ).to.be.revertedWith('withdraw_period_over')
+        await insuranceFund.connect(bob).transfer(charlie.address, 1)
+        expect(await insuranceFund.balanceOf(charlie.address)).to.eq(6)
+        expect(await insuranceFund.balanceOf(bob.address)).to.eq(0)
     })
 })
 
 async function setMarginAccount(marginAccount) {
     registry = await Registry.deploy(oracle.address, clearingHouse.address, insuranceFund.address, marginAccount.address, vusd.address)
     await insuranceFund.syncDeps(registry.address)
+}
+
+async function gotoNextIFUnbondEpoch(insuranceFund, usr) {
+    return network.provider.send(
+        'evm_setNextBlockTimestamp',
+        [(await insuranceFund.unbond(usr)).unbondTime.toNumber()]
+    );
 }
