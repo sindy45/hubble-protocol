@@ -544,7 +544,7 @@ describe('Position Tests', async function() {
             const avax = await setupRestrictedTestToken('avax', 'avax', 6)
             const secondAmm = await utils.setupAmm(
                 alice,
-                [ 'AVAX-PERP', avax.address, oracle.address ],
+                [ 'AVAX-PERP', avax.address, oracle.address, _1e18 ],
                 {
                     index: 1,
                     initialRate: 65,

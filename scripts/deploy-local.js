@@ -49,7 +49,7 @@ async function main() {
     const btc = await setupRestrictedTestToken('Bitcoin', 'BTC', 8)
     await utils.setupAmm(
         governance,
-        [ 'BTC-PERP', btc.address, oracle.address ],
+        [ 'BTC-PERP', btc.address, oracle.address, 0 ],
         {
             index: 1,
             initialRate: 35000,

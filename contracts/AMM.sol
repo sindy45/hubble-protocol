@@ -3,6 +3,7 @@
 pragma solidity 0.8.9;
 
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 
 import { Governable } from "./legos/Governable.sol";
 import { ERC20Detailed, IOracle, IRegistry, IVAMM, IAMM, IClearingHouse } from "./Interfaces.sol";
@@ -64,6 +65,9 @@ contract AMM is IAMM, Governable {
     Ignition override public ignition;
     IAMM.AMMState override public ammState;
 
+    /// @notice Min amount of base asset quantity to trade or add liquidity for
+    uint256 public minSizeRequirement;
+
     struct VarGroup1 {
         uint minQuote;
         uint minBase;
@@ -122,12 +126,14 @@ contract AMM is IAMM, Governable {
         string memory _name,
         address _underlyingAsset,
         address _oracle,
+        uint _minSizeRequirement,
         address _vamm,
         address _governance
     ) external initializer {
         name = _name;
         underlyingAsset = _underlyingAsset;
         oracle = IOracle(_oracle);
+        minSizeRequirement = _minSizeRequirement;
         vamm = IVAMM(_vamm);
         _setGovernace(_governance);
 
@@ -148,6 +154,7 @@ contract AMM is IAMM, Governable {
         whenActive
         returns (int realizedPnl, uint quoteAsset, bool isPositionIncreased)
     {
+        require(uint(abs(baseAssetQuantity)) >= minSizeRequirement, "trading_too_less");
         Position memory position = positions[trader];
         bool isNewPosition = position.size == 0 ? true : false;
         Side side = baseAssetQuantity > 0 ? Side.LONG : Side.SHORT;
@@ -222,6 +229,7 @@ contract AMM is IAMM, Governable {
         whenActive
         returns (uint dToken)
     {
+        require(baseAssetQuantity >= minSizeRequirement, "adding_too_less");
         uint quoteAsset;
         uint baseAssetBal = vamm.balances(1);
         if (baseAssetBal == 0) {
@@ -256,6 +264,7 @@ contract AMM is IAMM, Governable {
         // this needs to be invoked here because updatePosition is not called before unbondLiquidity
         _setIgnitionShare(maker);
         Maker storage _maker = _makers[maker];
+        require(dToken > 0, "unbonding_0");
         require(_maker.dToken >= dToken, "unbonding_too_much");
         _maker.unbondAmount = dToken;
         _maker.unbondTime = ((_blockTimestamp() + unbondPeriod) / unbondRoundOff) * unbondRoundOff;
@@ -273,10 +282,7 @@ contract AMM is IAMM, Governable {
             // @todo partial liquidations and slippage checks
             VarGroup1 memory varGroup1 = VarGroup1(0,0,true);
             uint dToken = _maker.dToken;
-            if (dToken == 0) {
-                // these will be assigned on _setIgnitionShare(maker)
-                (,dToken) = getIgnitionShare(_maker.ignition);
-            }
+            _maker.unbondAmount -= Math.min(dToken, _maker.unbondAmount);
             return _removeLiquidity(maker, dToken, varGroup1);
         }
 
@@ -290,18 +296,23 @@ contract AMM is IAMM, Governable {
         override
         external
         onlyClearingHouse
-        returns (int /* realizedPnl */, uint /* makerOpenNotional */, int /* makerPosition */)
+        returns (int realizedPnl, uint makerOpenNotional, int makerPosition)
     {
 
         Maker storage _maker = _makers[maker];
-        _maker.unbondAmount -= amount; // will revert if removing more than unbondAmount
+        require(_maker.unbondAmount >= amount, "withdrawing_more_than_unbonded");
+        unchecked { _maker.unbondAmount -= amount; }
         uint _now = _blockTimestamp();
         require(_now >= _maker.unbondTime, "still_unbonding");
         require(_now <= _maker.unbondTime + withdrawPeriod, "withdraw_period_over");
         // there's no need to reset the unbondTime, unbondAmount will take care of everything
-
         VarGroup1 memory varGroup1 = VarGroup1(minQuote, minBase, false);
-        return _removeLiquidity(maker, amount, varGroup1);
+        (realizedPnl, makerOpenNotional, makerPosition) = _removeLiquidity(maker, amount, varGroup1);
+        if (_maker.dToken != 0) {
+            // if the maker doesn't remove all their liq, ensure decent size
+            require(_maker.vAsset >= minSizeRequirement, "leftover_liquidity_is_too_less");
+            require(uint(abs(makerPosition)) >= minSizeRequirement, "removing_very_small_liquidity");
+        }
     }
 
     function _removeLiquidity(address maker, uint amount, VarGroup1 memory varGroup1)

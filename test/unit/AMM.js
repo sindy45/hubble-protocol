@@ -13,7 +13,7 @@ const {
 
 const TRADE_FEE = 0.000567 * _1e6
 
-describe('AMM unit Tests', function() {
+describe('vAMM unit Tests', function() {
     beforeEach('contract factories', async function() {
         signers = await ethers.getSigners()
         alice = signers[0].address
@@ -269,7 +269,7 @@ describe('Twap Price Tests', function() {
     })
 })
 
-describe('AMM states', async function() {
+describe('AMM unit tests', async function() {
     before(async function() {
         signers = await ethers.getSigners()
         ;([ alice ] = signers.map(s => s.address))
@@ -352,12 +352,15 @@ describe('AMM states', async function() {
         expect(unrealizedPnl).to.eq(ZERO)
     })
 
-    it('[add,unbond]Liquidity/openPosition works when ammState=Active', async () => {
+    it('[add,unbond]Liquidity/openPosition work when ammState=Active', async () => {
         await clearingHouse.connect(maker).addLiquidity(0, _1e18, 0)
 
-        await clearingHouse.openPosition(0, -10000, 0)
+        await clearingHouse.openPosition(0, _1e18.mul(-1), 0)
 
         dToken = (await amm.makers(maker.address)).dToken
+        await expect(
+            amm.unbondLiquidity(0)
+        ).to.be.revertedWith('unbonding_0')
         await expect(
             amm.unbondLiquidity(dToken.add(1))
         ).to.be.revertedWith('unbonding_too_much')
@@ -370,7 +373,7 @@ describe('AMM states', async function() {
         avax = await utils.setupRestrictedTestToken('avax', 'avax', 6)
         ;({ amm: avaxAmm } = await utils.setupAmm(
             alice,
-            [ 'AVAX-PERP', avax.address, oracle.address ],
+            [ 'AVAX-PERP', avax.address, oracle.address, 100 /* min size = 100 wei */ ],
             {
                 initialRate: 65,
                 initialLiquidity: 0,
@@ -415,6 +418,17 @@ describe('AMM states', async function() {
             clearingHouse.settleFunding()
         ).to.reverted
         await utils.addLiquidity(1, 1e4, 65)
+
+        // opening small positions will fail
+        await expect(
+            clearingHouse.openPosition(0, -99, 0)
+        ).to.be.revertedWith('trading_too_less')
+        await expect(
+            clearingHouse.openPosition(0, 99, 0)
+        ).to.be.revertedWith('trading_too_less')
+        await expect(
+            clearingHouse.addLiquidity(1, 99, 0)
+        ).to.be.revertedWith('adding_too_less')
         await clearingHouse.openPosition(1, -10000, 0)
 
         await ops()
@@ -428,23 +442,36 @@ describe('AMM states', async function() {
         ).to.be.revertedWith('still_unbonding')
 
         await gotoNextUnbondEpoch(amm, maker.address)
+
+        // assert the fail scenarios
         await expect(
             clearingHouse.connect(maker).removeLiquidity(0, dToken.add(1), 0, 0)
-        ).to.be.revertedWith('Arithmetic operation underflowed or overflowed outside of an unchecked block')
-        await clearingHouse.connect(maker).removeLiquidity(0, dToken.sub(1), 0, 0)
-        expect((await amm.makers(maker.address)).dToken).to.eq(1)
+        ).to.be.revertedWith('withdrawing_more_than_unbonded')
+        await expect(
+            clearingHouse.connect(maker).removeLiquidity(0, 0, 0, 0)
+        ).to.be.revertedWith('liquidity_being_removed_should_be_non_0')
+        await expect(
+            clearingHouse.connect(maker).removeLiquidity(0, dToken.sub(1), 0, 0)
+        ).to.be.revertedWith('leftover_liquidity_is_too_less')
+        await expect(
+            clearingHouse.connect(maker).removeLiquidity(0, 1, 0, 0)
+        ).to.be.revertedWith('removing_very_small_liquidity')
+
+        const remove = dToken.div(2) // removing 1/2 to avoid leftover_liquidity_is_too_less
+        leftOver = dToken.sub(remove)
+        await clearingHouse.connect(maker).removeLiquidity(0, remove, 0, 0)
+        expect((await amm.makers(maker.address)).dToken).to.eq(leftOver)
 
         await gotoNextWithdrawEpoch(amm, maker.address)
         await expect(
             clearingHouse.connect(maker).removeLiquidity(0, 1, 0, 0)
         ).to.be.revertedWith('withdraw_period_over')
-        expect((await amm.makers(maker.address)).dToken).to.eq(1)
     })
 
     it('can unbond again and then withdraw', async () => {
-        await amm.connect(maker).unbondLiquidity(1)
+        await amm.connect(maker).unbondLiquidity(leftOver)
         await gotoNextUnbondEpoch(amm, maker.address)
-        await clearingHouse.connect(maker).removeLiquidity(0, 1, 0, 0)
+        await clearingHouse.connect(maker).removeLiquidity(0, leftOver, 0, 0)
         expect((await amm.makers(maker.address)).dToken).to.eq(0)
     })
 
@@ -452,7 +479,7 @@ describe('AMM states', async function() {
         return Promise.all([
             clearingHouse.settleFunding(),
             clearingHouse.updatePositions(alice),
-            clearingHouse.openPosition(0, -10000, 0)
+            clearingHouse.openPosition(0, _1e18.mul(-1), 0)
         ])
     }
 })

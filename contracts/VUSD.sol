@@ -3,10 +3,11 @@
 pragma solidity 0.8.9;
 
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { ReentrancyGuard } from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import { ERC20PresetMinterPauserUpgradeable } from "@openzeppelin/contracts-upgradeable/token/ERC20/presets/ERC20PresetMinterPauserUpgradeable.sol";
 
-contract VUSD is ERC20PresetMinterPauserUpgradeable {
+contract VUSD is ERC20PresetMinterPauserUpgradeable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     uint8 private constant PRECISION = 6;
@@ -50,7 +51,7 @@ contract VUSD is ERC20PresetMinterPauserUpgradeable {
         withdrawals.push(Withdrawal(msg.sender, amount));
     }
 
-    function processWithdrawals() external whenNotPaused {
+    function processWithdrawals() external whenNotPaused nonReentrant {
         uint reserve = reserveToken.balanceOf(address(this));
         require(reserve >= withdrawals[start].amount, 'Cannot process withdrawals at this time: Not enough balance');
         uint i = start;

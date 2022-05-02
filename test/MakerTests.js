@@ -845,11 +845,21 @@ describe('Maker Tests', async function() {
             // liquidate maker position
             await expect(clearingHouse.liquidateTaker(maker3.address)).to.be.revertedWith('CH: Remove Liquidity First')
             const { position: maker3Pos } = await hubbleViewer.getMakerPositionAndUnrealizedPnl(maker3.address, 0)
+
+            // we also want to assert that liquidating a maker utilizes their unbon quota
+            await amm.connect(maker3).unbondLiquidity(dToken.div(2)) // say maker unbonded 50% of their liquidity
+            let _maker = await amm.makers(maker3.address)
+            expect(_maker[8]).to.eq(dToken.div(2)) // unbonAmount
             tx = await clearingHouse.connect(signers[2]).liquidateMaker(maker3.address)
+
+            _maker = await amm.makers(maker3.address)
+            expect(_maker[8]).to.eq(0) // unbonAmount
+
+            // going on with whatever we were already doing in this test
             const { realizedPnl } = (await parseRawEvent(tx, amm, 'LiquidityRemoved')).args
 
             const liquidationPenalty = _1e6.mul(20) // fixed
-            expect(await vusd.balanceOf(signers[2].address)).to.eq(liquidationPenalty)
+            expect(await vusd.balanceOf(signers[2].address)).to.eq(liquidationPenalty.div(2))
             expect(await marginAccount.margin(0, maker3.address)).eq(maker3Margin.sub(fee).add(realizedPnl).sub(liquidationPenalty))
 
             const makerPosition = await amm.makers(maker3.address)
@@ -885,8 +895,9 @@ describe('Maker Tests', async function() {
             tx = await clearingHouse.connect(signers[3]).liquidateMaker(maker3.address)
             const { realizedPnl, quoteAsset } = (await parseRawEvent(tx, amm, 'LiquidityRemoved')).args
 
-            let liquidationPenalty = _1e6.mul(20)
-            expect(await vusd.balanceOf(signers[3].address)).to.eq(liquidationPenalty)
+            let liquidationPenalty = _1e6.mul(20) // 20/2
+            expect(await vusd.balanceOf(signers[3].address)).to.eq(liquidationPenalty.div(2))
+            expect(await vusd.balanceOf(insuranceFund.address)).to.eq(initialIFBalance.add(liquidationPenalty.div(2)))
             expect(await marginAccount.margin(0, maker3.address)).eq(maker3Margin.sub(fee).add(realizedPnl).sub(liquidationPenalty))
 
             const makerPosition = await amm.makers(maker3.address)

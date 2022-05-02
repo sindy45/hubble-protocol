@@ -153,7 +153,7 @@ async function setupContracts(options = {}) {
         weth = await setupRestrictedTestToken('Hubble Ether', 'hWETH', 18)
         ;({ amm, vamm } = await setupAmm(
             governance,
-            [ 'ETH-PERP', weth.address, oracle.address ],
+            [ 'ETH-PERP', weth.address, oracle.address, 1e8 /* min liquidity req */],
             options.amm
         ))
         Object.assign(res, { swap: vamm, amm, weth })

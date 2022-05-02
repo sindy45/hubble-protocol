@@ -28,8 +28,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     IAMM[] override public amms;
     IHubbleReferral public hubbleReferral;
 
-    address public blackList;
-    uint256[49] private __gap;
+    uint256[50] private __gap;
 
     event PositionModified(address indexed trader, uint indexed idx, int256 baseAsset, uint quoteAsset, uint256 timestamp);
     event PositionLiquidated(address indexed trader, uint indexed idx, int256 baseAsset, uint256 quoteAsset, uint256 timestamp);
@@ -82,9 +81,6 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     */
     function openPosition(uint idx, int256 baseAssetQuantity, uint quoteAssetLimit) override external whenNotPaused {
         address trader = _msgSender();
-        if (blackList != address(0)) {
-            require(!IBlackList(blackList).isBlocked(trader), "Blacklisted");
-        }
         _openPosition(trader, idx, baseAssetQuantity, quoteAssetLimit);
     }
 
@@ -139,6 +135,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
 
     /**
     * @notice Remove liquidity from the amm.
+    * @dev dToken > 0 has been asserted during amm.unbondLiquidity
     * @param idx Index of the AMM
     * @param dToken Measure of the liquidity to remove.
     * @param minQuoteValue Min amount of USD to remove.
@@ -146,7 +143,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     *   Both the above params enable capping slippage in either direction.
     */
     function removeLiquidity(uint idx, uint256 dToken, uint minQuoteValue, uint minBaseValue) override external whenNotPaused {
-        require(dToken > 0, "dToken=0");
+        require(dToken > 0, "liquidity_being_removed_should_be_non_0");
         address maker = _msgSender();
         updatePositions(maker);
         (int256 realizedPnl, uint quoteAsset, int baseAssetQuantity) = amms[idx].removeLiquidity(maker, dToken, minQuoteValue, minBaseValue);
@@ -228,7 +225,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         // charge a fixed liquidation only if the account is a maker in atleast 1 of the markets
         if (_isMaker) {
             realizedPnl -= fixedMakerLiquidationFee.toInt256();
-            marginAccount.transferOutVusd(_msgSender(), fixedMakerLiquidationFee);
+            _disperseLiquidationFee(fixedMakerLiquidationFee);
         }
         if (realizedPnl != 0) {
             marginAccount.realizePnL(maker, realizedPnl);
@@ -313,7 +310,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         uint numAmms = amms.length;
         for (uint i; i < numAmms; ++i) {
             IAMM.Maker memory maker = amms[i].makers(trader);
-            if (maker.dToken > 0) {
+            if (maker.dToken > 0 || maker.ignition > 0) {
                 return true;
             }
         }
@@ -454,12 +451,4 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         maintenanceMargin = _maintenanceMargin;
         minAllowableMargin = _minAllowableMargin;
     }
-
-    function setBlacklistContract(address _blackList) external onlyGovernance {
-        blackList = _blackList;
-    }
-}
-
-interface IBlackList {
-    function isBlocked(address user) external returns(bool);
 }
