@@ -17,7 +17,7 @@ describe('HubbleReferral Unit Tests', function() {
     })
 
     it('create referral code', async function() {
-        await expect(hubbleReferral.createReferralCode('')).to.be.revertedWith('HR: Provide a referral code')
+        await expect(hubbleReferral.createReferralCode('xyz')).to.be.revertedWith('HR: referral code too short')
         referralCode = 'aliceReferral'
         await hubbleReferral.createReferralCode(referralCode)
         expect(await hubbleReferral.getReferralCodeByAddress(alice)).to.eq(referralCode)
@@ -29,13 +29,16 @@ describe('HubbleReferral Unit Tests', function() {
     })
 
     it('referrer cannot update referral code once set', async function() {
-        await expect(hubbleReferral.createReferralCode('xyz')).to.be.revertedWith(
+        await expect(hubbleReferral.createReferralCode('xyzt')).to.be.revertedWith(
             'HR: referral code already exists for this address'
         )
     })
 
     it('trader sets referral code', async function() {
         await expect(hubbleReferral.connect(bob).setReferralCode('xyz')).to.be.revertedWith(
+            'HR: referral code too short'
+        )
+        await expect(hubbleReferral.connect(bob).setReferralCode('xyzt')).to.be.revertedWith(
             'HR: referral code does not exist'
         )
         await hubbleReferral.connect(bob).setReferralCode(referralCode)

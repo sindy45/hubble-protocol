@@ -25,7 +25,7 @@ async function main() {
     signers = await ethers.getSigners()
     governance = signers[0].address
 
-    await setupContracts({
+    const { marginAccountHelper } =  await setupContracts({
         governance,
         unbondRoundOff: 1, // 1s
         amm: {
@@ -60,7 +60,7 @@ async function main() {
         }
     )
 
-    console.log(JSON.stringify(await generateConfig(leaderboard.address), null, 2))
+    console.log(JSON.stringify(await generateConfig(leaderboard.address, marginAccountHelper.address), null, 2))
 
     async function addVUSDWithReserve(trader, amount) {
         await usdc.mint(trader.address, amount)

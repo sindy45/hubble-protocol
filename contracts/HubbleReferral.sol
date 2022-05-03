@@ -12,7 +12,8 @@ contract HubbleReferral is Governable {
     }
 
     event ReferralCodeCreated(address indexed referrer, string referralCode, uint timestamp);
-    event ReferrerAdded(address indexed trader, string referralCode, uint timestamp);
+    // will be used to calculate total used referrals for a referrer
+    event ReferrerAdded(address indexed trader, address referrer, uint timestamp);
 
     mapping(address => ReferralInfo) public referrers;
     mapping(address => ReferralInfo) public traders;
@@ -30,7 +31,7 @@ contract HubbleReferral is Governable {
     }
 
     function _createReferralCode(string calldata _referralCode, address _referrer) internal {
-        require(bytes(_referralCode).length > 0, "HR: Provide a referral code");
+        require(bytes(_referralCode).length >= 4, "HR: referral code too short");
 
         address existingReferrer = referralCodeToReferrerMap[_referralCode];
         require(existingReferrer == address(0x0), "HR: referral code already exists");
@@ -44,7 +45,7 @@ contract HubbleReferral is Governable {
     }
 
     function _setReferralCode(string calldata _referralCode, address _trader) internal {
-        require(bytes(_referralCode).length > 0, "HR: Provide a referral code");
+        require(bytes(_referralCode).length >= 4, "HR: referral code too short");
         require(bytes(traders[_trader].referralCode).length == 0, 'HR: referrer already added');
 
         address _referrer = referralCodeToReferrerMap[_referralCode];
@@ -52,7 +53,7 @@ contract HubbleReferral is Governable {
         require(_trader != _referrer, 'HR: cannot be a referee of a referral code you own');
 
         traders[_trader] = ReferralInfo(block.timestamp, _referralCode);
-        emit ReferrerAdded(_trader, _referralCode, block.timestamp);
+        emit ReferrerAdded(_trader, _referrer, block.timestamp);
     }
 
     function getReferralCodeByAddress(address _referrer) external view

@@ -446,11 +446,14 @@ async function assertBounds(v, lowerBound, upperBound) {
 }
 
 // doesn't print inactive AMMs
-async function generateConfig(leaderboardAddress, executorAddress) {
+async function generateConfig(leaderboardAddress, marginAccountHelperAddress, executorAddress) {
     const leaderboard = await ethers.getContractAt('Leaderboard', leaderboardAddress)
     const hubbleViewer = await ethers.getContractAt('HubbleViewer', await leaderboard.hubbleViewer())
     const clearingHouse = await ethers.getContractAt('ClearingHouse', await hubbleViewer.clearingHouse())
     const marginAccount = await ethers.getContractAt('MarginAccount', await hubbleViewer.marginAccount())
+    const vusd = await ethers.getContractAt('VUSD', await clearingHouse.vusd())
+    const usdc = await vusd.reserveToken()
+    const hubbleReferral = await clearingHouse.hubbleReferral()
 
     const _amms = await clearingHouse.getAMMs()
     const amms = []
@@ -488,6 +491,10 @@ async function generateConfig(leaderboardAddress, executorAddress) {
             InsuranceFund: await marginAccount.insuranceFund(),
             Registry: await hubbleViewer.registry(),
             Leaderboard: leaderboardAddress,
+            MarginAccountHelper: marginAccountHelperAddress,
+            vusd: vusd.address,
+            hubbleReferral,
+            usdc,
             amms,
             collateral,
         },
