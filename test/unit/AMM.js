@@ -22,7 +22,7 @@ describe('vAMM unit Tests', function() {
         await swap.setAMM(mockAmm.address)
     })
 
-    describe('VAMM Unit Tests', function() {
+    describe('exchange[ExactOut]', function() {
         it('check initial setup', async () => {
             expect(await amm.getSnapshotLen()).to.eq(0)
             await expect(swap.initialize(
@@ -47,8 +47,8 @@ describe('vAMM unit Tests', function() {
             await expect(swap.exchangeExactOut(0, 1, baseAssetQuantity, amount)).to.be.revertedWith('VAMM: OnlyAMM')
             const tx = await swap.connect(mockAmm).exchangeExactOut(0, 1, baseAssetQuantity, amount)
             transactionEvent = await filterEvent(tx, 'TokenExchange')
-            const dx1 = transactionEvent.args[2];
-            const vammFee = transactionEvent.args[5];
+            const dx1 = transactionEvent.args[1];
+            const vammFee = transactionEvent.args[4];
 
             const dx2 = await swap.get_dy(1, 0, baseAssetQuantity, {gasLimit: 100000})
             const fee = await swap.get_dy_fee(1, 0, baseAssetQuantity, {gasLimit: 100000})
@@ -72,8 +72,8 @@ describe('vAMM unit Tests', function() {
             for (let i = 0; i < numberOfTransactions; i++) {
                 let tx = await swap.connect(mockAmm).exchangeExactOut(0, 1, baseAssetQuantity, amount)
                 let transactionEvent = await filterEvent(tx, 'TokenExchange')
-                dx1 = dx1.add(transactionEvent.args[2]);
-                vammFee = vammFee.add(transactionEvent.args[5]);
+                dx1 = dx1.add(transactionEvent.args[1]);
+                vammFee = vammFee.add(transactionEvent.args[4]);
             }
 
             const dx2 = await swap.get_dy(1, 0, baseAssetQuantity.mul(numberOfTransactions), {gasLimit: 100000})
@@ -95,8 +95,8 @@ describe('vAMM unit Tests', function() {
             await expect(swap.exchange(1, 0, baseAssetQuantity, amount)).to.be.revertedWith('VAMM: OnlyAMM')
             let tx = await swap.connect(mockAmm).exchange(1, 0, baseAssetQuantity, amount)
             transactionEvent = await filterEvent(tx, 'TokenExchange')
-            const dy1 = transactionEvent.args[4];
-            const vammFee = transactionEvent.args[5];
+            const dy1 = transactionEvent.args[3];
+            const vammFee = transactionEvent.args[4];
 
             const dy2 = await swap.get_dx(0, 1, baseAssetQuantity, {gasLimit: 100000})
             const fee = await swap.get_dx_fee(0, 1, baseAssetQuantity, {gasLimit: 100000})

@@ -83,7 +83,7 @@ contract AMM is IAMM, Governable {
     // Generic AMM related events
     event FundingRateUpdated(int256 premiumFraction, uint256 underlyingPrice, int256 cumulativePremiumFraction, int256 cumulativePremiumPerDtoken, uint256 nextFundingTime, uint256 timestamp, uint256 blockNumber);
     event FundingPaid(address indexed trader, int256 takerFundingPayment, int256 makerFundingPayment);
-    event Swap(int256 baseAsset, uint256 quoteAsset, uint256 lastPrice, uint256 openInterestNotional);
+    event Swap(uint256 lastPrice, uint256 openInterestNotional);
 
     // Trader related events
     event PositionChanged(address indexed trader, int256 size, uint256 openNotional, int256 realizedPnl);
@@ -377,7 +377,7 @@ contract AMM is IAMM, Governable {
                 }
 
                 // these events will enable the parsing logic in the indexer to work seamlessly
-                emit Swap(0, 0, lastPrice(), openInterestNotional());
+                emit Swap(lastPrice(), openInterestNotional());
                 _emitPositionChanged(maker, realizedPnl);
             }
         }
@@ -777,7 +777,7 @@ contract AMM is IAMM, Governable {
         _addReserveSnapshot(_lastPrice);
         // since maker position will be opposite of the trade
         posAccumulator -= baseAssetQuantity * 1e18 / vamm.totalSupply().toInt256();
-        emit Swap(baseAssetQuantity, quoteAssetQuantity, _lastPrice, openInterestNotional());
+        emit Swap(_lastPrice, openInterestNotional());
     }
 
     /**
@@ -808,7 +808,7 @@ contract AMM is IAMM, Governable {
         _addReserveSnapshot(_lastPrice);
         // since maker position will be opposite of the trade
         posAccumulator -= baseAssetQuantity * 1e18 / vamm.totalSupply().toInt256();
-        emit Swap(baseAssetQuantity, quoteAssetQuantity, _lastPrice, openInterestNotional());
+        emit Swap(_lastPrice, openInterestNotional());
     }
 
     function _emitPositionChanged(address trader, int256 realizedPnl) internal {

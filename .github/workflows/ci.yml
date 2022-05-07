@@ -46,4 +46,3 @@ jobs:
       env:
         ALCHEMY: ${{ secrets.ALCHEMY }}
       run: npm run gas-reporter
-

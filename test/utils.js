@@ -239,8 +239,8 @@ async function setupAmm(governance, args, ammOptions) {
         // amm.liftOff() needs the price for the underlying to be set
         // set index price within price spread
         const underlyingAsset = await amm.underlyingAsset();
-        await oracle.setUnderlyingTwapPrice(underlyingAsset, _1e6.mul(initialRate), getTxOptions())
-        await oracle.setUnderlyingPrice(underlyingAsset, _1e6.mul(initialRate), getTxOptions())
+        await oracle.setUnderlyingTwapPrice(underlyingAsset, ethers.utils.parseUnits(initialRate.toString(), 6), getTxOptions())
+        await oracle.setUnderlyingPrice(underlyingAsset, ethers.utils.parseUnits(initialRate.toString(), 6), getTxOptions())
     }
 
     if (ammState > 0) { // Ignition or Active
@@ -258,7 +258,7 @@ async function setupAmm(governance, args, ammOptions) {
 
 async function commitLiquidity(index, initialLiquidity, rate) {
     maker = (await ethers.getSigners())[9]
-    const netUSD = _1e6.mul(initialLiquidity * rate * 2)
+    const netUSD = ethers.utils.parseUnits((initialLiquidity * rate * 2).toString(), 6)
     await addMargin(maker, netUSD)
     await clearingHouse.connect(maker).commitLiquidity(index, netUSD)
 }
@@ -300,6 +300,10 @@ async function getTradeDetails(tx, tradeFee = DEFAULT_TRADE_FEE) {
 
 async function parseRawEvent(tx, emitter, name) {
     const { events } = await tx.wait()
+    return parseRawEvent2(events, emitter, name)
+}
+
+function parseRawEvent2(events, emitter, name) {
     const event = events.find(e => {
         if (e.address == emitter.address) {
             return emitter.interface.parseLog(e).name == name
@@ -453,7 +457,7 @@ async function generateConfig(leaderboardAddress, marginAccountHelperAddress, ex
     const marginAccount = await ethers.getContractAt('MarginAccount', await hubbleViewer.marginAccount())
     const vusd = await ethers.getContractAt('VUSD', await clearingHouse.vusd())
     const usdc = await vusd.reserveToken()
-    const hubbleReferral = await clearingHouse.hubbleReferral()
+    // const hubbleReferral = await clearingHouse.hubbleReferral()
 
     const _amms = await clearingHouse.getAMMs()
     const amms = []
@@ -462,7 +466,8 @@ async function generateConfig(leaderboardAddress, marginAccountHelperAddress, ex
         amms.push({
             perp: await a.name(),
             address: a.address,
-            underlying: await a.underlyingAsset()
+            underlying: await a.underlyingAsset(),
+            vamm: await a.vamm()
         })
     }
     let _collateral = await marginAccount.supportedAssets()
@@ -493,7 +498,7 @@ async function generateConfig(leaderboardAddress, marginAccountHelperAddress, ex
             Leaderboard: leaderboardAddress,
             MarginAccountHelper: marginAccountHelperAddress,
             vusd: vusd.address,
-            hubbleReferral,
+            // hubbleReferral,
             usdc,
             amms,
             collateral,
@@ -558,6 +563,7 @@ module.exports = {
     signTransaction,
     addMargin,
     parseRawEvent,
+    parseRawEvent2,
     assertBounds,
     generateConfig,
     sleep,

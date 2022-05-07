@@ -35,12 +35,14 @@ interface WETH:
 
 # Events
 event TokenExchange:
-    buyer: indexed(address)
     sold_id: uint256
     tokens_sold: uint256
     bought_id: uint256
     tokens_bought: uint256
     trade_fee: uint256
+    price_scale: uint256
+    D: uint256
+    balances: uint256[N_COINS]
 
 event AddLiquidity:
     provider: indexed(address)
@@ -186,6 +188,10 @@ PRECISIONS: constant(uint256[N_COINS]) = [
 INF_COINS: constant(uint256) = 15
 isInitialized: bool
 
+@external
+@view
+def vars() -> (uint256[N_COINS], uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256, bool, uint256):
+    return self.balances, self.price_scale, self.price_oracle, self.last_prices, self.ma_half_time, self.totalSupply, self.xcp_profit, self.virtual_price, self.adjustment_step, self.allowed_extra_profit, self.not_adjusted, self.D
 
 @external
 def initialize (
@@ -523,10 +529,9 @@ def exchange(i: uint256, j: uint256, dx: uint256, min_dy: uint256) -> (uint256, 
 
     self.tweak_price(A_gamma, xp, p, 0)
 
-    log TokenExchange(msg.sender, i, dx, j, dy, trade_fee)
+    log TokenExchange(i, dx, j, dy, trade_fee, self.price_scale, self.D, self.balances)
     return dy, self.last_prices / PRECISIONS[0]
 
-# @payable
 @external
 @nonreentrant('lock')
 def exchangeExactOut(i: uint256, j: uint256, dy: uint256, max_dx: uint256) -> (uint256, uint256):
@@ -619,7 +624,7 @@ def exchangeExactOut(i: uint256, j: uint256, dy: uint256, max_dx: uint256) -> (u
 
     self.tweak_price(A_gamma, xp, p, 0)
 
-    log TokenExchange(msg.sender, i, dx, j, dy, trade_fee)
+    log TokenExchange(i, dx, j, dy, trade_fee, self.price_scale, self.D, self.balances)
     return dx, self.last_prices / PRECISIONS[0]
 
 @external
