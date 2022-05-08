@@ -975,10 +975,10 @@ describe('Maker Tests', async function() {
             expect(await marginAccount.getNormalizedMargin(alice)).to.eq(margin.add(fundingReceived).sub(fee))
 
             let upperBound = makerMargin.sub(fundingPaid.mul(maker1Liquidity).div(totalSupply))
-            let lowerBound = upperBound.sub(upperBound.div(1e7))
+            let lowerBound = upperBound.sub(upperBound.div(1e6))
             await assertBounds(await marginAccount.getNormalizedMargin(maker1.address), lowerBound, upperBound)
             upperBound = makerMargin.sub(fundingPaid.mul(maker2Liquidity).div(totalSupply))
-            lowerBound = upperBound.sub(upperBound.div(1e7))
+            lowerBound = upperBound.sub(upperBound.div(1e6))
             await assertBounds(await marginAccount.getNormalizedMargin(maker2.address), lowerBound, upperBound)
             expect(fundingPaid).gte(fundingReceived)
         })

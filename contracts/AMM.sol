@@ -735,7 +735,7 @@ contract AMM is IAMM, Governable {
     }
 
     function lastPrice() public view returns(uint256) {
-        return vamm.last_prices() / 1e12;
+        return vamm.mark_price() / 1e12;
     }
 
     function openInterestNotional() public view returns (uint256) {

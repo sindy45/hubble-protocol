@@ -118,6 +118,7 @@ token: address
 
 price_scale: public(uint256)   # Internal price scale
 price_oracle: public(uint256)  # Price target given by MA
+mark_price: public(uint256) # dx/dy
 
 last_prices: public(uint256)
 last_prices_timestamp: public(uint256)
@@ -240,6 +241,7 @@ def setinitialPrice(initial_price: uint256):
     assert msg.sender == self.amm, 'VAMM: OnlyAMM'
     self.price_scale = initial_price
     self.price_oracle = initial_price
+    self.mark_price = initial_price
     self.last_prices = initial_price
 
 @payable
@@ -325,6 +327,69 @@ def get_xcp(D: uint256) -> uint256:
 @view
 def get_virtual_price() -> uint256:
     return 10**18 * self.get_xcp(self.D) / self.totalSupply
+
+# @dev works only when N_COINS=2, 0th token is quote asset
+@internal
+@view
+def _calc_mark_price(_balances: uint256[N_COINS], A: uint256, gamma: uint256) -> uint256:
+    D: uint256 = self.D
+    price_scale: uint256 = self.price_scale
+
+    # use updated price_scale to calcualte xp, x = xp[0], y = xp[1]
+    xp: uint256[N_COINS] = [_balances[0] * PRECISIONS[0], _balances[1] * price_scale * PRECISIONS[1] / PRECISION]
+    # K0 = 4xy / D**2
+    K0: uint256 = 4 * PRECISION * xp[0] / D * xp[1] / D
+
+    # g1k0 = gamma + 1 - K0
+    # P = 4 * A * gamma**2 / g1k0**2 (1 + 2 * K0 / g1k0)
+        # K = A * gamma**2 * K0 / g1k0**2
+    # numerator = x * (x+y) / D + K * D / P + x / P - x
+    # denominator = y * (x+y) / D + K * D / P + y / P - y
+    g1k0: uint256 = gamma + PRECISION
+    numerator: uint256 = xp[0] + xp[1]
+    denominator: uint256 = numerator
+    if g1k0 > K0:
+        g1k0 = g1k0 - K0 + 1
+        K: uint256 = K0 * gamma / g1k0 * gamma / g1k0 * A / A_MULTIPLIER
+        P: uint256 = 4 * K * PRECISION / K0 + 8 * K * PRECISION / g1k0
+
+        _kdp: uint256 = K * D / P
+        numerator = _kdp + xp[0] * numerator / D + xp[0] * PRECISION / P
+        denominator =  _kdp + xp[1] * denominator / D + xp[1] * PRECISION / P
+        if numerator > xp[0]:
+            assert denominator > xp[1], "VAMM: invalid markPrice"
+            numerator = numerator - xp[0]
+            denominator = denominator - xp[1]
+        else:
+            assert denominator < xp[1], "VAMM: invalid markPrice"
+            numerator = xp[0] - numerator
+            denominator = xp[1] - denominator
+    else:
+        g1k0 = K0 - g1k0 + 1
+        K: uint256 = K0 * gamma / g1k0 * gamma / g1k0 * A / A_MULTIPLIER
+        P: uint256 = 8 * K * PRECISION / g1k0 - 4 * K * PRECISION / K0
+
+        numerator = xp[0] * numerator / D
+        denominator = xp[1] * denominator / D
+        _kdp: uint256 = K * D / P
+        numerator_neg: uint256 = _kdp + xp[0] * PRECISION / P + xp[0]
+        denominator_neg: uint256 = _kdp + xp[1] * PRECISION / P + xp[1]
+
+        if numerator > numerator_neg:
+            assert denominator > denominator_neg, "VAMM: invalid markPrice"
+            numerator = numerator - numerator_neg
+            denominator = denominator - denominator_neg
+        else:
+            assert denominator < denominator_neg, "VAMM: invalid markPrice"
+            numerator = numerator_neg - numerator
+            denominator = denominator_neg - denominator
+    return price_scale * numerator / denominator
+
+@external
+@view
+def calc_mark_price(_balances: uint256[N_COINS]) -> (uint256):
+    A_gamma: uint256[2] = self._A_gamma()
+    return self._calc_mark_price(_balances, A_gamma[0], A_gamma[1])
 
 
 @internal
@@ -529,8 +594,12 @@ def exchange(i: uint256, j: uint256, dx: uint256, min_dy: uint256) -> (uint256, 
 
     self.tweak_price(A_gamma, xp, p, 0)
 
+    # calculate mark price
+    p = self._calc_mark_price(self.balances, A_gamma[0], A_gamma[1])
+    self.mark_price = p
+
     log TokenExchange(i, dx, j, dy, trade_fee, self.price_scale, self.D, self.balances)
-    return dy, self.last_prices / PRECISIONS[0]
+    return dy, p / PRECISIONS[0]
 
 @external
 @nonreentrant('lock')
@@ -624,8 +693,12 @@ def exchangeExactOut(i: uint256, j: uint256, dy: uint256, max_dx: uint256) -> (u
 
     self.tweak_price(A_gamma, xp, p, 0)
 
+    # calculate mark price
+    p = self._calc_mark_price(self.balances, A_gamma[0], A_gamma[1])
+    self.mark_price = p
+
     log TokenExchange(i, dx, j, dy, trade_fee, self.price_scale, self.D, self.balances)
-    return dx, self.last_prices / PRECISIONS[0]
+    return dx, p / PRECISIONS[0]
 
 @external
 @view
@@ -755,6 +828,8 @@ def add_liquidity(amounts: uint256[N_COINS], min_mint_amount: uint256) -> (uint2
                     p = (10**18)**2 / p
 
         self.tweak_price(A_gamma, xp, p, D)
+        # calculate mark price
+        self.mark_price = self._calc_mark_price(self.balances, A_gamma[0], A_gamma[1])
 
     else:
         self.D = D

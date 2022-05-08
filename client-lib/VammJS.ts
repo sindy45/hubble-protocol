@@ -69,7 +69,7 @@ export class VammJS {
     }
 
     markPrice() {
-        return calcMarkPrice(this.balances[0], this.balances[1] * this.price_scale, this.A, this.gamma, this.D, this.price_scale)
+        return calcMarkPrice(this.balances[0], this.balances[1] * this.price_scale, this.A, this.gamma, this.D, this.price_scale).markPrice
     }
 
     short(dx: number, min_dy: number) {
@@ -375,8 +375,7 @@ export function get_dy(i, j, dx, balances, D, priceScale, A, gamma, midFee) {
     }
 
     const DNew = newton_D(A, gamma, xp)
-    const markPrice = calcMarkPrice(xp[0], xp[1], A, gamma, DNew, priceScale)
-
+    const { markPrice } = calcMarkPrice(xp[0], xp[1], A, gamma, DNew, priceScale)
     return [dy, fee, markPrice];
 }
 
@@ -414,8 +413,7 @@ export function get_dx(i, j, dy, balances, D, priceScale, A, gamma, midFee) {
     }
 
     const DNew = newton_D(A, gamma, xp)
-    const markPrice = calcMarkPrice(xp[0], xp[1], A, gamma, DNew, priceScale)
-
+    const { markPrice } = calcMarkPrice(xp[0], xp[1], A, gamma, DNew, priceScale)
     return [dx, fee, markPrice]
 }
 
@@ -574,8 +572,10 @@ export function calcMarkPrice(x, y, A, gamma, D, priceScale) {
     const denominator = P * Q * g2k + K * D + x
 
     const yPrime = - numerator / denominator
-    // markPrice = priceScale * (dx / dy)
-    return Math.abs(priceScale/yPrime)
+    return {
+        markPrice: Math.abs(priceScale/yPrime),
+        K0
+    }
 }
 
 export function geometricMean(x) {

@@ -183,6 +183,7 @@ interface IVAMM {
 
     function get_notional(uint256 makerDToken, uint256 vUSD, uint256 vAsset, int256 takerPosSize, uint256 takerOpenNotional) external view returns (uint256, int256, int256, uint256);
     function last_prices() external view returns(uint256);
+    function mark_price() external view returns(uint256);
     function price_oracle() external view returns(uint256);
     function price_scale() external view returns(uint256);
     function add_liquidity(uint256[2] calldata amounts, uint256 min_mint_amount) external returns (uint256);
