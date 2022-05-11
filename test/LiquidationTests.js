@@ -4,7 +4,9 @@ const {
     constants: { _1e6, _1e18, ZERO },
     getTradeDetails,
     setupContracts,
-    setupRestrictedTestToken
+    setupRestrictedTestToken,
+    filterEvent,
+    addMargin
 } = require('./utils')
 
 describe('Liquidation Tests', async function() {
@@ -21,6 +23,7 @@ describe('Liquidation Tests', async function() {
             5e2 /** tradeFee */,
             5e4 /** liquidationPenalty */
         )
+        await amm.setMaxLiquidationRatio(100)
     })
 
     it('addCollateral', async () => {
@@ -178,6 +181,8 @@ describe('Multi-collateral Liquidation Tests', async function() {
             5e2 /** tradeFee */,
             5e4 /** liquidationPenalty */
         )
+
+        await amm.setMaxLiquidationRatio(100)
 
         // addCollateral
         avax = await setupRestrictedTestToken('AVAX', 'AVAX', 6)
@@ -341,4 +346,109 @@ describe('Multi-collateral Liquidation Tests', async function() {
         await usdc.connect(trader).approve(marginAccountHelper.address, margin)
         await marginAccountHelper.connect(trader).addVUSDMarginWithReserve(margin)
     }
+})
+
+describe('Partial Liquidation Threshold', async function() {
+    beforeEach(async function() {
+        signers = await ethers.getSigners()
+        ;([ _, bob, liquidator1, liquidator2, liquidator3, admin ] = signers)
+        alice = signers[0].address
+
+        contracts = await setupContracts()
+        ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, swap, hubbleViewer, oracle } = contracts)
+
+        // add margin
+        margin = _1e6.mul(2000)
+        await addMargin(signers[0], margin)
+    })
+
+    it('short -> liquidation -> liquidation', async function() {
+        // alice shorts
+        const baseAssetQuantity = _1e18.mul(-5)
+        await clearingHouse.openPosition(0, baseAssetQuantity, 0)
+
+        let position = await amm.positions(alice)
+        expect(position.liquidationThreshold).to.eq(baseAssetQuantity.mul(25).div(100).abs())
+
+        // bob longs
+        await addMargin(bob, _1e6.mul(40000))
+        await oracle.setUnderlyingPrice(weth.address, _1e6.mul(1100))
+        await clearingHouse.connect(bob).openPosition(0, _1e18.mul(130), ethers.constants.MaxUint256)
+
+        // alice is in liquidation zone
+        expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
+        let tx = await clearingHouse.connect(liquidator1).liquidateTaker(alice)
+        let liquidationEvent = (await filterEvent(tx, 'PositionLiquidated')).args
+
+        const markPrice = await amm.lastPrice()
+        await oracle.setUnderlyingPrice(weth.address, markPrice) // to make amm under spread limit
+        // alice has 75% position left
+        position = await amm.positions(alice)
+        expect(position.size).to.eq(baseAssetQuantity.mul(75).div(100))
+        expect(position.liquidationThreshold).to.eq(baseAssetQuantity.mul(25).div(100).abs())
+
+        const liquidationPenalty = liquidationEvent.quoteAsset.mul(5e4).div(_1e6)
+        const toInsurance = liquidationPenalty.div(2)
+        expect(await vusd.balanceOf(liquidator1.address)).to.eq(liquidationPenalty.sub(toInsurance))
+
+        // alice is still in liquidation zone
+        expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
+        await clearingHouse.connect(liquidator1).liquidateTaker(alice)
+        // alice has 50% position left
+        position = await amm.positions(alice)
+        expect(position.size).to.eq(baseAssetQuantity.mul(50).div(100))
+        expect(position.liquidationThreshold).to.eq(baseAssetQuantity.mul(25).div(100).abs())
+        // alice is out of liquidation zone
+        await expect(clearingHouse.connect(liquidator1).liquidateTaker(alice)).to.be.revertedWith(
+            'CH: Above Maintenance Margin'
+        )
+    })
+
+    it('long -> liquidation -> short', async function() {
+        // alice longs
+        let baseAssetLong = _1e18.mul(7)
+        await clearingHouse.openPosition(0, baseAssetLong, ethers.constants.MaxUint256)
+
+        let position = await amm.positions(alice)
+        expect(position.liquidationThreshold).to.eq(baseAssetLong.mul(25).div(100))
+
+        // bob shorts
+        await addMargin(bob, _1e6.mul(40000))
+        await oracle.setUnderlyingPrice(weth.address, _1e6.mul(900))
+        await clearingHouse.connect(bob).openPosition(0, _1e18.mul(-140), 0)
+
+        // alice is in liquidation zone
+        expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
+        let tx = await clearingHouse.connect(liquidator1).liquidateTaker(alice)
+        let liquidationEvent = (await filterEvent(tx, 'PositionLiquidated')).args
+
+        // alice has 75% position left
+        position = await amm.positions(alice)
+        expect(position.liquidationThreshold).to.eq(baseAssetLong.mul(25).div(100))
+        baseAssetLong = baseAssetLong.mul(75).div(100)
+        expect(position.size).to.eq(baseAssetLong)
+
+        const liquidationPenalty = liquidationEvent.quoteAsset.mul(5e4).div(_1e6)
+        const toInsurance = liquidationPenalty.div(2)
+        expect(await vusd.balanceOf(liquidator1.address)).to.eq(liquidationPenalty.sub(toInsurance))
+
+        // alice is still in liquidation zone
+        expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
+        await clearingHouse.connect(liquidator1).callStatic.liquidateTaker(alice) // doesn't throw exception
+
+        // alice shorts
+        const baseAssetShort = _1e18.mul(-2)
+        await clearingHouse.openPosition(0, baseAssetShort, 0)
+
+        // alice is out of liquidation zone
+        expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.true
+        await expect(clearingHouse.connect(liquidator1).liquidateTaker(alice)).to.be.revertedWith(
+            'CH: Above Maintenance Margin'
+        )
+
+        // liquidation threshold updated
+        position = await amm.positions(alice)
+        expect(position.size).to.eq(baseAssetLong.add(baseAssetShort))
+        expect(position.liquidationThreshold).to.eq(position.size.mul(25).div(100))
+    })
 })

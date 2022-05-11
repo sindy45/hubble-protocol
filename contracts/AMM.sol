@@ -42,12 +42,14 @@ contract AMM is IAMM, Governable {
     uint256 public longOpenInterestNotional;
     uint256 public shortOpenInterestNotional;
     uint256 public maxOracleSpreadRatio; // scaled 2 decimals
+    uint256 public maxLiquidationRatio; // scaled 2 decimals
 
     enum Side { LONG, SHORT }
     struct Position {
         int256 size;
         uint256 openNotional;
         int256 lastPremiumFraction;
+        uint liquidationThreshold;
     }
     mapping(address => Position) override public positions;
 
@@ -142,6 +144,7 @@ contract AMM is IAMM, Governable {
         withdrawPeriod = 1 days;
         maxOracleSpreadRatio = 20;
         unbondPeriod = 3 days;
+        maxLiquidationRatio = 25;
     }
 
     /**
@@ -165,6 +168,13 @@ contract AMM is IAMM, Governable {
         } else {
             (realizedPnl, quoteAsset, isPositionIncreased) = _openReversePosition(trader, baseAssetQuantity, quoteAssetLimit);
         }
+
+        // update liquidation thereshold
+        positions[trader].liquidationThreshold = Math.max(
+            uint(abs(positions[trader].size)) * maxLiquidationRatio / 100,
+            minSizeRequirement
+        );
+
         _emitPositionChanged(trader, realizedPnl);
     }
 
@@ -177,11 +187,12 @@ contract AMM is IAMM, Governable {
         // don't need an ammState check because there should be no active positions
         Position memory position = positions[trader];
         bool isLongPosition = position.size > 0 ? true : false;
+        uint positionToLiquidate = Math.min(uint(abs(position.size)), position.liquidationThreshold);
         // sending market orders can fk the trader. @todo put some safe guards around price of liquidations
         if (isLongPosition) {
-            (realizedPnl, quoteAsset) = _reducePosition(trader, -position.size, 0, true /* isLiquidation */);
+            (realizedPnl, quoteAsset) = _reducePosition(trader, -positionToLiquidate.toInt256(), 0, true /* isLiquidation */);
         } else {
-            (realizedPnl, quoteAsset) = _reducePosition(trader, -position.size, type(uint).max, true /* isLiquidation */);
+            (realizedPnl, quoteAsset) = _reducePosition(trader, positionToLiquidate.toInt256(), type(uint).max, true /* isLiquidation */);
         }
         _emitPositionChanged(trader, realizedPnl);
     }
@@ -368,6 +379,12 @@ contract AMM is IAMM, Governable {
                 }
                 position.openNotional = totalOpenNotional;
                 position.size += makerPosition;
+
+                // update liquidation thereshold
+                position.liquidationThreshold = Math.max(
+                    uint(abs(position.size)) * maxLiquidationRatio / 100,
+                    minSizeRequirement
+                );
 
                 // update long and short open interest notional
                 if (makerPosition > 0) {
@@ -1034,5 +1051,9 @@ contract AMM is IAMM, Governable {
 
     function setMaxOracleSpreadRatio(uint _maxOracleSpreadRatio) external onlyGovernance {
         maxOracleSpreadRatio = _maxOracleSpreadRatio;
+    }
+
+    function setMaxLiquidationRatio (uint _maxLiquidationRatio) external onlyGovernance {
+        maxLiquidationRatio = _maxLiquidationRatio;
     }
 }

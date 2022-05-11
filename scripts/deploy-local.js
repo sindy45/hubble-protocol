@@ -30,7 +30,8 @@ async function main() {
         unbondRoundOff: 1, // 1s
         amm: {
             unbondPeriod: 300, // 5 mins
-        }
+        },
+        restrictedVUSD: false
     })
 
     // provide some vusd to signers[1], signers[2]

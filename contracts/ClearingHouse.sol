@@ -86,7 +86,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
 
     function closePosition(uint idx, uint quoteAssetLimit) override external whenNotPaused {
         address trader = _msgSender();
-        (int256 size,,) = amms[idx].positions(trader);
+        (int256 size,,,) = amms[idx].positions(trader);
         _openPosition(trader, idx, -size, quoteAssetLimit);
     }
 
@@ -241,7 +241,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         uint numAmms = amms.length;
         for (uint i; i < numAmms; ++i) { // liquidate all positions
             _amm = amms[i];
-            (size,,) = _amm.positions(trader);
+            (size,,,) = _amm.positions(trader);
             if (size != 0) {
                 (int _realizedPnl, uint _quoteAsset) = _amm.liquidatePosition(trader);
                 realizedPnl += _realizedPnl;

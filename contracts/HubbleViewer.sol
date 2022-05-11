@@ -85,7 +85,7 @@ contract HubbleViewer is IHubbleViewer {
         positions = new Position[](l);
         for (uint i; i < l; i++) {
             IAMM amm = clearingHouse.amms(i);
-            (positions[i].size, positions[i].openNotional, ) = amm.positions(trader);
+            (positions[i].size, positions[i].openNotional,,) = amm.positions(trader);
             if (positions[i].size == 0) {
                 positions[i].unrealizedPnl = 0;
                 positions[i].avgOpen = 0;
@@ -155,7 +155,7 @@ contract HubbleViewer is IHubbleViewer {
         (uint256 notionalPosition, int256 margin) = clearingHouse.getNotionalPositionAndMargin(trader, true /* includeFundingPayments */, IClearingHouse.Mode.Min_Allowable_Margin);
 
         // get market specific position info
-        (int256 takerPosSize,,) = amm.positions(trader);
+        (int256 takerPosSize,,,) = amm.positions(trader);
         uint takerNowNotional = amm.getCloseQuote(takerPosSize);
         uint takerUpdatedNotional = amm.getCloseQuote(takerPosSize + baseAssetQuantity);
         // Calculate new total notionalPosition
@@ -185,7 +185,7 @@ contract HubbleViewer is IHubbleViewer {
         IAMM amm = clearingHouse.amms(idx);
 
         // get taker info
-        (int256 takerPosSize,,) = amm.positions(trader);
+        (int256 takerPosSize,,,) = amm.positions(trader);
         uint takerNotional = amm.getCloseQuote(takerPosSize);
 
         // get maker info

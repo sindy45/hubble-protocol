@@ -457,7 +457,7 @@ async function generateConfig(leaderboardAddress, marginAccountHelperAddress, ex
     const marginAccount = await ethers.getContractAt('MarginAccount', await hubbleViewer.marginAccount())
     const vusd = await ethers.getContractAt('VUSD', await clearingHouse.vusd())
     const usdc = await vusd.reserveToken()
-    // const hubbleReferral = await clearingHouse.hubbleReferral()
+    const hubbleReferral = await clearingHouse.hubbleReferral()
 
     const _amms = await clearingHouse.getAMMs()
     const amms = []
@@ -498,7 +498,7 @@ async function generateConfig(leaderboardAddress, marginAccountHelperAddress, ex
             Leaderboard: leaderboardAddress,
             MarginAccountHelper: marginAccountHelperAddress,
             vusd: vusd.address,
-            // hubbleReferral,
+            hubbleReferral,
             usdc,
             amms,
             collateral,

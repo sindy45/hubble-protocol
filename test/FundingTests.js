@@ -171,6 +171,8 @@ describe('Funding Tests', function() {
         })
 
         it('alice shorts and paying -ve funding causes them to drop below maintenance margin and liquidated', async function() {
+            await amm.setMaxLiquidationRatio(100)
+
             const baseAssetQuantity = _1e18.mul(-5)
             let tx = await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity, _1e6.mul(4900))
             ;({ quoteAsset, fee } = await getTradeDetails(tx))
