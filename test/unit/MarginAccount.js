@@ -54,6 +54,10 @@ describe('MarginAccount Unit Tests', function() {
             await marginAccount.unpause()
         })
 
+        it('cannot remove 0 margin', async function() {
+            await expect(marginAccount.removeMargin(0,0)).to.be.revertedWith('Remove non-zero margin')
+        })
+
         it('realize fake pnl', async function() {
             await setClearingHouse(mockClearingHouse)
             expect(await vusd.balanceOf(marginAccount.address)).to.eq(0)

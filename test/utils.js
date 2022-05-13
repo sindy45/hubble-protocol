@@ -450,7 +450,7 @@ async function assertBounds(v, lowerBound, upperBound) {
 }
 
 // doesn't print inactive AMMs
-async function generateConfig(leaderboardAddress, marginAccountHelperAddress, executorAddress) {
+async function generateConfig(leaderboardAddress, marginAccountHelperAddress, executorAddress, genesisBlock) {
     const leaderboard = await ethers.getContractAt('Leaderboard', leaderboardAddress)
     const hubbleViewer = await ethers.getContractAt('HubbleViewer', await leaderboard.hubbleViewer())
     const clearingHouse = await ethers.getContractAt('ClearingHouse', await hubbleViewer.clearingHouse())
@@ -477,14 +477,17 @@ async function generateConfig(leaderboardAddress, marginAccountHelperAddress, ex
         collateral.push({
             name: await asset.name(),
             ticker: await asset.symbol(),
-            decimals: await asset.decimals(),
+            decimals: _collateral[i].decimals.toString(),
+            weight: _collateral[i].weight.toString(),
             address: asset.address
         })
     }
 
-    // to find the genesis block, we will get the block in which the first amm was whitelisted
-    const marketAddedEvents = await clearingHouse.queryFilter('MarketAdded')
-    const genesisBlock = marketAddedEvents[0].blockNumber
+    if (!genesisBlock) {
+        // to find the genesis block, we will get the block in which the first amm was whitelisted
+        const marketAddedEvents = await clearingHouse.queryFilter('MarketAdded')
+        genesisBlock = marketAddedEvents[0].blockNumber
+    }
     const res = {
         genesisBlock,
         timestamp: (await ethers.provider.getBlock(genesisBlock)).timestamp,
@@ -505,7 +508,9 @@ async function generateConfig(leaderboardAddress, marginAccountHelperAddress, ex
         },
         systemParams: {
             maintenanceMargin: (await clearingHouse.maintenanceMargin()).toString(),
-            numCollateral: collateral.length
+            numCollateral: collateral.length,
+            tradeFee: (await clearingHouse.tradeFee()).toString(),
+            liquidationFee: (await clearingHouse.liquidationPenalty()).toString(),
         }
     }
     if (executorAddress) {

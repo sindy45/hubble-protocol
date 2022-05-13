@@ -166,6 +166,8 @@ contract MarginAccount is IMarginAccount, HubbleBase {
     * @param amount Amount to withdraw (scaled same as the asset)
     */
     function removeMargin(uint idx, uint256 amount) override external whenNotPaused {
+        require(amount != 0, 'Remove non-zero margin');
+
         address trader = _msgSender();
 
         // credit funding payments

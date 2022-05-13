@@ -216,6 +216,8 @@ contract AMM is IAMM, Governable {
             maker.lastPremiumPerDtoken
         ) = getPendingFundingPayment(trader);
 
+        _emitMakerPositionChanged(trader);
+
         Position storage position = positions[trader];
         position.lastPremiumFraction = maker.lastPremiumFraction;
 
@@ -224,9 +226,9 @@ contract AMM is IAMM, Governable {
         if (fundingPayment < 0) {
             fundingPayment -= fundingPayment / 1e3; // receivers charged 0.1% to account for rounding-offs
         }
-
-        _emitMakerPositionChanged(trader);
-        emit FundingPaid(trader, takerFundingPayment, makerFundingPayment);
+        if (fundingPayment != 0) {
+            emit FundingPaid(trader, takerFundingPayment, makerFundingPayment);
+        }
     }
 
     /* ****************** */
@@ -274,8 +276,10 @@ contract AMM is IAMM, Governable {
         address maker = msg.sender;
         // this needs to be invoked here because updatePosition is not called before unbondLiquidity
         _setIgnitionShare(maker);
+        _emitMakerPositionChanged(maker); // because dToken was updated
+
         Maker storage _maker = _makers[maker];
-        require(dToken > 0, "unbonding_0");
+        require(dToken != 0, "unbonding_0");
         require(_maker.dToken >= dToken, "unbonding_too_much");
         _maker.unbondAmount = dToken;
         _maker.unbondTime = ((_blockTimestamp() + unbondPeriod) / unbondRoundOff) * unbondRoundOff;
@@ -545,7 +549,6 @@ contract AMM is IAMM, Governable {
         _maker.vUSD = vUSD;
         (_maker.vAsset, _maker.dToken) = getIgnitionShare(vUSD);
         _maker.ignition = 0;
-        _emitMakerPositionChanged(maker); // because dToken was updated
     }
 
     function getIgnitionShare(uint vUSD) override public view returns (uint vAsset, uint dToken) {

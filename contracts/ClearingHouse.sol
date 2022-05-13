@@ -30,9 +30,9 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
 
     uint256[50] private __gap;
 
-    event PositionModified(address indexed trader, uint indexed idx, int256 baseAsset, uint quoteAsset, uint256 timestamp);
-    event PositionLiquidated(address indexed trader, uint indexed idx, int256 baseAsset, uint256 quoteAsset, uint256 timestamp);
-    event PositionTranslated(address indexed trader, uint indexed idx, int256 baseAsset, uint256 quoteAsset, uint256 timestamp);
+    event PositionModified(address indexed trader, uint indexed idx, int256 baseAsset, uint quoteAsset, int256 realizedPnl, uint256 timestamp);
+    event PositionLiquidated(address indexed trader, uint indexed idx, int256 baseAsset, uint256 quoteAsset, int256 realizedPnl, uint256 timestamp);
+    event PositionTranslated(address indexed trader, uint indexed idx, int256 baseAsset, uint256 quoteAsset, int256 realizedPnl, uint256 timestamp);
     event MarketAdded(uint indexed idx, address indexed amm);
     event ReferralBonusAdded(address indexed referrer, uint referralBonus);
 
@@ -102,7 +102,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         if (isPositionIncreased) {
             assertMarginRequirement(trader);
         }
-        emit PositionModified(trader, idx, baseAssetQuantity, quoteAsset, _blockTimestamp());
+        emit PositionModified(trader, idx, baseAssetQuantity, quoteAsset, realizedPnl, _blockTimestamp());
     }
 
     /* ****************** */
@@ -149,7 +149,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         (int256 realizedPnl, uint quoteAsset, int baseAssetQuantity) = amms[idx].removeLiquidity(maker, dToken, minQuoteValue, minBaseValue);
         marginAccount.realizePnL(maker, realizedPnl);
         if (baseAssetQuantity != 0) {
-            emit PositionTranslated(maker, idx, baseAssetQuantity, quoteAsset, _blockTimestamp());
+            emit PositionTranslated(maker, idx, baseAssetQuantity, quoteAsset, realizedPnl, _blockTimestamp());
         }
     }
 
@@ -218,7 +218,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
             _isMaker = true;
             realizedPnl += _realizedPnl;
             if (baseAssetQuantity != 0) {
-                emit PositionTranslated(maker, i, baseAssetQuantity, quoteAsset, _blockTimestamp());
+                emit PositionTranslated(maker, i, baseAssetQuantity, quoteAsset, _realizedPnl, _blockTimestamp());
             }
         }
 
@@ -246,7 +246,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
                 (int _realizedPnl, uint _quoteAsset) = _amm.liquidatePosition(trader);
                 realizedPnl += _realizedPnl;
                 quoteAsset += _quoteAsset;
-                emit PositionLiquidated(trader, i, size, _quoteAsset, _blockTimestamp());
+                emit PositionLiquidated(trader, i, size, _quoteAsset, _realizedPnl, _blockTimestamp());
             }
         }
 
@@ -320,10 +320,15 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     function getTotalFunding(address trader) override public view returns(int256 totalFunding) {
         int256 takerFundingPayment;
         int256 makerFundingPayment;
+        int256 fundingPayment;
         uint numAmms = amms.length;
         for (uint i; i < numAmms; ++i) {
             (takerFundingPayment, makerFundingPayment,,) = amms[i].getPendingFundingPayment(trader);
-            totalFunding += (takerFundingPayment + makerFundingPayment);
+            fundingPayment = takerFundingPayment + makerFundingPayment;
+            if (fundingPayment < 0) {
+                fundingPayment -= fundingPayment / 1e3; // receivers charged 0.1% to account for rounding-offs
+            }
+            totalFunding += fundingPayment;
         }
     }
 
