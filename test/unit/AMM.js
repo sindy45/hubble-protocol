@@ -13,7 +13,6 @@ const {
 } = utils
 const { calcMarkPrice } = require('../../dist/VammJS')
 
-const A_MULTIPLIER = 10000
 const TRADE_FEE = 0.000567 * _1e6
 const gasLimit = 1e6
 
@@ -48,11 +47,30 @@ describe('vAMM unit Tests', function() {
             const initialUSDTBalance = await swap.balances(0, {gasLimit});
             const initialETHBalance = await swap.balances(1, {gasLimit});
 
-            await expect(swap.exchangeExactOut(0, 1, baseAssetQuantity, amount)).to.be.revertedWith('VAMM: OnlyAMM')
-            const tx = await swap.connect(mockAmm).exchangeExactOut(0, 1, baseAssetQuantity, amount)
+            await expect(swap.exchangeExactOut(0, 1, baseAssetQuantity, amount, { gasLimit })).to.be.revertedWith('VAMM: OnlyAMM')
+            const tx = await swap.connect(mockAmm).exchangeExactOut(0, 1, baseAssetQuantity, amount, { gasLimit: 2e6 })
             transactionEvent = await filterEvent(tx, 'TokenExchange')
-            const dx1 = transactionEvent.args[1];
-            const vammFee = transactionEvent.args[4];
+            const { tokens_sold: dx1, trade_fee: vammFee } = transactionEvent.args
+
+            const types = new Array(11).fill('uint').concat(['bool', 'uint'])
+            // const [ b0, b1, price_scale, price_oracle, last_prices, ma_half_time, totalSupply, xcp_profit, virtual_price, adjustment_step, allowed_extra_profit, not_adjusted, D ]
+            const params = ethers.utils.defaultAbiCoder.decode(types, transactionEvent.args.vamm)
+            const actual = await Promise.all([
+                swap.price_scale({ gasLimit }),
+                swap.price_oracle({ gasLimit }),
+                swap.last_prices({ gasLimit }),
+                swap.ma_half_time({ gasLimit }),
+                swap.totalSupply({ gasLimit }),
+                swap.xcp_profit({ gasLimit }),
+                swap.virtual_price({ gasLimit }),
+                swap.adjustment_step({ gasLimit }),
+                swap.allowed_extra_profit({ gasLimit }),
+                swap.not_adjusted({ gasLimit }),
+                swap.D({ gasLimit })
+            ])
+            expect(params[0]).to.eq(initialUSDTBalance.add(dx1))
+            expect(params[1]).to.eq(initialETHBalance.sub(baseAssetQuantity))
+            expect(params.slice(2)).to.deep.eq(actual)
 
             const dx2 = await swap.get_dy(1, 0, baseAssetQuantity, {gasLimit})
             const fee = await swap.get_dy_fee(1, 0, baseAssetQuantity, {gasLimit})
@@ -99,8 +117,28 @@ describe('vAMM unit Tests', function() {
             await expect(swap.exchange(1, 0, baseAssetQuantity, amount)).to.be.revertedWith('VAMM: OnlyAMM')
             let tx = await swap.connect(mockAmm).exchange(1, 0, baseAssetQuantity, amount)
             transactionEvent = await filterEvent(tx, 'TokenExchange')
-            const dy1 = transactionEvent.args[3];
-            const vammFee = transactionEvent.args[4];
+            const { tokens_bought: dy1, trade_fee: vammFee } = transactionEvent.args
+            // const dy1 = transactionEvent.args[3];
+
+            const types = new Array(11).fill('uint').concat(['bool', 'uint'])
+            // const [ b0, b1, price_scale, price_oracle, last_prices, ma_half_time, totalSupply, xcp_profit, virtual_price, adjustment_step, allowed_extra_profit, not_adjusted, D ]
+            const params = ethers.utils.defaultAbiCoder.decode(types, transactionEvent.args.vamm)
+            const actual = await Promise.all([
+                swap.price_scale({ gasLimit }),
+                swap.price_oracle({ gasLimit }),
+                swap.last_prices({ gasLimit }),
+                swap.ma_half_time({ gasLimit }),
+                swap.totalSupply({ gasLimit }),
+                swap.xcp_profit({ gasLimit }),
+                swap.virtual_price({ gasLimit }),
+                swap.adjustment_step({ gasLimit }),
+                swap.allowed_extra_profit({ gasLimit }),
+                swap.not_adjusted({ gasLimit }),
+                swap.D({ gasLimit })
+            ])
+            expect(params[0]).to.eq(initialUSDTBalance.sub(dy1))
+            expect(params[1]).to.eq(initialETHBalance.add(baseAssetQuantity))
+            expect(params.slice(2)).to.deep.eq(actual)
 
             const dy2 = await swap.get_dx(0, 1, baseAssetQuantity, {gasLimit})
             const fee = await swap.get_dx_fee(0, 1, baseAssetQuantity, {gasLimit})

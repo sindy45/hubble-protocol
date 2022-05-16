@@ -318,21 +318,22 @@ export class VammJS {
 }
 
 export async function getVammJS(vamm) {
-    let vars = await vamm.vars({ gasLimit: 1e6 })
+    const types = new Array(11).fill('uint').concat(['bool', 'uint'])
+    const vars = ethers.utils.defaultAbiCoder.decode(types, await vamm.vars({ gasLimit: 1e6 }))
     // init vammJS
     return new VammJS(
-        [ bnToFloat(vars[0][0], 6), bnToFloat(vars[0][1], 18) ], // balances
-        bnToFloat(vars[1], 18), // price_scale
-        bnToFloat(vars[2], 18), // price_oracle
-        bnToFloat(vars[3], 18), // last_prices
-        parseFloat(vars[4]), // ma_half_time=600
-        bnToFloat(vars[5], 18), // totalSupply
-        bnToFloat(vars[6], 18), // xcp_profit
-        bnToFloat(vars[7], 18), // virtual_price
-        bnToFloat(vars[8], 18), // adjustment_step
-        bnToFloat(vars[9], 18), // allowed_extra_profit
-        vars[10], // not_adjusted
-        bnToFloat(vars[11], 18), // D
+        [ bnToFloat(vars[0], 6), bnToFloat(vars[1], 18) ], // balances
+        bnToFloat(vars[2], 18), // price_scale
+        bnToFloat(vars[3], 18), // price_oracle
+        bnToFloat(vars[4], 18), // last_prices
+        parseFloat(vars[5]), // ma_half_time=600
+        bnToFloat(vars[6], 18), // totalSupply
+        bnToFloat(vars[7], 18), // xcp_profit
+        bnToFloat(vars[8], 18), // virtual_price
+        bnToFloat(vars[9], 18), // adjustment_step
+        bnToFloat(vars[10], 18), // allowed_extra_profit
+        vars[11], // not_adjusted
+        bnToFloat(vars[12], 18), // D
     )
 }
 

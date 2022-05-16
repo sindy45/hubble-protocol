@@ -1,4 +1,4 @@
-# @version 0.2.12
+# @version 0.2.16
 # (c) Curve.Fi, 2021
 # Pool for USDT/BTC/ETH or similar
 
@@ -40,9 +40,7 @@ event TokenExchange:
     bought_id: uint256
     tokens_bought: uint256
     trade_fee: uint256
-    price_scale: uint256
-    D: uint256
-    balances: uint256[N_COINS]
+    vamm: Bytes[416]
 
 event AddLiquidity:
     provider: indexed(address)
@@ -156,7 +154,7 @@ future_owner: public(address)
 xcp_profit: public(uint256)
 xcp_profit_a: public(uint256)  # Full profit at last claim of admin fees
 virtual_price: public(uint256)  # Cached (fast to read) virtual price also used internally
-not_adjusted: bool
+not_adjusted: public(bool)
 
 is_killed: public(bool)
 kill_deadline: public(uint256)
@@ -189,10 +187,15 @@ PRECISIONS: constant(uint256[N_COINS]) = [
 INF_COINS: constant(uint256) = 15
 isInitialized: bool
 
-@external
 @view
-def vars() -> (uint256[N_COINS], uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256, uint256, bool, uint256):
-    return self.balances, self.price_scale, self.price_oracle, self.last_prices, self.ma_half_time, self.totalSupply, self.xcp_profit, self.virtual_price, self.adjustment_step, self.allowed_extra_profit, self.not_adjusted, self.D
+@internal
+def _vars() -> (Bytes[416]):
+    return _abi_encode(self.balances, self.price_scale, self.price_oracle, self.last_prices, self.ma_half_time, self.totalSupply, self.xcp_profit, self.virtual_price, self.adjustment_step, self.allowed_extra_profit, self.not_adjusted, self.D)
+
+@view
+@external
+def vars() -> (Bytes[416]):
+    return self._vars()
 
 @external
 def initialize (
@@ -598,7 +601,7 @@ def exchange(i: uint256, j: uint256, dx: uint256, min_dy: uint256) -> (uint256, 
     p = self._calc_mark_price(self.balances, A_gamma[0], A_gamma[1])
     self.mark_price = p
 
-    log TokenExchange(i, dx, j, dy, trade_fee, self.price_scale, self.D, self.balances)
+    log TokenExchange(i, dx, j, dy, trade_fee, self._vars())
     return dy, p / PRECISIONS[0]
 
 @external
@@ -697,7 +700,7 @@ def exchangeExactOut(i: uint256, j: uint256, dy: uint256, max_dx: uint256) -> (u
     p = self._calc_mark_price(self.balances, A_gamma[0], A_gamma[1])
     self.mark_price = p
 
-    log TokenExchange(i, dx, j, dy, trade_fee, self.price_scale, self.D, self.balances)
+    log TokenExchange(i, dx, j, dy, trade_fee, self._vars())
     return dx, p / PRECISIONS[0]
 
 @external

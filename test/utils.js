@@ -127,7 +127,7 @@ async function setupContracts(options = {}) {
     Swap = new ethers.ContractFactory(JSON.parse(vammAbiAndBytecode[0]), vammAbiAndBytecode[1], signers[0])
     ;([ curveMath, vammImpl, ammImpl ] = await Promise.all([
         CurveMath.deploy(getTxOptions()),
-        Swap.deploy(getTxOptions()),
+        Swap.deploy(Object.assign(getTxOptions())),
         AMM.deploy(clearingHouse.address, options.unbondRoundOff, getTxOptions())
     ]))
     views = await Views.deploy(curveMath.address, getTxOptions())

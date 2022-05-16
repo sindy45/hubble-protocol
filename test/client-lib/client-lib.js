@@ -81,22 +81,23 @@ describe('vammJS and vamm parity', async function() {
 
 async function assertions(vamm, vammJS) {
     let vammJsVars = vammJS.vars()
-    let vars = await vamm.vars({ gasLimit })
+    const types = new Array(11).fill('uint').concat(['bool', 'uint'])
+    let vars = ethers.utils.defaultAbiCoder.decode(types, await vamm.vars({ gasLimit }))
 
     // console.log('vammJS after exchange', vammJsVars)
-    expect(vammJsVars.balances[0]).to.be.approximately(bnToFloat(vars[0][0], 6), ACCURACY)
-    expect(vammJsVars.balances[0]).to.be.approximately(bnToFloat(vars[0][0], 6), ACCURACY)
-    expect(vammJsVars.price_scale).to.be.approximately(bnToFloat(vars[1], 18), ACCURACY)
-    expect(vammJsVars.price_oracle).to.be.approximately(bnToFloat(vars[2], 18), ACCURACY)
-    expect(vammJsVars.last_prices).to.be.approximately(bnToFloat(vars[3], 18), ACCURACY)
-    expect(vammJsVars.ma_half_time).to.eq(parseFloat(vars[4]))
-    expect(vammJsVars.totalSupply).to.be.approximately(bnToFloat(vars[5], 18), ACCURACY)
-    expect(vammJsVars.xcp_profit).to.be.approximately(bnToFloat(vars[6], 18), ACCURACY)
-    expect(vammJsVars.virtual_price).to.be.approximately(bnToFloat(vars[7], 18), ACCURACY)
-    expect(vammJsVars.adjustment_step).to.be.approximately(bnToFloat(vars[8], 18), ACCURACY)
-    expect(vammJsVars.allowed_extra_profit).to.be.approximately(bnToFloat(vars[9], 18), ACCURACY)
-    expect(vammJsVars.not_adjusted).to.eq(vars[10])
-    expect(vammJsVars.D).to.be.approximately(bnToFloat(vars[11], 18), ACCURACY)
+    expect(vammJsVars.balances[0]).to.be.approximately(bnToFloat(vars[0], 6), ACCURACY)
+    expect(vammJsVars.balances[1]).to.be.approximately(bnToFloat(vars[1], 18), ACCURACY)
+    expect(vammJsVars.price_scale).to.be.approximately(bnToFloat(vars[2], 18), ACCURACY)
+    expect(vammJsVars.price_oracle).to.be.approximately(bnToFloat(vars[3], 18), ACCURACY)
+    expect(vammJsVars.last_prices).to.be.approximately(bnToFloat(vars[4], 18), ACCURACY)
+    expect(vammJsVars.ma_half_time).to.eq(parseFloat(vars[5]))
+    expect(vammJsVars.totalSupply).to.be.approximately(bnToFloat(vars[6], 18), ACCURACY)
+    expect(vammJsVars.xcp_profit).to.be.approximately(bnToFloat(vars[7], 18), ACCURACY)
+    expect(vammJsVars.virtual_price).to.be.approximately(bnToFloat(vars[8], 18), ACCURACY)
+    expect(vammJsVars.adjustment_step).to.be.approximately(bnToFloat(vars[9], 18), ACCURACY)
+    expect(vammJsVars.allowed_extra_profit).to.be.approximately(bnToFloat(vars[10], 18), ACCURACY)
+    expect(vammJsVars.not_adjusted).to.eq(vars[11])
+    expect(vammJsVars.D).to.be.approximately(bnToFloat(vars[12], 18), ACCURACY)
 
     const smol = 0.00001
     const new_mp_dx = bnToFloat(await vamm.get_dx(0, 1, ethers.utils.parseUnits(smol.toString()), { gasLimit })) / smol
@@ -104,7 +105,6 @@ async function assertions(vamm, vammJS) {
     const mp = vammJS.markPrice()
     expect(mp).to.be.approximately(new_mp_dx, ACCURACY)
     expect(mp).to.be.approximately(new_mp_dy, ACCURACY)
-    // console.log({ mp })
 
     let { position, openNotional, unrealizedPnl } = await hubbleViewer.getMakerPositionAndUnrealizedPnl(maker2.address, 0)
     let _maker2 = await amm.makers(maker2.address)
