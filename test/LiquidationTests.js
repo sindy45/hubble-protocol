@@ -1,4 +1,5 @@
 const { expect } = require('chai');
+const { BigNumber } = require('ethers')
 
 const {
     constants: { _1e6, _1e18, ZERO },
@@ -171,7 +172,7 @@ describe('Liquidation Tests', async function() {
 describe('Multi-collateral Liquidation Tests', async function() {
     before(async function() {
         signers = await ethers.getSigners()
-        ;([ _, bob, liquidator1, liquidator2, liquidator3, admin ] = signers)
+        ;([ _, bob, liquidator1, liquidator2, liquidator3, admin, charlie ] = signers)
         alice = signers[0].address
         ;({ swap, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, oracle, weth, insuranceFund } = await setupContracts())
         await vusd.grantRole(await vusd.MINTER_ROLE(), admin.address) // will mint vusd to liquidators account
@@ -186,6 +187,7 @@ describe('Multi-collateral Liquidation Tests', async function() {
 
         // addCollateral
         avax = await setupRestrictedTestToken('AVAX', 'AVAX', 6)
+        await avax.grantRole(ethers.utils.id('TRANSFER_ROLE'), insuranceFund.address)
         oraclePrice = 1e6 * 1000 // $1k
         avaxOraclePrice = 1e6 * 50 // $50
         await Promise.all([
@@ -313,10 +315,11 @@ describe('Multi-collateral Liquidation Tests', async function() {
 
     it('insurance fund settles alice\'s bad debt', async function() {
         const aliceVusdMargin = await marginAccount.margin(0, alice) // ~ -260.91
-        const avaxMargin = await marginAccount.margin(2, alice) // 5.8063
+        avaxMargin = await marginAccount.margin(2, alice) // 5.8063
 
         // drop collateral value, so that we get bad debt
-        await oracle.setUnderlyingPrice(avax.address, 1e6 * 40)
+        oraclePrice = _1e6.mul(40)
+        await oracle.setUnderlyingPrice(avax.address, oraclePrice)
 
         // console.log({
         //     aliceVusdMargin: aliceVusdMargin.toString(),
@@ -330,8 +333,10 @@ describe('Multi-collateral Liquidation Tests', async function() {
             await vusd.connect(admin).mint(insuranceFund.address, aliceVusdMargin.abs().sub(bal))
         }
         expect(await vusd.balanceOf(insuranceFund.address)).to.eq(aliceVusdMargin.abs())
+        expect(await insuranceFund.isAuctionOngoing(avax.address)).to.eq(false)
 
-        await marginAccount.settleBadDebt(alice)
+        const tx = await marginAccount.settleBadDebt(alice)
+        auctionTimestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp
 
         expect(await marginAccount.margin(0, alice)).to.eq(ZERO)
         expect(await marginAccount.margin(1, alice)).to.eq(ZERO)
@@ -339,6 +344,88 @@ describe('Multi-collateral Liquidation Tests', async function() {
         expect(await avax.balanceOf(insuranceFund.address)).to.eq(avaxMargin)
         expect(await vusd.balanceOf(insuranceFund.address)).to.eq(ZERO)
         expect((await marginAccount.isLiquidatable(alice, true))[0]).to.eq(2) // NO_DEBT
+        // avax auction started
+        const avaxAuction = await insuranceFund.auctions(avax.address)
+        auctionDuration = await insuranceFund.auctionDuration()
+        startPrice = oraclePrice.mul(105).div(100)
+        expect(avaxAuction.startedAt).to.eq(auctionTimestamp)
+        // endTime = start + auction duration
+        expect(avaxAuction.expiryTime).to.eq(auctionDuration.add(auctionTimestamp))
+        // startPrice = oraclePrice * 1.05
+        expect(avaxAuction.startPrice).to.eq(startPrice)
+        expect(await insuranceFund.isAuctionOngoing(avax.address)).to.eq(true)
+    })
+
+    it('buy an auction', async function() {
+        // increase time by 1 hour
+        let elapsedTime = 3600
+        await network.provider.send('evm_setNextBlockTimestamp', [auctionTimestamp + elapsedTime]);
+        // buy price = startPrice * (auctionDuration - elapsedTime) / auctionDuration
+        let buyPrice = startPrice.mul(auctionDuration.sub(elapsedTime)).div(auctionDuration)
+        const vusdAmount = buyPrice.mul(avaxMargin).div(1e6)
+
+        // charlie buys auction
+        await vusd.connect(charlie).approve(insuranceFund.address, vusdAmount)
+        expect(await insuranceFund.getAuctionPrice(avax.address)).to.eq(buyPrice)
+
+        await vusd.connect(admin).mint(charlie.address, vusdAmount)
+        await expect(insuranceFund.connect(charlie).buyCollateralFromAuction(avax.address, avaxMargin.add(1))
+        ).to.revertedWith('panic code 0x11 (Arithmetic operation underflowed or overflowed outside of an unchecked block)')
+
+        let seizeAmount = avaxMargin.div(4)
+        let tx = await insuranceFund.connect(charlie).buyCollateralFromAuction(avax.address, seizeAmount)
+        let blockTime = BigNumber.from((await ethers.provider.getBlock(tx.blockNumber)).timestamp)
+        buyPrice = await insuranceFund.getAuctionPrice(avax.address)
+        let ifVusdBal = buyPrice.mul(seizeAmount).div(1e6)
+
+        expect(buyPrice).to.eq(startPrice.sub(startPrice.mul(blockTime.sub(auctionTimestamp)).div(auctionDuration)))
+        expect(await avax.balanceOf(insuranceFund.address)).to.eq(avaxMargin.sub(seizeAmount))
+        expect(await vusd.balanceOf(insuranceFund.address)).to.eq(ifVusdBal)
+        expect(await insuranceFund.isAuctionOngoing(avax.address)).to.eq(true)
+        avaxMargin = avaxMargin.sub(seizeAmount)
+        // increase time by 30 min
+        await network.provider.send('evm_setNextBlockTimestamp', [ blockTime.add(1800).toNumber() ]);
+    })
+
+    it('deposit to IF during auction', async function() {
+        deposit = _1e6.mul(500)
+        await vusd.connect(admin).mint(alice, deposit)
+        await vusd.approve(insuranceFund.address, deposit)
+
+        // test when totalSupply is zero, governance gets all previously available vusd
+        const ifVusdBal = await vusd.balanceOf(insuranceFund.address)
+        await insuranceFund.deposit(deposit)
+        expect(await insuranceFund.balanceOf(alice)).to.eq(deposit)
+        expect(await vusd.balanceOf(insuranceFund.address)).to.eq(deposit)
+        expect(await vusd.balanceOf(alice)).to.eq(ifVusdBal)
+        expect(await insuranceFund.totalSupply()).to.eq(deposit)
+
+        const poolSpotValue = deposit.add(avaxMargin.mul(oraclePrice).div(1e6))
+
+        // test when totalSupply is non-zero
+        await vusd.connect(admin).mint(bob.address, deposit)
+        await vusd.connect(bob).approve(insuranceFund.address, deposit)
+
+        await insuranceFund.connect(bob).deposit(deposit)
+
+        const bobShares = deposit.mul(deposit).div(poolSpotValue) // amount * totalSupply / spotValue
+        expect(await insuranceFund.balanceOf(bob.address)).to.eq(bobShares)
+        expect(await vusd.balanceOf(insuranceFund.address)).to.eq(deposit.mul(2))
+        expect(await insuranceFund.totalSupply()).to.eq(deposit.add(bobShares))
+    })
+
+    it('buying all collateral closes the auction', async function() {
+        // charlie seizes rest of the assets
+        expect(await insuranceFund.isAuctionOngoing(avax.address)).to.eq(true)
+        let ifVusdBal = await vusd.balanceOf(insuranceFund.address)
+        let tx = await insuranceFund.connect(charlie).buyCollateralFromAuction(avax.address, avaxMargin)
+        let blockTime = BigNumber.from((await ethers.provider.getBlock(tx.blockNumber)).timestamp)
+        let buyPrice = startPrice.sub(startPrice.mul(blockTime.sub(auctionTimestamp)).div(auctionDuration))
+        ifVusdBal = ifVusdBal.add(buyPrice.mul(avaxMargin).div(1e6))
+
+        expect(await avax.balanceOf(insuranceFund.address)).to.eq(ZERO)
+        expect(await vusd.balanceOf(insuranceFund.address)).to.eq(ifVusdBal)
+        expect(await insuranceFund.isAuctionOngoing(avax.address)).to.eq(false)
     })
 
     async function addMargin(trader, margin) {

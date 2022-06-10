@@ -56,6 +56,7 @@ interface ERC20Detailed {
 
 interface IInsuranceFund {
     function seizeBadDebt(uint amount) external;
+    function startAuction(address token) external;
 }
 
 interface IAMM {

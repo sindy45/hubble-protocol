@@ -1,9 +1,11 @@
 const { expect } = require('chai')
 const utils = require('../utils')
 const {
-    setupContracts
+    setupContracts,
+    addMargin,
+    setupRestrictedTestToken
 } = utils
-const { constants: { _1e6, ZERO } } = utils
+const { constants: { _1e6, _1e18, ZERO } } = utils
 
 describe('Insurance Fund Unit Tests', function() {
     before('factories', async function() {
@@ -117,6 +119,7 @@ describe('Insurance Fund Unit Tests', function() {
     })
 
     it('deposits/withdraws active again', async function() {
+        await setMarginAccount(marginAccount)
         await vusd.connect(admin).mint(bob.address, 1)
         await vusd.connect(bob).approve(insuranceFund.address, 1)
         await insuranceFund.connect(bob).deposit(1) // pps = 1 / 45
@@ -156,6 +159,117 @@ describe('Insurance Fund Unit Tests', function() {
     })
 })
 
+describe('Insurance Fund Auction Tests', function() {
+    before(async function() {
+        signers = await ethers.getSigners()
+        ;([ _, bob, liquidator1, ifLP, auctionBuyer, admin, charlie ] = signers)
+        alice = signers[0].address
+        ;({ swap, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, oracle, weth, insuranceFund } = await setupContracts())
+        await vusd.grantRole(await vusd.MINTER_ROLE(), admin.address) // will mint vusd to liquidators account
+        await clearingHouse.setParams(
+            1e5 /** maintenance margin */,
+            1e5 /** minimum allowable margin */,
+            5e2 /** tradeFee */,
+            5e4 /** liquidationPenalty */
+        )
+
+        await amm.setMaxLiquidationRatio(100)
+
+        // addCollateral
+        avax = await setupRestrictedTestToken('AVAX', 'AVAX', 6)
+        await avax.grantRole(ethers.utils.id('TRANSFER_ROLE'), insuranceFund.address)
+        wethOraclePrice = _1e6.mul(1000) // $1k
+        avaxOraclePrice = _1e6.mul(50) // $50
+        await Promise.all([
+            oracle.setUnderlyingPrice(weth.address, wethOraclePrice),
+            oracle.setUnderlyingPrice(avax.address, avaxOraclePrice),
+        ])
+        await marginAccount.whitelistCollateral(weth.address, 0.7 * 1e6), // weight = 0.7
+        await marginAccount.whitelistCollateral(avax.address, 0.8 * 1e6) // weight = 0.8
+        expect((await marginAccount.isLiquidatable(alice, true))[0]).to.eq(2) // NO_DEBT
+
+        // addMargin
+        wethMargin = _1e18.div(2) // $500
+        avaxMargin = _1e6.mul(10) // $500
+        await Promise.all([
+            weth.mint(alice, wethMargin),
+            weth.approve(marginAccount.address, wethMargin),
+            avax.mint(alice, avaxMargin),
+            avax.approve(marginAccount.address, avaxMargin),
+            weth.mint(charlie.address, wethMargin),
+            weth.connect(charlie).approve(marginAccount.address, wethMargin),
+            avax.mint(charlie.address, avaxMargin),
+            avax.connect(charlie).approve(marginAccount.address, avaxMargin),
+        ])
+        await marginAccount.addMargin(1, wethMargin)
+        await marginAccount.addMargin(2, avaxMargin)
+        await marginAccount.connect(charlie).addMargin(1, wethMargin)
+        await marginAccount.connect(charlie).addMargin(2, avaxMargin)
+
+        // alice and charlie make a trade
+        await clearingHouse.openPosition(0, _1e18.mul(-5), 0)
+        await clearingHouse.connect(charlie).openPosition(0, _1e18.mul(-5), 0)
+
+        // bob makes a counter-trade
+        await addMargin(bob, _1e6.mul(20000))
+        await clearingHouse.connect(bob).openPosition(0, _1e18.mul(80), ethers.constants.MaxUint256)
+        expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
+        expect(await clearingHouse.isAboveMaintenanceMargin(charlie.address)).to.be.false
+
+        // liquidate alice and charlie
+        await clearingHouse.connect(liquidator1).liquidateTaker(alice)
+        await clearingHouse.connect(liquidator1).liquidateTaker(charlie.address)
+
+        // alice and charlie have bad debt
+        let { spot } = await marginAccount.weightedAndSpotCollateral(alice)
+        expect(spot).to.lt(ZERO)
+        ;({ spot } = await marginAccount.weightedAndSpotCollateral(charlie.address))
+        expect(spot).to.lt(ZERO)
+
+        // add vusd to IF, auctionBuyer
+        const amount = _1e6.mul(10000)
+        await vusd.connect(admin).mint(insuranceFund.address, amount)
+        await vusd.connect(admin).mint(auctionBuyer.address, amount)
+        await vusd.connect(auctionBuyer).approve(insuranceFund.address, amount)
+    })
+
+    it('settleBadDebt starts auction', async function() {
+        // settle alice bad debt
+        const tx = await marginAccount.settleBadDebt(alice)
+        auctionTimestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp
+        auctionDuration = await insuranceFund.auctionDuration()
+        await validateAuction(avax.address, auctionTimestamp, auctionDuration, avaxOraclePrice)
+        await validateAuction(weth.address, auctionTimestamp, auctionDuration, wethOraclePrice)
+    })
+
+    it('close auction by buying collateral', async function() {
+        // increase time by 1 hour
+        await network.provider.send('evm_setNextBlockTimestamp', [auctionTimestamp + 3600]);
+        await insuranceFund.connect(auctionBuyer).buyCollateralFromAuction(avax.address, avaxMargin)
+
+        expect(await avax.balanceOf(insuranceFund.address)).to.eq(ZERO)
+        expect(await insuranceFund.isAuctionOngoing(avax.address)).to.eq(false)
+        expect(await insuranceFund.isAuctionOngoing(weth.address)).to.eq(true)
+    })
+
+    it('settleBadDebt affects only closed auctions', async function() {
+        const tx = await marginAccount.settleBadDebt(charlie.address)
+        newAuctionTimestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp
+        await validateAuction(avax.address, newAuctionTimestamp, auctionDuration, avaxOraclePrice)
+        await validateAuction(weth.address, auctionTimestamp, auctionDuration, wethOraclePrice)
+    })
+
+    it('auction expired due to time limit', async function() {
+        await network.provider.send('evm_setNextBlockTimestamp', [ auctionDuration.toNumber() + newAuctionTimestamp + 1])
+
+        await expect(insuranceFund.connect(auctionBuyer).buyCollateralFromAuction(avax.address, avaxMargin)
+        ).to.revertedWith('IF.no_ongoing_auction')
+
+        await expect(insuranceFund.connect(auctionBuyer).buyCollateralFromAuction(weth.address, wethMargin)
+        ).to.revertedWith('IF.no_ongoing_auction')
+    })
+})
+
 async function setMarginAccount(marginAccount) {
     registry = await Registry.deploy(oracle.address, clearingHouse.address, insuranceFund.address, marginAccount.address, vusd.address)
     await insuranceFund.syncDeps(registry.address)
@@ -166,4 +280,13 @@ async function gotoNextIFUnbondEpoch(insuranceFund, usr) {
         'evm_setNextBlockTimestamp',
         [(await insuranceFund.unbond(usr)).unbondTime.toNumber()]
     );
+}
+
+async function validateAuction(token, auctionTimestamp, auctionDuration, oraclePrice) {
+    const auction = await insuranceFund.auctions(token)
+    expect(auction.startedAt).to.eq(auctionTimestamp)
+    expect(auction.expiryTime).to.eq(auctionDuration.add(auctionTimestamp))
+    const startPrice = oraclePrice.mul(105).div(100)
+    expect(auction.startPrice).to.eq(startPrice)
+    expect(await insuranceFund.isAuctionOngoing(token)).to.eq(true)
 }

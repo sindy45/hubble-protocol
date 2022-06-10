@@ -378,6 +378,7 @@ contract MarginAccount is IMarginAccount, HubbleBase {
                 margin[i][trader] = 0;
                 assets[i].token.safeTransfer(address(insuranceFund), amount.toUint256());
                 seized[i] = amount.toUint256();
+                insuranceFund.startAuction(address(assets[i].token));
             }
         }
         emit SettledBadDebt(trader, seized, badDebt, _blockTimestamp());

@@ -8,7 +8,7 @@ import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 import { ERC20Upgradeable } from "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
 
 import { VanillaGovernable } from "./legos/Governable.sol";
-import { IRegistry } from "./Interfaces.sol";
+import { IRegistry, IOracle, IMarginAccount } from "./Interfaces.sol";
 
 contract InsuranceFund is VanillaGovernable, ERC20Upgradeable {
     using SafeERC20 for IERC20;
@@ -18,12 +18,24 @@ contract InsuranceFund is VanillaGovernable, ERC20Upgradeable {
 
     IERC20 public vusd;
     address public marginAccount;
+    IOracle public oracle;
     uint public pendingObligation;
+    uint public startPriceMultiplier;
+    uint public auctionDuration;
 
     struct UnbondInfo {
         uint shares;
         uint unbondTime;
     }
+
+    struct Auction {
+        uint startPrice;
+        uint startedAt;
+        uint expiryTime;
+    }
+    /// @notice token to auction mapping
+    mapping(address => Auction) public auctions;
+
     mapping(address => UnbondInfo) public unbond;
     uint256 public withdrawPeriod;
     uint256 public unbondPeriod;
@@ -48,6 +60,8 @@ contract InsuranceFund is VanillaGovernable, ERC20Upgradeable {
         unbondPeriod = 2 days;
         withdrawPeriod = 1 days;
         unbondRoundOff = 1 days;
+        startPriceMultiplier = 1050000; // 1.05
+        auctionDuration = 2 hours;
     }
 
     function deposit(uint _amount) external {
@@ -55,10 +69,11 @@ contract InsuranceFund is VanillaGovernable, ERC20Upgradeable {
         // we want to protect new LPs, when the insurance fund is in deficit
         require(pendingObligation == 0, "IF.deposit.pending_obligations");
 
-        uint _pool = balance();
+        uint _pool = _totalPoolValue();
         uint _totalSupply = totalSupply();
-        if (_totalSupply == 0 && _pool > 0) { // trading fee accumulated while there were no IF LPs
-            vusd.safeTransfer(governance, _pool);
+        uint vusdBalance = balance();
+        if (_totalSupply == 0 && vusdBalance > 0) { // trading fee accumulated while there were no IF LPs
+            vusd.safeTransfer(governance, vusdBalance);
             _pool = 0;
         }
 
@@ -118,6 +133,43 @@ contract InsuranceFund is VanillaGovernable, ERC20Upgradeable {
         }
     }
 
+    function startAuction(address token) external onlyMarginAccount {
+        if(!_isAuctionOngoing(auctions[token].startedAt, auctions[token].expiryTime)) {
+            uint currentPrice = uint(oracle.getUnderlyingPrice(token));
+            uint currentTimestamp = _blockTimestamp();
+            auctions[token] = Auction(
+                currentPrice * startPriceMultiplier / PRECISION,
+                currentTimestamp,
+                currentTimestamp + auctionDuration
+            );
+        }
+    }
+
+    /**
+    * @notice buy collateral from ongoing auction at current auction price
+    * @param token token to buy
+    * @param amount amount to buy
+    */
+    function buyCollateralFromAuction(address token, uint amount) external {
+        Auction memory auction = auctions[token];
+        // validate auction
+        require(_isAuctionOngoing(auction.startedAt, auction.expiryTime), "IF.no_ongoing_auction");
+
+        // get auction current price
+        uint price = _getAuctionPrice(auction);
+
+        // transfer funds
+        uint vusdToTransfer = amount * price / PRECISION;
+        address buyer = _msgSender();
+        vusd.safeTransferFrom(buyer, address(this), vusdToTransfer);
+        IERC20(token).safeTransfer(buyer, amount); // will revert if there wasn't enough amount as requested
+
+        // close auction if no collateral left
+        if (IERC20(token).balanceOf(address(this)) == 0) {
+            auctions[token].startedAt = 0;
+        }
+    }
+
     /* ****************** */
     /*        View        */
     /* ****************** */
@@ -133,6 +185,18 @@ contract InsuranceFund is VanillaGovernable, ERC20Upgradeable {
             return PRECISION;
         }
         return _balance * PRECISION / _totalSupply;
+    }
+
+    function getAuctionPrice(address token) external view returns (uint) {
+        Auction memory auction = auctions[token];
+        if (_isAuctionOngoing(auction.startedAt, auction.expiryTime)) {
+            return _getAuctionPrice(auction);
+        }
+        return 0;
+    }
+
+    function isAuctionOngoing(address token) external view returns (bool) {
+        return _isAuctionOngoing(auctions[token].startedAt, auctions[token].expiryTime);
     }
 
     function balance() public view returns (uint) {
@@ -162,6 +226,31 @@ contract InsuranceFund is VanillaGovernable, ERC20Upgradeable {
         return _now > (_unbondTime + withdrawPeriod);
     }
 
+    function _getAuctionPrice(Auction memory auction) internal view returns (uint) {
+        uint diff = auction.startPrice * (_blockTimestamp() - auction.startedAt) / auctionDuration;
+        return auction.startPrice - diff;
+    }
+
+    function _isAuctionOngoing(uint startedAt, uint expiryTime) internal view returns (bool) {
+        if (startedAt == 0) return false;
+        uint currentTimestamp = _blockTimestamp();
+        return startedAt <= currentTimestamp && currentTimestamp <= expiryTime;
+    }
+
+    function _totalPoolValue() internal view returns (uint totalBalance) {
+        IMarginAccount.Collateral[] memory assets = IMarginAccount(marginAccount).supportedAssets();
+
+        for (uint i; i < assets.length; i++) {
+            uint _balance = IERC20(address(assets[i].token)).balanceOf(address(this));
+            if (_balance == 0) continue;
+
+            uint numerator = _balance * uint(oracle.getUnderlyingPrice(address(assets[i].token)));
+            uint denomDecimals = assets[i].decimals;
+
+            totalBalance += (numerator / 10 ** denomDecimals);
+        }
+    }
+
     /* ****************** */
     /*   onlyGovernance   */
     /* ****************** */
@@ -169,5 +258,6 @@ contract InsuranceFund is VanillaGovernable, ERC20Upgradeable {
     function syncDeps(IRegistry _registry) public onlyGovernance {
         vusd = IERC20(_registry.vusd());
         marginAccount = _registry.marginAccount();
+        oracle = IOracle(_registry.oracle());
     }
 }
