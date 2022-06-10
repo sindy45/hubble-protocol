@@ -370,7 +370,7 @@ describe('Multi-collateral Liquidation Tests', async function() {
 
         await vusd.connect(admin).mint(charlie.address, vusdAmount)
         await expect(insuranceFund.connect(charlie).buyCollateralFromAuction(avax.address, avaxMargin.add(1))
-        ).to.revertedWith('panic code 0x11 (Arithmetic operation underflowed or overflowed outside of an unchecked block)')
+        ).to.revertedWith('ERC20: transfer amount exceeds balance')
 
         let seizeAmount = avaxMargin.div(4)
         let tx = await insuranceFund.connect(charlie).buyCollateralFromAuction(avax.address, seizeAmount)
