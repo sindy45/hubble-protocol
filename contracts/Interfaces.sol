@@ -151,6 +151,7 @@ interface IMarginAccount {
     function supportedAssets() external view returns (Collateral[] memory);
     function margin(uint idx, address trader) external view returns(int256);
     function transferOutVusd(address recipient, uint amount) external;
+    function liquidateExactRepay(address trader, uint repay, uint idx, uint minSeizeAmount) external returns(uint);
 }
 
 interface IVAMM {
@@ -239,6 +240,15 @@ interface IERC20FlexibleSupply is IERC20 {
     function burn(uint256 amount) external;
 }
 
+interface IVUSD is IERC20 {
+     function mintWithReserve(address to, uint amount) external;
+}
+
+interface IUSDC is IERC20FlexibleSupply {
+    function masterMinter() external view returns(address);
+    function configureMinter(address minter, uint256 minterAllowedAmount) external;
+}
+
 interface IHubbleViewer {
     function getMakerPositionAndUnrealizedPnl(address _maker, uint idx)
         external
@@ -250,4 +260,29 @@ interface IHubbleViewer {
 
 interface IHubbleReferral {
     function getTraderRefereeInfo(address trader) external view returns (address referrer);
+}
+
+interface IJoeRouter02 {
+    function swapExactTokensForTokens(
+        uint256 amountIn,
+        uint256 amountOutMin,
+        address[] calldata path,
+        address to,
+        uint256 deadline
+    ) external returns (uint256[] memory amounts);
+
+    function getAmountsIn(uint256 amountOut, address[] calldata path) external returns (uint256[] memory amounts);
+}
+
+interface IJoePair {
+    function swap(
+        uint256 amount0Out,
+        uint256 amount1Out,
+        address to,
+        bytes calldata data
+    ) external;
+}
+
+interface IJoeFactory {
+    function getPair(address tokenA, address tokenB) external view returns (address pair);
 }

@@ -56,6 +56,16 @@ async function setupContracts(options = {}) {
         MinimalForwarder.deploy(getTxOptions()),
         ERC20Mintable.deploy('USD Coin', 'USDC', 6, getTxOptions()),
     ]))
+
+    if (options.reserveToken) {
+        usdc = await ethers.getContractAt('IUSDC', options.reserveToken)
+        const masterMinter = await usdc.masterMinter()
+        await setBalance(masterMinter, '0xDE0B6B3A7640000') // 1e18, to pay for gas fee
+        await impersonateAcccount(masterMinter)
+        await usdc.connect(ethers.provider.getSigner(masterMinter)).configureMinter(governance, _1e18)
+        await stopImpersonateAcccount(masterMinter)
+    }
+
     vusd = await setupUpgradeableProxy(
         options.restrictedVUSD ? 'RestrictedVusd' : 'VUSD',
         proxyAdmin.address,
@@ -413,6 +423,18 @@ function forkNetwork(_network, blockNumber) {
     })
 }
 
+function forkCChain(blockNumber) {
+    return network.provider.request({
+        method: "hardhat_reset",
+        params: [{
+            forking: {
+                jsonRpcUrl: `https://api.avax.network/ext/bc/C/rpc`,
+                blockNumber
+            }
+        }]
+    })
+}
+
 async function signTransaction(signer, to, data, forwarder, value = 0, gas = 1000000) {
     const types = {
         ForwardRequest: [
@@ -548,6 +570,13 @@ async function gotoNextUnbondEpoch(amm, maker) {
     );
 }
 
+async function setBalance(address, balance) {
+    await network.provider.send("hardhat_setBalance", [
+        address,
+        balance,
+    ]);
+}
+
 module.exports = {
     constants: { _1e6, _1e8, _1e12, _1e18, ZERO },
     BigNumber,
@@ -577,5 +606,6 @@ module.exports = {
     bnToFloat,
     unbondAndRemoveLiquidity,
     gotoNextWithdrawEpoch,
+    forkCChain,
     gotoNextUnbondEpoch
 }
