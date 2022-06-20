@@ -827,7 +827,7 @@ describe('Maker Tests', async function() {
             await clearingHouse.connect(maker2).addLiquidity(0, initialLiquidity, 0)
             maintenanceMargin = await clearingHouse.maintenanceMargin()
 
-            await amm.setMaxLiquidationRatio(100)
+            await amm.setLiquidationParams(100, 1e6)
         })
 
         it('taker-notLiquidable, maker-Liquidable', async function() {

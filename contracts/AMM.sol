@@ -43,6 +43,7 @@ contract AMM is IAMM, Governable {
     uint256 public shortOpenInterestNotional;
     uint256 public maxOracleSpreadRatio; // scaled 2 decimals
     uint256 public maxLiquidationRatio; // scaled 2 decimals
+    uint256 public maxLiquidationPriceSpread; // scaled 6 decimals
 
     enum Side { LONG, SHORT }
     struct Position {
@@ -61,6 +62,7 @@ contract AMM is IAMM, Governable {
         uint256 lastPrice;
         uint256 timestamp;
         uint256 blockNumber;
+        bool isLiquidation;
     }
     ReserveSnapshot[] public reserveSnapshots;
 
@@ -145,6 +147,7 @@ contract AMM is IAMM, Governable {
         maxOracleSpreadRatio = 20;
         unbondPeriod = 3 days;
         maxLiquidationRatio = 25;
+        maxLiquidationPriceSpread = 1e6;
     }
 
     /**
@@ -188,7 +191,29 @@ contract AMM is IAMM, Governable {
         Position memory position = positions[trader];
         bool isLongPosition = position.size > 0 ? true : false;
         uint positionToLiquidate = Math.min(uint(abs(position.size)), position.liquidationThreshold);
-        // sending market orders can fk the trader. @todo put some safe guards around price of liquidations
+
+        // liquidation price safeguard
+        // price before liquidaiton should be within X% range of last liquidation price in the same block or previous block price
+        uint index = reserveSnapshots.length - 1;
+        uint lastTradePrice = reserveSnapshots[index].lastPrice;
+        while(reserveSnapshots[index].blockNumber == block.number && index != 0) {
+            if (reserveSnapshots[index].isLiquidation) {
+                lastTradePrice = reserveSnapshots[index].lastPrice;
+                break;
+            }
+            index -= 1;
+            lastTradePrice = reserveSnapshots[index].lastPrice;
+        }
+
+        uint diff = lastPrice();
+        if (diff >= lastTradePrice) {
+            diff -= lastTradePrice;
+        } else {
+            diff = lastTradePrice - diff;
+        }
+        require(diff <= lastTradePrice * maxLiquidationPriceSpread / 1e8, "AMM.liquidation_price_slippage");
+
+        // liquidate position
         if (isLongPosition) {
             (realizedPnl, quoteAsset) = _reducePosition(trader, -positionToLiquidate.toInt256(), 0, true /* isLiquidation */);
         } else {
@@ -794,7 +819,7 @@ contract AMM is IAMM, Governable {
             revert("VAMM._long: longs not allowed");
         }
 
-        _addReserveSnapshot(_lastPrice);
+        _addReserveSnapshot(_lastPrice, isLiquidation);
         // since maker position will be opposite of the trade
         posAccumulator -= baseAssetQuantity * 1e18 / vamm.totalSupply().toInt256();
         emit Swap(_lastPrice, openInterestNotional());
@@ -825,7 +850,7 @@ contract AMM is IAMM, Governable {
         if (!isLiquidation && _lastPrice < oraclePrice) {
             revert("VAMM._short: shorts not allowed");
         }
-        _addReserveSnapshot(_lastPrice);
+        _addReserveSnapshot(_lastPrice, isLiquidation);
         // since maker position will be opposite of the trade
         posAccumulator -= baseAssetQuantity * 1e18 / vamm.totalSupply().toInt256();
         emit Swap(_lastPrice, openInterestNotional());
@@ -931,7 +956,7 @@ contract AMM is IAMM, Governable {
         position.size += baseAssetQuantity;
     }
 
-    function _addReserveSnapshot(uint256 price)
+    function _addReserveSnapshot(uint256 price, bool isLiquidation)
         internal
     {
         uint256 currentBlock = block.number;
@@ -939,7 +964,7 @@ contract AMM is IAMM, Governable {
 
         if (reserveSnapshots.length == 0) {
             reserveSnapshots.push(
-                ReserveSnapshot(price, blockTimestamp, currentBlock)
+                ReserveSnapshot(price, blockTimestamp, currentBlock, isLiquidation)
             );
             return;
         }
@@ -950,7 +975,7 @@ contract AMM is IAMM, Governable {
             latestSnapshot.lastPrice = price;
         } else {
             reserveSnapshots.push(
-                ReserveSnapshot(price, blockTimestamp, currentBlock)
+                ReserveSnapshot(price, blockTimestamp, currentBlock, isLiquidation)
             );
         }
     }
@@ -1056,7 +1081,8 @@ contract AMM is IAMM, Governable {
         maxOracleSpreadRatio = _maxOracleSpreadRatio;
     }
 
-    function setMaxLiquidationRatio (uint _maxLiquidationRatio) external onlyGovernance {
+    function setLiquidationParams (uint _maxLiquidationRatio, uint _maxLiquidationPriceSpread) external onlyGovernance {
         maxLiquidationRatio = _maxLiquidationRatio;
+        maxLiquidationPriceSpread = _maxLiquidationPriceSpread;
     }
 }

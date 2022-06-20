@@ -32,7 +32,7 @@ describe('Atomic liquidations', async function() {
             5e4 /** liquidationPenalty */
         )
 
-        await amm.setMaxLiquidationRatio(100)
+        await amm.setLiquidationParams(100, 1e6)
         const BatchLiquidator = await ethers.getContractFactory('BatchLiquidator')
         batchLiquidator = await BatchLiquidator.deploy(
             clearingHouse.address,

@@ -173,7 +173,7 @@ describe('Insurance Fund Auction Tests', function() {
             5e4 /** liquidationPenalty */
         )
 
-        await amm.setMaxLiquidationRatio(100)
+        await amm.setLiquidationParams(100, 1e6)
 
         // addCollateral
         avax = await setupRestrictedTestToken('AVAX', 'AVAX', 6)

@@ -974,7 +974,7 @@ def _get_taker_notional_and_pnl(position: int256, openNotional: uint256, balance
         elif position < 0:
             _pos: uint256 = convert(-position, uint256)
             if _pos > balances[N_COINS-1]: # vamm doesn't have enough to sell _pos quantity of base asset
-                # @atul to think more deeply about this
+                # @todo need to addresss insufficent liquidity case
                 notionalPosition = 0
             else:
                 notionalPosition = Views(self.views).get_dx(0, 1, _pos, balances, D)[0]

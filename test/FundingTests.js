@@ -171,7 +171,7 @@ describe('Funding Tests', function() {
         })
 
         it('alice shorts and paying -ve funding causes them to drop below maintenance margin and liquidated', async function() {
-            await amm.setMaxLiquidationRatio(100)
+            await amm.setLiquidationParams(100, 1e6)
 
             const baseAssetQuantity = _1e18.mul(-5)
             let tx = await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity, _1e6.mul(4900))
@@ -245,6 +245,8 @@ describe('Funding Tests', function() {
         await clearingHouse.connect(bob).openPosition(0, _1e18.mul(84), ethers.constants.MaxUint256)
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
 
+        // mine extra block to change block number
+        await network.provider.send("evm_mine");
         await clearingHouse.connect(liquidator1).callStatic.liquidateTaker(alice) // doesn't throw exception
 
         // funding settled
