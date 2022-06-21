@@ -291,13 +291,13 @@ contract MarginAccount is IMarginAccount, HubbleBase {
     * @param idx Index of the collateral to seize
     * @param minSeizeAmount Min collateral output amount
     */
-    function liquidateExactRepay(address trader, uint repay, uint idx, uint minSeizeAmount) external whenNotPaused returns(uint /* seizeAmount */) {
+    function liquidateExactRepay(address trader, uint repay, uint idx, uint minSeizeAmount) external whenNotPaused {
         clearingHouse.updatePositions(trader); // credits/debits funding
         LiquidationBuffer memory buffer = _getLiquidationInfo(trader, idx);
         if (buffer.status != IMarginAccount.LiquidationStatus.IS_LIQUIDATABLE) {
             revert NOT_LIQUIDATABLE(buffer.status);
         }
-        return _liquidateExactRepay(buffer, trader, repay, idx, minSeizeAmount);
+        _liquidateExactRepay(buffer, trader, repay, idx, minSeizeAmount);
     }
 
     /**

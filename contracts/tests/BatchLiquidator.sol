@@ -33,8 +33,7 @@ contract BatchLiquidator is Ownable {
         address _vusd,
         IERC20 _usdc,
         IERC20 _wavax,
-        IJoeRouter02 _joeRouter,
-        IJoeFactory _joeFactory
+        IJoeRouter02 _joeRouter
     ) {
         clearingHouse = _clearingHouse;
         marginAccount = _marginAccount;
@@ -42,7 +41,7 @@ contract BatchLiquidator is Ownable {
         usdc = _usdc;
         wavax = _wavax;
         joeRouter = _joeRouter;
-        joeFactory = _joeFactory;
+        joeFactory = IJoeFactory(_joeRouter.factory());
 
         address[] memory _path = new address[](2);
         _path[0] = address(wavax);
@@ -72,16 +71,32 @@ contract BatchLiquidator is Ownable {
         }
     }
 
+    function liquidateMarginAccount(address trader, uint debt) external {
+        uint vusdBal = IVUSD(vusd).balanceOf(address(this));
+        uint usdcBal = usdc.balanceOf(address(this));
+        // do we have enough vusd?
+        if (vusdBal >= debt) {
+            liquidateAndSellAvax(trader, debt, 0);
+        } else if (vusdBal + usdcBal >= debt) {
+            IVUSD(vusd).mintWithReserve(address(this), debt - vusdBal);
+            liquidateAndSellAvax(trader, debt, 0);
+        } else {
+            flashLiquidateWithAvax(trader, debt, 0);
+        }
+    }
+
     /**
     * @notice Liquidate a margin account, assuming this contract has enough vusd
     */
-    function liquidateAndSellAvax(address trader, uint repay, uint minUsdcOut) external {
-        uint seizeAmount = marginAccount.liquidateExactRepay(trader, repay, 1, 0);
+    function liquidateAndSellAvax(address trader, uint repay, uint minProfit) public {
+        uint seizeAmount = wavax.balanceOf(address(this));
+        marginAccount.liquidateExactRepay(trader, repay, 1, 0);
+        seizeAmount = wavax.balanceOf(address(this)) - seizeAmount;
 
         // sell avax
         joeRouter.swapExactTokensForTokens(
             seizeAmount,
-            minUsdcOut, // asserts minimum out amount
+            repay + minProfit, // asserts minimum out amount
             path,
             address(this),
             block.timestamp
@@ -94,7 +109,7 @@ contract BatchLiquidator is Ownable {
     * token0 -> wavax
     * token1 -> usdc
     */
-    function flashLiquidateWithAvax(address trader, uint repay, uint minProfit) external {
+    function flashLiquidateWithAvax(address trader, uint repay, uint minProfit) public {
         address pool = joeFactory.getPair(address(wavax), address(usdc));
         bytes memory data = abi.encode(JoeCallbackData(trader, minProfit));
         IJoePair(pool).swap(0, repay, address(this), data);
@@ -120,11 +135,12 @@ contract BatchLiquidator is Ownable {
         JoeCallbackData memory decoded = abi.decode(data, (JoeCallbackData));
         // deposit usdc to get vusd
         IVUSD(vusd).mintWithReserve(address(this), repay);
+
         // liquidate margin account
-        uint seizeAmount = marginAccount.liquidateExactRepay(decoded.trader, repay, 1, 0);
-        // return loan in avax
         uint[] memory amounts = joeRouter.getAmountsIn(repay, path);
-        require(seizeAmount >= amounts[0] + decoded.minProfit, "BL: Insufficient seize amount");
+        marginAccount.liquidateExactRepay(decoded.trader, repay, 1, amounts[0] + decoded.minProfit);
+
+        // return loan in avax
         wavax.safeTransfer(pool, amounts[0]);
     }
 }

@@ -40,8 +40,7 @@ describe('Atomic liquidations', async function() {
             vusd.address,
             Usdc,
             Wavax,
-            JoeRouter,
-            JoeFactory
+            JoeRouter
         )
 
         // addCollateral
@@ -81,7 +80,7 @@ describe('Atomic liquidations', async function() {
         expect(await usdc.balanceOf(batchLiquidator.address)).to.eq(ZERO)
 
         const minUsdcOut = repay.add(repay.mul(3).div(100)) // min 3% profit
-        await batchLiquidator.liquidateAndSellAvax(alice, repay, minUsdcOut)
+        await batchLiquidator.liquidateAndSellAvax(alice, repay, 0)
 
         remainingDebt = debt.add(repay)
         expect(await usdc.balanceOf(batchLiquidator.address)).to.gte(minUsdcOut)
@@ -106,5 +105,52 @@ describe('Atomic liquidations', async function() {
         expect(await vusd.balanceOf(batchLiquidator.address)).to.eq(ZERO)
         expect(await marginAccount.margin(0, alice)).to.eq(ZERO)
         expect((await marginAccount.isLiquidatable(alice, true))[0]).to.eq(2) // NO_DEBT
+    })
+})
+
+describe('Atomic liquidations supernova', async function() {
+    before(async function() {
+        await network.provider.request({
+            method: "hardhat_reset",
+            params: [{
+                forking: {
+                    jsonRpcUrl: 'https://api.avax-test.network/ext/bc/C/rpc',
+                    blockNumber: 10884594
+                }
+            }]
+        })
+        wavax = await ethers.getContractAt('ERC20Mintable', '0x1860619494CdC768949521f488E68da9D10De7E6') // hAVAX
+        const BatchLiquidator = await ethers.getContractFactory('BatchLiquidator')
+        batchLiquidator = await BatchLiquidator.deploy(
+            '0xdAb9110f9ba395f72B6D6eB12F687E0DFBb1fb85', // clearingHouse
+            '0x4BFC1482ecbbc0d448920ee471312E28f85ab903', // marginAccount
+            '0xaE778F08a9bDA83Dd2143405642885a722aaE190', // vusd
+            '0x56F959EB63855c179a9022D53DD547dB1C523fFc', // usdc
+            wavax.address,
+            '0xd7f655E3376cE2D7A2b08fF01Eb3B1023191A901' // joeRouter
+        )
+        alice = '0x2eE09408782ea5121A2cEE931793d998cF85CEBE'
+        repay = _1e6.mul(100)
+
+        hubbleViewer = await ethers.getContractAt('HubbleViewer', '0x03F075fA17aCc799606F78DB1f17CB0d0f0e2e48')
+        marginAccount = await ethers.getContractAt('MarginAccount', '0x4BFC1482ecbbc0d448920ee471312E28f85ab903')
+        clearingHouse = await ethers.getContractAt('ClearingHouse', '0xdAb9110f9ba395f72B6D6eB12F687E0DFBb1fb85')
+    })
+
+    it('flash loan and liquidate', async function() {
+        // console.log(await marginAccount.weightedAndSpotCollateral(alice))
+        const b4 = await hubbleViewer.userInfo(alice)
+
+        // const liquidator = '0x3C4904418a53b22BD1b6aA69694E29d55bdab398'
+        // await impersonateAcccount(liquidator)
+        // await marginAccount.connect(ethers.provider.getSigner(liquidator)).liquidateExactRepay(alice, debt, 1, 0)
+
+        // await batchLiquidator.flashLiquidateWithAvax(alice, debt, 0)
+        await batchLiquidator.liquidateMarginAccount(alice, repay)
+        const after = await hubbleViewer.userInfo(alice)
+
+        expect(b4[0].add(repay)).to.eq(after[0])
+        expect(await wavax.balanceOf(batchLiquidator.address)).to.gt(ZERO)
+        expect(b4[1]).to.gt(after[1])
     })
 })

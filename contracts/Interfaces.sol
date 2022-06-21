@@ -151,7 +151,7 @@ interface IMarginAccount {
     function supportedAssets() external view returns (Collateral[] memory);
     function margin(uint idx, address trader) external view returns(int256);
     function transferOutVusd(address recipient, uint amount) external;
-    function liquidateExactRepay(address trader, uint repay, uint idx, uint minSeizeAmount) external returns(uint);
+    function liquidateExactRepay(address trader, uint repay, uint idx, uint minSeizeAmount) external;
 }
 
 interface IVAMM {
@@ -270,7 +270,7 @@ interface IJoeRouter02 {
         address to,
         uint256 deadline
     ) external returns (uint256[] memory amounts);
-
+    function factory() external returns(address);
     function getAmountsIn(uint256 amountOut, address[] calldata path) external returns (uint256[] memory amounts);
 }
 
