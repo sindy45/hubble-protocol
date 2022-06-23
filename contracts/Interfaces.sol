@@ -48,6 +48,7 @@ interface IClearingHouse {
     function liquidateMaker(address trader) external;
     function liquidateTaker(address trader) external;
     function commitLiquidity(uint idx, uint quoteAsset) external;
+    function insuranceFund() external view returns(IInsuranceFund);
 }
 
 interface ERC20Detailed {
@@ -57,6 +58,8 @@ interface ERC20Detailed {
 interface IInsuranceFund {
     function seizeBadDebt(uint amount) external;
     function startAuction(address token) external;
+    function calcVusdAmountForAuction(address token, uint amount) external view returns(uint);
+    function buyCollateralFromAuction(address token, uint amount) external;
 }
 
 interface IAMM {
@@ -272,6 +275,7 @@ interface IJoeRouter02 {
     ) external returns (uint256[] memory amounts);
     function factory() external returns(address);
     function getAmountsIn(uint256 amountOut, address[] calldata path) external returns (uint256[] memory amounts);
+    function getAmountsOut(uint256 amountOut, address[] calldata path) external returns (uint256[] memory amounts);
 }
 
 interface IJoePair {

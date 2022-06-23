@@ -8,7 +8,7 @@ import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 import { ERC20Upgradeable } from "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
 
 import { VanillaGovernable } from "./legos/Governable.sol";
-import { IRegistry, IOracle, IMarginAccount } from "./Interfaces.sol";
+import { IRegistry, IOracle, IMarginAccount, ERC20Detailed } from "./Interfaces.sol";
 
 contract InsuranceFund is VanillaGovernable, ERC20Upgradeable {
     using SafeERC20 for IERC20;
@@ -155,11 +155,8 @@ contract InsuranceFund is VanillaGovernable, ERC20Upgradeable {
         // validate auction
         require(_isAuctionOngoing(auction.startedAt, auction.expiryTime), "IF.no_ongoing_auction");
 
-        // get auction current price
-        uint price = _getAuctionPrice(auction);
-
         // transfer funds
-        uint vusdToTransfer = amount * price / PRECISION;
+        uint vusdToTransfer = _calcVusdAmountForAuction(auction, token, amount);
         address buyer = _msgSender();
         vusd.safeTransferFrom(buyer, address(this), vusdToTransfer);
         IERC20(token).safeTransfer(buyer, amount); // will revert if there wasn't enough amount as requested
@@ -193,6 +190,11 @@ contract InsuranceFund is VanillaGovernable, ERC20Upgradeable {
             return _getAuctionPrice(auction);
         }
         return 0;
+    }
+
+    function calcVusdAmountForAuction(address token, uint amount) external view returns(uint) {
+        Auction memory auction = auctions[token];
+        return _calcVusdAmountForAuction(auction, token, amount);
     }
 
     function isAuctionOngoing(address token) external view returns (bool) {
@@ -235,6 +237,12 @@ contract InsuranceFund is VanillaGovernable, ERC20Upgradeable {
         if (startedAt == 0) return false;
         uint currentTimestamp = _blockTimestamp();
         return startedAt <= currentTimestamp && currentTimestamp <= expiryTime;
+    }
+
+    function _calcVusdAmountForAuction(Auction memory auction, address token, uint amount) internal view returns(uint) {
+        uint price = _getAuctionPrice(auction);
+        uint _decimals = ERC20Detailed(token).decimals();  // will fail if .decimals() is not defined on the contract
+        return amount * price / 10 ** _decimals;
     }
 
     function _totalPoolValue() internal view returns (uint totalBalance) {

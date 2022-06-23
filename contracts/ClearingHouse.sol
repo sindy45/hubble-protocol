@@ -23,7 +23,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     uint public tradingFeeDiscount;
 
     VUSD public vusd;
-    IInsuranceFund public insuranceFund;
+    IInsuranceFund override public insuranceFund;
     IMarginAccount public marginAccount;
     IAMM[] override public amms;
     IHubbleReferral public hubbleReferral;

@@ -176,7 +176,7 @@ describe('Insurance Fund Auction Tests', function() {
         await amm.setLiquidationParams(100, 1e6)
 
         // addCollateral
-        avax = await setupRestrictedTestToken('AVAX', 'AVAX', 6)
+        avax = await setupRestrictedTestToken('AVAX', 'AVAX', 18)
         await avax.grantRole(ethers.utils.id('TRANSFER_ROLE'), insuranceFund.address)
         wethOraclePrice = _1e6.mul(1000) // $1k
         avaxOraclePrice = _1e6.mul(50) // $50
@@ -190,7 +190,7 @@ describe('Insurance Fund Auction Tests', function() {
 
         // addMargin
         wethMargin = _1e18.div(2) // $500
-        avaxMargin = _1e6.mul(10) // $500
+        avaxMargin = _1e18.mul(10) // $500
         await Promise.all([
             weth.mint(alice, wethMargin),
             weth.approve(marginAccount.address, wethMargin),

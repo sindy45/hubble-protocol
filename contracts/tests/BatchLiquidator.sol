@@ -2,7 +2,7 @@
 
 pragma solidity 0.8.9;
 
-import { IClearingHouse, IMarginAccount, IJoeRouter02, IJoePair, IJoeFactory, IVUSD } from "../Interfaces.sol";
+import { IClearingHouse, IMarginAccount, IJoeRouter02, IJoePair, IJoeFactory, IVUSD, IInsuranceFund } from "../Interfaces.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -15,11 +15,14 @@ contract BatchLiquidator is Ownable {
 
     struct JoeCallbackData {
         address trader;
-        uint minProfit;
+        uint val1;
+        uint val2;
+        bool isLiquidation;
     }
 
     IClearingHouse public immutable clearingHouse;
     IMarginAccount public immutable  marginAccount;
+    IInsuranceFund public insuranceFund;
     address public immutable vusd;
     IERC20 public immutable usdc;
     IERC20 public immutable wavax;
@@ -42,6 +45,7 @@ contract BatchLiquidator is Ownable {
         wavax = _wavax;
         joeRouter = _joeRouter;
         joeFactory = IJoeFactory(_joeRouter.factory());
+        insuranceFund = clearingHouse.insuranceFund();
 
         address[] memory _path = new address[](2);
         _path[0] = address(wavax);
@@ -49,6 +53,7 @@ contract BatchLiquidator is Ownable {
         path = _path;
         // infinite approval to save gas
         IERC20(vusd).safeApprove(address(marginAccount), type(uint).max);
+        IERC20(vusd).safeApprove(address(insuranceFund), type(uint).max);
         usdc.safeApprove(vusd, type(uint).max);
         wavax.safeApprove(address(joeRouter), type(uint).max);
     }
@@ -87,6 +92,7 @@ contract BatchLiquidator is Ownable {
 
     /**
     * @notice Liquidate a margin account, assuming this contract has enough vusd
+    * @param minProfit minimum profit in usdc
     */
     function liquidateAndSellAvax(address trader, uint repay, uint minProfit) public {
         uint seizeAmount = wavax.balanceOf(address(this));
@@ -104,6 +110,20 @@ contract BatchLiquidator is Ownable {
     }
 
     /**
+    * @notice Arb insurance fund auction
+    */
+    function arbIFAuction(uint avaxAmount, uint minProfit) external {
+        address pool = joeFactory.getPair(address(wavax), address(usdc));
+        // calculate amount of usdc loan required
+        uint[] memory amounts = joeRouter.getAmountsOut(avaxAmount, path);
+        // calculate vusd required to close auction
+        uint vusdRequired = insuranceFund.calcVusdAmountForAuction(address(wavax), avaxAmount);
+        require(amounts[1] >= vusdRequired + minProfit, "BL: Not enough profit");
+        bytes memory data = abi.encode(JoeCallbackData(address(0), vusdRequired, avaxAmount, false));
+        IJoePair(pool).swap(0, amounts[1], address(this), data);
+    }
+
+    /**
     * @notice Liquidate a margin account, assuming no funds in hand
     * @param minProfit minimum profit in avax
     * token0 -> wavax
@@ -111,7 +131,7 @@ contract BatchLiquidator is Ownable {
     */
     function flashLiquidateWithAvax(address trader, uint repay, uint minProfit) public {
         address pool = joeFactory.getPair(address(wavax), address(usdc));
-        bytes memory data = abi.encode(JoeCallbackData(trader, minProfit));
+        bytes memory data = abi.encode(JoeCallbackData(trader, minProfit, 0, true));
         IJoePair(pool).swap(0, repay, address(this), data);
     }
 
@@ -133,12 +153,18 @@ contract BatchLiquidator is Ownable {
         require(msg.sender == pool, "BL: Invalid Callback");
 
         JoeCallbackData memory decoded = abi.decode(data, (JoeCallbackData));
-        // deposit usdc to get vusd
-        IVUSD(vusd).mintWithReserve(address(this), repay);
 
         // liquidate margin account
         uint[] memory amounts = joeRouter.getAmountsIn(repay, path);
-        marginAccount.liquidateExactRepay(decoded.trader, repay, 1, amounts[0] + decoded.minProfit);
+        if (decoded.isLiquidation) {
+            // deposit usdc to get vusd
+            IVUSD(vusd).mintWithReserve(address(this), repay);
+            marginAccount.liquidateExactRepay(decoded.trader, repay, 1, amounts[0] + decoded.val1 /* minProfit */);
+        } else {
+            require(decoded.val2 /* avaxAmount */ >= amounts[0], "BL: Insufficient buy amount");
+            IVUSD(vusd).mintWithReserve(address(this), decoded.val1 /* vusdRequired */);
+            insuranceFund.buyCollateralFromAuction(address(wavax), decoded.val2);
+        }
 
         // return loan in avax
         wavax.safeTransfer(pool, amounts[0]);

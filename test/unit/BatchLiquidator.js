@@ -15,7 +15,7 @@ const JoeRouter = '0x60aE616a2155Ee3d9A68541Ba4544862310933d4'
 const wavaxWhale = '0x9d1968765e37f5cbd4f1c99a012cf0b5b07067ae' // 381 wavax
 // const usdcWhale = '0x7d0f7ad75687d0616701126ef6d0dc6e9725d435' // 100k usdc
 
-describe('Atomic liquidations', async function() {
+describe('Atomic liquidations, Arb auction', async function() {
     before(async function() {
         await forkCChain(16010497)
         signers = await ethers.getSigners()
@@ -52,12 +52,16 @@ describe('Atomic liquidations', async function() {
         const avaxMargin = _1e18.mul(1000 * 1e6).div(avaxOraclePrice) // $1000, decimals = 18
         await impersonateAcccount(wavaxWhale)
         await wavax.connect(ethers.provider.getSigner(wavaxWhale)).transfer(alice, avaxMargin)
+        await wavax.connect(ethers.provider.getSigner(wavaxWhale)).transfer(charlie.address, avaxMargin)
         await wavax.approve(marginAccount.address, avaxMargin),
+        await wavax.connect(charlie).approve(marginAccount.address, avaxMargin),
         await marginAccount.addMargin(1, avaxMargin)
+        await marginAccount.connect(charlie).addMargin(1, avaxMargin)
 
         // alice makes a trade
         await clearingHouse.openPosition(0, _1e18.mul(-5), 0)
         expect((await marginAccount.isLiquidatable(alice, true))[0]).to.eq(1) // OPEN_POSITIONS
+        await clearingHouse.connect(charlie).openPosition(0, _1e18.mul(-5), 0)
 
         // bob makes a counter-trade
         const vusdMargin = _1e6.mul(20000)
@@ -68,6 +72,7 @@ describe('Atomic liquidations', async function() {
 
         // liquidate alice position
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
+        expect(await clearingHouse.isAboveMaintenanceMargin(charlie.address)).to.be.false
         await clearingHouse.connect(liquidator1).liquidateTaker(alice)
         expect((await marginAccount.isLiquidatable(alice, true))[0]).to.eq(0) // IS_LIQUIDATABLE
     })
@@ -105,6 +110,33 @@ describe('Atomic liquidations', async function() {
         expect(await vusd.balanceOf(batchLiquidator.address)).to.eq(ZERO)
         expect(await marginAccount.margin(0, alice)).to.eq(ZERO)
         expect((await marginAccount.isLiquidatable(alice, true))[0]).to.eq(2) // NO_DEBT
+    })
+
+    it('flash buy IF auction', async function() {
+        // create bad debt
+        await clearingHouse.connect(bob).openPosition(0, _1e18.mul(10), ethers.constants.MaxUint256)
+        await clearingHouse.connect(liquidator1).liquidateTaker(charlie.address)
+        const { spot } = await marginAccount.weightedAndSpotCollateral(charlie.address)
+        expect(spot).to.lt(ZERO)
+
+        // settle bad debt
+        const tx = await marginAccount.settleBadDebt(charlie.address)
+        const auctionTimestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp
+        // increase time by 15 min
+        await network.provider.send('evm_setNextBlockTimestamp', [auctionTimestamp + 900]);
+
+        const wavaxBalance = await wavax.balanceOf(batchLiquidator.address)
+
+        // arb auction
+        const minProfit = _1e6.mul(50)
+        const ifAvaxBalance = await wavax.balanceOf(insuranceFund.address)
+        await batchLiquidator.arbIFAuction(ifAvaxBalance, minProfit)
+
+        expect(await wavax.balanceOf(batchLiquidator.address)).to.gt(wavaxBalance) // dust
+        expect(await usdc.balanceOf(batchLiquidator.address)).to.gt(minProfit)
+        expect(await vusd.balanceOf(batchLiquidator.address)).to.eq(ZERO)
+        expect(await insuranceFund.isAuctionOngoing(wavax.address)).to.eq(false)
+        expect(await wavax.balanceOf(insuranceFund.address)).to.eq(ZERO)
     })
 })
 
