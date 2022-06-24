@@ -5,7 +5,9 @@ const {
     constants: { _1e6, _1e18, ZERO },
     setupContracts,
     impersonateAcccount,
-    forkCChain
+    stopImpersonateAcccount,
+    forkCChain,
+    setBalance
 } = require('../utils')
 
 const JoeFactory = '0x9Ad6C38BE94206cA50bb0d90783181662f0Cfa10'
@@ -23,7 +25,17 @@ describe('Atomic liquidations, Arb auction', async function() {
         alice = signers[0].address
         wavax = await ethers.getContractAt('IERC20', Wavax)
         usdc = await ethers.getContractAt('IERC20', Usdc)
+
+        // gimme some usdc
+        usdc = await ethers.getContractAt('IUSDC', usdc.address)
+        const masterMinter = await usdc.masterMinter()
+        await setBalance(masterMinter, '0xDE0B6B3A7640000') // 1e18, to pay for gas fee
+        await impersonateAcccount(masterMinter)
+        await usdc.connect(ethers.provider.getSigner(masterMinter)).configureMinter(alice, _1e18, { gasPrice: 25e9 })
+        await stopImpersonateAcccount(masterMinter)
+
         ;({ marginAccount, clearingHouse, vusd, oracle, marginAccountHelper, hubbleViewer } = await setupContracts({ reserveToken: usdc.address, wavaxAddress: wavax.address }))
+
         await vusd.grantRole(await vusd.MINTER_ROLE(), admin.address) // will mint vusd to liquidators account
         await clearingHouse.setParams(
             1e5 /** maintenance margin */,

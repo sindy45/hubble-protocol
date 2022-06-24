@@ -52,19 +52,10 @@ async function setupContracts(options = {}) {
     ]))
 
     ;([ proxyAdmin, forwarder, usdc ] = await Promise.all([
-        ProxyAdmin.deploy(getTxOptions()),
+        options.proxyAdmin ? ethers.getContractAt('ProxyAdmin', options.proxyAdmin) : ProxyAdmin.deploy(getTxOptions()),
         MinimalForwarder.deploy(getTxOptions()),
-        ERC20Mintable.deploy('USD Coin', 'USDC', 6, getTxOptions()),
+        options.reserveToken ? ethers.getContractAt('IUSDC', options.reserveToken) : ERC20Mintable.deploy('USD Coin', 'USDC', 6, getTxOptions())
     ]))
-
-    if (options.reserveToken) {
-        usdc = await ethers.getContractAt('IUSDC', options.reserveToken)
-        const masterMinter = await usdc.masterMinter()
-        await setBalance(masterMinter, '0xDE0B6B3A7640000') // 1e18, to pay for gas fee
-        await impersonateAcccount(masterMinter)
-        await usdc.connect(ethers.provider.getSigner(masterMinter)).configureMinter(governance, _1e18)
-        await stopImpersonateAcccount(masterMinter)
-    }
 
     vusd = await setupUpgradeableProxy(
         options.restrictedVUSD ? 'RestrictedVusd' : 'VUSD',
@@ -476,7 +467,7 @@ async function assertBounds(v, lowerBound, upperBound) {
 }
 
 // doesn't print inactive AMMs
-async function generateConfig(leaderboardAddress, marginAccountHelperAddress, executorAddress, genesisBlock) {
+async function generateConfig(leaderboardAddress, marginAccountHelperAddress, executorAddress, startBlock) {
     const leaderboard = await ethers.getContractAt('Leaderboard', leaderboardAddress)
     const hubbleViewer = await ethers.getContractAt('HubbleViewer', await leaderboard.hubbleViewer())
     const clearingHouse = await ethers.getContractAt('ClearingHouse', await hubbleViewer.clearingHouse())
@@ -509,11 +500,10 @@ async function generateConfig(leaderboardAddress, marginAccountHelperAddress, ex
         })
     }
 
-    if (!genesisBlock) {
-        // to find the genesis block, we will get the block in which the first amm was whitelisted
-        const marketAddedEvents = await clearingHouse.queryFilter('MarketAdded')
-        genesisBlock = marketAddedEvents[0].blockNumber
-    }
+    // to find the genesis block, we will get the block in which the first amm was whitelisted
+    const marketAddedEvents = await clearingHouse.queryFilter('MarketAdded', startBlock)
+    genesisBlock = marketAddedEvents[0].blockNumber
+
     const res = {
         genesisBlock,
         timestamp: (await ethers.provider.getBlock(genesisBlock)).timestamp,
@@ -611,5 +601,6 @@ module.exports = {
     unbondAndRemoveLiquidity,
     gotoNextWithdrawEpoch,
     forkCChain,
-    gotoNextUnbondEpoch
+    gotoNextUnbondEpoch,
+    setBalance
 }
