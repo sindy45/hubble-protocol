@@ -23,7 +23,7 @@ describe('Atomic liquidations, Arb auction', async function() {
         alice = signers[0].address
         wavax = await ethers.getContractAt('IERC20', Wavax)
         usdc = await ethers.getContractAt('IERC20', Usdc)
-        ;({ marginAccount, clearingHouse, vusd, oracle, marginAccountHelper } = await setupContracts({ reserveToken: usdc.address }))
+        ;({ marginAccount, clearingHouse, vusd, oracle, marginAccountHelper, hubbleViewer } = await setupContracts({ reserveToken: usdc.address, wavaxAddress: wavax.address }))
         await vusd.grantRole(await vusd.MINTER_ROLE(), admin.address) // will mint vusd to liquidators account
         await clearingHouse.setParams(
             1e5 /** maintenance margin */,
@@ -44,20 +44,20 @@ describe('Atomic liquidations, Arb auction', async function() {
         )
 
         // addCollateral
-        const avaxOraclePrice = 1e6 * 17 // joe pool price at forked block
+        avaxOraclePrice = 1e6 * 17 // joe pool price at forked block
         await oracle.setUnderlyingPrice(Wavax, avaxOraclePrice),
         await marginAccount.whitelistCollateral(Wavax, 0.8 * 1e6) // weight = 0.8
+    })
 
-        // addMargin
+    it('add margin with avax', async function() {
         const avaxMargin = _1e18.mul(1000 * 1e6).div(avaxOraclePrice) // $1000, decimals = 18
-        await impersonateAcccount(wavaxWhale)
-        await wavax.connect(ethers.provider.getSigner(wavaxWhale)).transfer(alice, avaxMargin)
-        await wavax.connect(ethers.provider.getSigner(wavaxWhale)).transfer(charlie.address, avaxMargin)
-        await wavax.approve(marginAccount.address, avaxMargin),
-        await wavax.connect(charlie).approve(marginAccount.address, avaxMargin),
-        await marginAccount.addMargin(1, avaxMargin)
-        await marginAccount.connect(charlie).addMargin(1, avaxMargin)
+        await marginAccountHelper.addMarginWithAvax({value: avaxMargin})
+        await marginAccountHelper.connect(charlie).addMarginWithAvax({value: avaxMargin})
+        expect(await marginAccount.margin(1, alice)).to.eq(avaxMargin)
+        expect(await marginAccount.margin(1, charlie.address)).to.eq(avaxMargin)
+    })
 
+    it('liquidate alice position', async function() {
         // alice makes a trade
         await clearingHouse.openPosition(0, _1e18.mul(-5), 0)
         expect((await marginAccount.isLiquidatable(alice, true))[0]).to.eq(1) // OPEN_POSITIONS
@@ -137,6 +137,20 @@ describe('Atomic liquidations, Arb auction', async function() {
         expect(await vusd.balanceOf(batchLiquidator.address)).to.eq(ZERO)
         expect(await insuranceFund.isAuctionOngoing(wavax.address)).to.eq(false)
         expect(await wavax.balanceOf(insuranceFund.address)).to.eq(ZERO)
+    })
+
+    it('remove margin with avax', async function() {
+        const avaxBalance = await ethers.provider.getBalance(alice)
+        const wavaxMargin = await marginAccount.margin(1, alice)
+
+        const removeAmount = _1e18.mul(3)
+        let tx = await marginAccount.removeAvaxMargin(removeAmount)
+        tx = await tx.wait()
+        const txFee = tx.cumulativeGasUsed.mul(tx.effectiveGasPrice)
+
+        expect(await ethers.provider.getBalance(alice)).to.eq(avaxBalance.add(removeAmount).sub(txFee))
+        expect(await marginAccount.margin(1, alice)).to.eq(wavaxMargin.sub(removeAmount))
+        expect(await wavax.balanceOf(alice)).to.eq(ZERO)
     })
 })
 

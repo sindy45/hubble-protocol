@@ -290,3 +290,8 @@ interface IJoePair {
 interface IJoeFactory {
     function getPair(address tokenA, address tokenB) external view returns (address pair);
 }
+
+interface IWAVAX is IERC20 {
+    function deposit() external payable;
+    function withdraw(uint256) external;
+}

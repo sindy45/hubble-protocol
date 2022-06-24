@@ -79,7 +79,11 @@ async function setupContracts(options = {}) {
         [ governance, vusd.address ],
         [ forwarder.address ]
     )
-    marginAccountHelper = await MarginAccountHelper.deploy(marginAccount.address, vusd.address, getTxOptions())
+    if (options.wavaxAddress) {
+        marginAccountHelper = await MarginAccountHelper.deploy(marginAccount.address, vusd.address, options.wavaxAddress, getTxOptions())
+    } else {
+        marginAccountHelper = await MarginAccountHelper.deploy(marginAccount.address, vusd.address, usdc.address, getTxOptions())
+    }
     insuranceFund = await setupUpgradeableProxy('InsuranceFund', proxyAdmin.address, [ governance ])
 
     if (options.restrictedVUSD) {

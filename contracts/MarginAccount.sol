@@ -6,6 +6,7 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import { ReentrancyGuard } from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
 import { HubbleBase } from "./legos/HubbleBase.sol";
 import {
@@ -15,20 +16,22 @@ import {
     IOracle,
     IRegistry,
     IMarginAccount,
-    IERC20FlexibleSupply
+    IERC20FlexibleSupply,
+    IWAVAX
 } from "./Interfaces.sol";
 
 /**
 * @title This contract is used for posting margin (collateral), realizing PnL etc.
 * @notice Most notable operations include addMargin, removeMargin and liquidations
 */
-contract MarginAccount is IMarginAccount, HubbleBase {
+contract MarginAccount is IMarginAccount, HubbleBase, ReentrancyGuard {
     using SafeERC20 for IERC20;
     using SafeCast for uint256;
     using SafeCast for int256;
 
     // Hubble vUSD is necessitated to be the first whitelisted collateral
     uint constant VUSD_IDX = 0;
+    uint constant WAVAX_IDX = 1; // assumes wavax index = 1
 
     // used for all usd based values
     uint constant PRECISION = 1e6;
@@ -127,6 +130,11 @@ contract MarginAccount is IMarginAccount, HubbleBase {
         vusd = IERC20FlexibleSupply(_vusd);
     }
 
+    receive() external payable {
+        // only accept AVAX via fallback from the WAVAX contract
+        assert(_msgSender() == address(supportedCollateral[WAVAX_IDX].token));
+    }
+
     /* ****************** */
     /*       Margin       */
     /* ****************** */
@@ -166,20 +174,8 @@ contract MarginAccount is IMarginAccount, HubbleBase {
     * @param amount Amount to withdraw (scaled same as the asset)
     */
     function removeMargin(uint idx, uint256 amount) override external whenNotPaused {
-        require(amount != 0, 'Remove non-zero margin');
-
         address trader = _msgSender();
-
-        // credit funding payments
-        clearingHouse.updatePositions(trader);
-
-        require(margin[VUSD_IDX][trader] >= 0, "Cannot remove margin when vusd balance is negative");
-        require(margin[idx][trader] >= amount.toInt256(), "Insufficient balance");
-
-        margin[idx][trader] -= amount.toInt256();
-
-        // Check minimum margin requirement after withdrawal
-        clearingHouse.assertMarginRequirement(trader);
+        _validateRemoveMargin(idx, amount, trader);
 
         if (idx == VUSD_IDX) {
             _transferOutVusd(trader, amount);
@@ -187,6 +183,20 @@ contract MarginAccount is IMarginAccount, HubbleBase {
             supportedCollateral[idx].token.safeTransfer(trader, amount);
         }
         emit MarginRemoved(trader, idx, amount, _blockTimestamp());
+    }
+
+    /**
+    * @notice remove margin in Avax
+    * @param amount Amount to withdraw
+    */
+    function removeAvaxMargin(uint amount) external whenNotPaused {
+        address trader = _msgSender();
+        _validateRemoveMargin(WAVAX_IDX, amount, trader);
+
+        IWAVAX(address(supportedCollateral[WAVAX_IDX].token)).withdraw(amount);
+        safeTransferAVAX(trader, amount);
+
+        emit MarginRemoved(trader, WAVAX_IDX, amount, _blockTimestamp());
     }
 
     /**
@@ -596,6 +606,25 @@ contract MarginAccount is IMarginAccount, HubbleBase {
         IERC20(address(vusd)).safeTransfer(recipient, amount);
     }
 
+    function _validateRemoveMargin(uint idx, uint256 amount, address trader) internal {
+        require(amount != 0, 'Remove non-zero margin');
+
+        // credit funding payments
+        clearingHouse.updatePositions(trader);
+
+        require(margin[VUSD_IDX][trader] >= 0, "Cannot remove margin when vusd balance is negative");
+        require(margin[idx][trader] >= amount.toInt256(), "Insufficient balance");
+
+        margin[idx][trader] -= amount.toInt256();
+
+        // Check minimum margin requirement after withdrawal
+        clearingHouse.assertMarginRequirement(trader);
+    }
+
+    function safeTransferAVAX(address to, uint256 value) internal nonReentrant {
+        (bool success, ) = to.call{value: value}(new bytes(0));
+        require(success, "MA: AVAX_TRANSFER_FAILED");
+    }
     /* ****************** */
     /*     Governance     */
     /* ****************** */
