@@ -33,6 +33,7 @@ const deployParams = {
         setupAMM: false,
         testOracle: false,
         reserveToken: deployDeps.usdc,
+        wavaxAddress: deployDeps.wavax.address,
         proxyAdmin: deployDeps.proxyAdmin
     }
 }

@@ -316,6 +316,7 @@ describe('AMM unit tests', async function() {
         signers = await ethers.getSigners()
         ;([ alice ] = signers.map(s => s.address))
         maker = signers[9]
+        bob = signers[1]
 
         contracts = await setupContracts({ amm: { initialLiquidity: 0, ammState: 0 }})
         ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, swap, hubbleViewer } = contracts)
@@ -323,6 +324,8 @@ describe('AMM unit tests', async function() {
         // add margin
         margin = _1e6.mul(2000)
         await addMargin(signers[0], margin)
+        // set min size to 0.5
+        await amm.setMinSizeRequirement(_1e18.div(2))
     })
 
     it('[commit,unbond]Liquidity/openPosition fails when ammState=InActive', async () => {
@@ -463,13 +466,13 @@ describe('AMM unit tests', async function() {
 
         // opening small positions will fail
         await expect(
-            clearingHouse.openPosition(0, -99, 0)
-        ).to.be.revertedWith('trading_too_less')
+            clearingHouse.connect(bob).openPosition(0, _1e18.div(-10), 0)
+        ).to.be.revertedWith('position_less_than_minSize')
         await expect(
-            clearingHouse.openPosition(0, 99, 0)
-        ).to.be.revertedWith('trading_too_less')
+            clearingHouse.connect(bob).openPosition(0, _1e18.div(10), _1e18)
+        ).to.be.revertedWith('position_less_than_minSize')
         await expect(
-            clearingHouse.addLiquidity(1, 99, 0)
+            clearingHouse.connect(bob).addLiquidity(1, 99, 0)
         ).to.be.revertedWith('adding_too_less')
         await clearingHouse.openPosition(1, -10000, 0)
 
@@ -496,7 +499,7 @@ describe('AMM unit tests', async function() {
             clearingHouse.connect(maker).removeLiquidity(0, dToken.sub(1), 0, 0)
         ).to.be.revertedWith('leftover_liquidity_is_too_less')
         await expect(
-            clearingHouse.connect(maker).removeLiquidity(0, 1, 0, 0)
+            clearingHouse.connect(maker).removeLiquidity(0, dToken.div(10), 0, 0)
         ).to.be.revertedWith('removing_very_small_liquidity')
 
         const remove = dToken.div(2) // removing 1/2 to avoid leftover_liquidity_is_too_less
@@ -515,6 +518,20 @@ describe('AMM unit tests', async function() {
         await gotoNextUnbondEpoch(amm, maker.address)
         await clearingHouse.connect(maker).removeLiquidity(0, leftOver, 0, 0)
         expect((await amm.makers(maker.address)).dToken).to.eq(0)
+    })
+
+    it('min size requirement', async () => {
+        await clearingHouse.connect(maker).addLiquidity(0, _1e18.mul(2000), 0)
+        await clearingHouse.closePosition(0, _1e18)
+
+        let posSize = _1e18.mul(-5)
+        await clearingHouse.openPosition(0, posSize, 0)
+        // net position = -0.4
+        posSize = _1e18.mul(46).div(10)
+        await expect(clearingHouse.openPosition(0, posSize, _1e18)).to.be.revertedWith('position_less_than_minSize')
+        // net position = 0.3
+        posSize = _1e18.mul(53).div(10)
+        await expect(clearingHouse.openPosition(0, posSize, _1e18)).to.be.revertedWith('position_less_than_minSize')
     })
 
     async function ops() {

@@ -160,7 +160,6 @@ contract AMM is IAMM, Governable {
         whenActive
         returns (int realizedPnl, uint quoteAsset, bool isPositionIncreased)
     {
-        require(uint(abs(baseAssetQuantity)) >= minSizeRequirement, "trading_too_less");
         Position memory position = positions[trader];
         bool isNewPosition = position.size == 0 ? true : false;
         Side side = baseAssetQuantity > 0 ? Side.LONG : Side.SHORT;
@@ -172,9 +171,11 @@ contract AMM is IAMM, Governable {
             (realizedPnl, quoteAsset, isPositionIncreased) = _openReversePosition(trader, baseAssetQuantity, quoteAssetLimit);
         }
 
+        uint totalPosSize = uint(abs(positions[trader].size));
+        require(totalPosSize == 0 || totalPosSize >= minSizeRequirement, "position_less_than_minSize");
         // update liquidation thereshold
         positions[trader].liquidationThreshold = Math.max(
-            uint(abs(positions[trader].size)) * maxLiquidationRatio / 100,
+            totalPosSize * maxLiquidationRatio / 100,
             minSizeRequirement
         );
 
@@ -338,7 +339,6 @@ contract AMM is IAMM, Governable {
         onlyClearingHouse
         returns (int realizedPnl, uint makerOpenNotional, int makerPosition)
     {
-
         Maker storage _maker = _makers[maker];
         require(_maker.unbondAmount >= amount, "withdrawing_more_than_unbonded");
         unchecked { _maker.unbondAmount -= amount; }
@@ -351,7 +351,8 @@ contract AMM is IAMM, Governable {
         if (_maker.dToken != 0) {
             // if the maker doesn't remove all their liq, ensure decent size
             require(_maker.vAsset >= minSizeRequirement, "leftover_liquidity_is_too_less");
-            require(uint(abs(makerPosition)) >= minSizeRequirement, "removing_very_small_liquidity");
+            uint totalPosSize = uint(abs(positions[maker].size));
+            require(totalPosSize == 0 || totalPosSize >= minSizeRequirement, "removing_very_small_liquidity");
         }
     }
 
@@ -1084,5 +1085,9 @@ contract AMM is IAMM, Governable {
     function setLiquidationParams (uint _maxLiquidationRatio, uint _maxLiquidationPriceSpread) external onlyGovernance {
         maxLiquidationRatio = _maxLiquidationRatio;
         maxLiquidationPriceSpread = _maxLiquidationPriceSpread;
+    }
+
+    function setMinSizeRequirement(uint _minSizeRequirement) external onlyGovernance {
+        minSizeRequirement = _minSizeRequirement;
     }
 }
