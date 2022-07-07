@@ -53,6 +53,10 @@ def get_dy(i: uint256, j: uint256, dx: uint256, balances: uint256[N_COINS], D: u
     gamma: uint256 = Curve(msg.sender).gamma()
 
     y: uint256 = Math(self.math).newton_y(A, gamma, xp, D, j)
+
+    if xp[j] < y + 1:
+        return 0, 0
+
     dy: uint256 = xp[j] - y - 1
     xp[j] = y
     if j > 0:
@@ -82,6 +86,10 @@ def get_dx(i: uint256, j: uint256, dy: uint256, balances: uint256[N_COINS], D: u
     gamma: uint256 = Curve(msg.sender).gamma()
 
     x: uint256 = Math(self.math).newton_y(A, gamma, xp, D, i)
+
+    if x < xp[i]:
+        return 0, 0
+
     dx: uint256 = x - xp[i] + 1
     xp[i] = x
     if i > 0:

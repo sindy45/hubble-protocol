@@ -534,6 +534,26 @@ describe('AMM unit tests', async function() {
         await expect(clearingHouse.openPosition(0, posSize, _1e18)).to.be.revertedWith('position_less_than_minSize')
     })
 
+    it('should not revert when size is too small', async () => {
+        const maker2 = signers[8]
+        await addMargin(maker2, _1e6.mul(2000))
+        // create a small position
+        await clearingHouse.connect(maker2).addLiquidity(1, _1e18.mul(50), 0)
+        await clearingHouse.openPosition(1, _1e18.div(-10).sub(_1e12.mul(2)), 0)
+
+        // remove maker2 liquidity
+        const _dToken = (await avaxAmm.makers(maker2.address)).dToken
+        await avaxAmm.connect(maker2).unbondLiquidity(_dToken)
+        await gotoNextUnbondEpoch(avaxAmm, maker2.address)
+        await clearingHouse.connect(maker2).removeLiquidity(1, _dToken, 0, 0)
+
+        const { size } = await avaxAmm.positions(maker2.address)
+        expect(size.abs()).lt(_1e12.div(100))
+        expect(await avaxAmm.getCloseQuote(size)).to.eq(ZERO)
+        const marginFractions = await hubbleViewer.getMarginFractionAndMakerStatus([maker2.address]) // doesn't revert
+        expect(marginFractions.fractions[0]).to.eq(ethers.constants.MaxInt256)
+    })
+
     async function ops() {
         return Promise.all([
             clearingHouse.settleFunding(),
