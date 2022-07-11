@@ -1,7 +1,6 @@
 const { expect } = require('chai')
 const fs = require('fs')
 const { BigNumber } = require('ethers')
-const util = require('util')
 const { ethers, network } = require('hardhat')
 
 const ZERO = BigNumber.from(0)
@@ -11,7 +10,6 @@ const _1e12 = BigNumber.from(10).pow(12)
 const _1e18 = ethers.constants.WeiPerEther
 
 const DEFAULT_TRADE_FEE = 0.0005 * 1e6 /* 0.05% */
-const gasLimit = 6e6
 
 let txOptions = {}
 
@@ -182,17 +180,12 @@ function getTxOptions() {
 async function setupUpgradeableProxy(contract, admin, initArgs, deployArgs = []) {
     const factory = await ethers.getContractFactory(contract)
     const impl = await factory.deploy(...deployArgs, getTxOptions())
-    const proxy = await TransparentUpgradeableProxy.deploy(
-        impl.address,
-        admin,
-        initArgs
-            ? impl.interface.encodeFunctionData(
-                'initialize',
-                initArgs
-            )
-            : '0x',
-        getTxOptions()
-    )
+    const _data = initArgs
+        ? impl.interface.encodeFunctionData('initialize', initArgs)
+        : '0x'
+    const constructorArguments = [impl.address, admin, _data]
+    const proxy = await TransparentUpgradeableProxy.deploy(...constructorArguments, getTxOptions())
+    // console.log({ name: contract, address: proxy.address, constructorArguments }) // helps in verification
     return ethers.getContractAt(contract, proxy.address)
 }
 

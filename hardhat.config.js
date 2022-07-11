@@ -51,7 +51,9 @@ module.exports = {
         },
     },
     etherscan: {
-        apiKey: `${process.env.ETHERSCAN || ''}`
+        apiKey: {
+            avalancheFujiTestnet: process.env.SNOWTRACE || ''
+        }
     },
     spdxLicenseIdentifier: {
         runOnCompile: true
@@ -67,7 +69,7 @@ module.exports = {
         clear: true,
     },
     tenderly: {
-        project: "Supernova",
+        project: "whirlpool",
         username: "atvanguard",
     }
 };
