@@ -49,6 +49,7 @@ interface IClearingHouse {
     function liquidateTaker(address trader) external;
     function commitLiquidity(uint idx, uint quoteAsset) external;
     function insuranceFund() external view returns(IInsuranceFund);
+    function calcMarginFraction(address trader, bool includeFundingPayments, Mode mode) external view returns(int256);
 }
 
 interface ERC20Detailed {
