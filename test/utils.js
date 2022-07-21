@@ -12,6 +12,7 @@ const _1e18 = ethers.constants.WeiPerEther
 const DEFAULT_TRADE_FEE = 0.0005 * 1e6 /* 0.05% */
 
 let txOptions = {}
+const verification = []
 
 /**
  * signers global var should have been intialized before the call to this fn
@@ -68,11 +69,11 @@ async function setupContracts(options = {}) {
         [ governance, vusd.address ],
         [ forwarder.address ]
     )
-    if (options.wavaxAddress) {
-        marginAccountHelper = await MarginAccountHelper.deploy(marginAccount.address, vusd.address, options.wavaxAddress, getTxOptions())
-    } else {
-        marginAccountHelper = await MarginAccountHelper.deploy(marginAccount.address, vusd.address, usdc.address, getTxOptions())
-    }
+
+    let constructorArguments = [marginAccount.address, vusd.address, options.wavaxAddress || usdc.address /* pass a dummy address that supports safeApprove */]
+    marginAccountHelper = await MarginAccountHelper.deploy(...constructorArguments.concat(getTxOptions()))
+    verification.push({ name: 'MarginAccountHelper', address: marginAccountHelper.address, constructorArguments })
+
     insuranceFund = await setupUpgradeableProxy('InsuranceFund', proxyAdmin.address, [ governance ])
 
     if (options.restrictedVUSD) {
@@ -108,7 +109,9 @@ async function setupContracts(options = {}) {
         [ forwarder.address ]
     )
     await vusd.grantRole(ethers.utils.id('MINTER_ROLE'), marginAccount.address, getTxOptions())
-    registry = await Registry.deploy(oracle.address, clearingHouse.address, insuranceFund.address, marginAccount.address, vusd.address, getTxOptions())
+
+    constructorArguments = [oracle.address, clearingHouse.address, insuranceFund.address, marginAccount.address, vusd.address]
+    registry = await Registry.deploy(...constructorArguments.concat(getTxOptions()))
     await Promise.all([
         marginAccount.syncDeps(registry.address, 5e4, getTxOptions()), // liquidationIncentive = 5% = .05 scaled 6 decimals
         insuranceFund.syncDeps(registry.address, getTxOptions())
@@ -134,6 +137,7 @@ async function setupContracts(options = {}) {
         AMM.deploy(clearingHouse.address, options.unbondRoundOff, getTxOptions())
     ]))
     views = await Views.deploy(curveMath.address, getTxOptions())
+    verification.push({ name: 'AMM', address: ammImpl.address, constructorArguments: [clearingHouse.address, options.unbondRoundOff] })
     // amm deps complete
 
     const res = {
@@ -180,12 +184,13 @@ function getTxOptions() {
 async function setupUpgradeableProxy(contract, admin, initArgs, deployArgs = []) {
     const factory = await ethers.getContractFactory(contract)
     const impl = await factory.deploy(...deployArgs, getTxOptions())
+    verification.push({ name: contract, address: impl.address, constructorArguments: deployArgs })
     const _data = initArgs
         ? impl.interface.encodeFunctionData('initialize', initArgs)
         : '0x'
     const constructorArguments = [impl.address, admin, _data]
     const proxy = await TransparentUpgradeableProxy.deploy(...constructorArguments, getTxOptions())
-    // console.log({ name: contract, address: proxy.address, constructorArguments }) // helps in verification
+    verification.push({ name: 'TransparentUpgradeableProxy', impl: contract, address: proxy.address, constructorArguments })
     return ethers.getContractAt(contract, proxy.address)
 }
 
@@ -203,7 +208,7 @@ async function setupAmm(governance, args, ammOptions) {
     )
     const { initialRate, initialLiquidity, fee, ammState, index, testAmm, unbondPeriod } = options
 
-    const vammProxy = await TransparentUpgradeableProxy.deploy(
+    let constructorArguments = [
         vammImpl.address,
         proxyAdmin.address,
         vammImpl.interface.encodeFunctionData('initialize', [
@@ -216,17 +221,19 @@ async function setupAmm(governance, args, ammOptions) {
             '146000000000000', // adjustment_step
             0, // admin_fee
             600 // ma_half_time
-        ]),
-        getTxOptions()
-    )
-
+        ])
+    ]
+    const vammProxy = await TransparentUpgradeableProxy.deploy(...constructorArguments, getTxOptions())
+    verification.push({ name: 'TransparentUpgradeableProxy', impl: 'VAMM', address: vammProxy.address, constructorArguments })
     const vamm = new ethers.Contract(vammProxy.address, JSON.parse(vammAbiAndBytecode[0]), signers[0])
-    const ammProxy = await TransparentUpgradeableProxy.deploy(
+
+    constructorArguments = [
         ammImpl.address,
         proxyAdmin.address,
-        ammImpl.interface.encodeFunctionData('initialize', args.concat([ vamm.address, governance ])),
-        getTxOptions()
-    )
+        ammImpl.interface.encodeFunctionData('initialize', args.concat([ vamm.address, governance ]))
+    ]
+    const ammProxy = await TransparentUpgradeableProxy.deploy(...constructorArguments, getTxOptions())
+    verification.push({ name: 'TransparentUpgradeableProxy', impl: 'AMM', address: ammProxy.address, constructorArguments })
     const amm = await ethers.getContractAt(testAmm ? 'TestAmm' : 'AMM', ammProxy.address)
     if (unbondPeriod != 86400*3) { // not default value
         await amm.setUnbondPeriod(unbondPeriod, getTxOptions())
@@ -509,16 +516,16 @@ async function generateConfig(leaderboardAddress, marginAccountHelperAddress, ex
             Registry: await hubbleViewer.registry(),
             Leaderboard: leaderboardAddress,
             MarginAccountHelper: marginAccountHelperAddress,
-            vusd: vusd.address,
-            hubbleReferral,
+            HubbleReferral: hubbleReferral,
             usdc,
+            vusd: vusd.address,
             amms,
             collateral,
         },
         systemParams: {
             maintenanceMargin: (await clearingHouse.maintenanceMargin()).toString(),
             numCollateral: collateral.length,
-            tradeFee: (await clearingHouse.tradeFee()).toString(),
+            insuranceFundFee: (await clearingHouse.tradeFee()).toString(),
             liquidationFee: (await clearingHouse.liquidationPenalty()).toString(),
         }
     }
@@ -568,6 +575,7 @@ module.exports = {
     constants: { _1e6, _1e8, _1e12, _1e18, ZERO },
     BigNumber,
     txOptions,
+    verification,
     getTxOptions,
     setupContracts,
     setupUpgradeableProxy,

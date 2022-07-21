@@ -3,9 +3,8 @@ const { ethers } = require('hardhat')
 const utils = require('../test/utils')
 
 const {
-    constants: { _1e6, _1e8, _1e18 },
+    constants: { _1e18 },
     setupContracts,
-    setupRestrictedTestToken,
     setupAmm,
     generateConfig,
     sleep,
@@ -80,7 +79,7 @@ async function main() {
 
     console.log('whitelistCollateral...')
     await marginAccount.whitelistCollateral(avax.address, deployDeps.wavax.weight, getTxOptions())
-    console.log(await marginAccount.supportedAssets())
+    // console.log({ supportedAssets: await marginAccount.supportedAssets() })
 
     // 3. AMMs
     console.log('setup AMMs...')
@@ -97,7 +96,8 @@ async function main() {
         Object.assign(ammOptions, { index: 0 })
     )
 
-    await sleep(1) // 10s on fuji
+    console.log(utils.verification)
+    await sleep(10) // 10s on fuji
     console.log(JSON.stringify(await generateConfig(leaderboard.address, marginAccountHelper.address, null, startBlock), null, 2))
 }
 
