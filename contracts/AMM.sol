@@ -85,7 +85,7 @@ contract AMM is IAMM, Governable {
     /* ****************** */
 
     // Generic AMM related events
-    event FundingRateUpdated(int256 premiumFraction, uint256 underlyingPrice, int256 cumulativePremiumFraction, int256 cumulativePremiumPerDtoken, uint256 nextFundingTime, uint256 timestamp, uint256 blockNumber);
+    event FundingRateUpdated(int256 premiumFraction, uint256 underlyingPrice, int256 cumulativePremiumFraction, int256 cumulativePremiumPerDtoken, int256 posAccumulator, uint256 nextFundingTime, uint256 timestamp, uint256 blockNumber);
     event FundingPaid(address indexed trader, int256 takerFundingPayment, int256 makerFundingPayment);
     event Swap(uint256 lastPrice, uint256 openInterestNotional);
 
@@ -1044,6 +1044,7 @@ contract AMM is IAMM, Governable {
             _underlyingPrice.toUint256(),
             cumulativePremiumFraction,
             cumulativePremiumPerDtoken,
+            posAccumulator,
             nextFundingTime,
             _blockTimestamp(),
             block.number
