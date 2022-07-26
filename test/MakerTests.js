@@ -13,6 +13,7 @@ const {
     unbondAndRemoveLiquidity,
     BigNumber
 } = utils
+const gasLimit = 1e6
 
 describe('Maker Tests', async function() {
     describe('Single Maker', async function() {
@@ -129,9 +130,9 @@ describe('Maker Tests', async function() {
             await addMargin(maker2, _1e6.mul(4.1e5))
             const tx = await clearingHouse.connect(maker2).addLiquidity(0, initialLiquidity, dToken)
 
-            const addLiquidityEvent = (await parseRawEvent(tx, swap, 'AddLiquidity')).args
-            const totalSupply = addLiquidityEvent.token_supply
-            const tokenFee = addLiquidityEvent.fee
+            const addLiquidityEvent = (await parseRawEvent(tx, swap, 'TokenExchange')).args
+            const totalSupply = await swap.totalSupply({gasLimit})
+            const tokenFee = addLiquidityEvent.trade_fee
             initialPositionSize = initialLiquidity.mul(tokenFee).div(totalSupply) // 0.005 due to small fee paid during addLiquidity
 
             let { notionalPosition, unrealizedPnl, size, openNotional } = await amm.getNotionalPositionAndUnrealizedPnl(maker1.address)
@@ -257,9 +258,9 @@ describe('Maker Tests', async function() {
             await addMargin(maker2, _1e6.mul(2.1e5))
             const tx = await clearingHouse.connect(maker2).addLiquidity(0, initialLiquidity.div(2), dToken)
 
-            const addLiquidityEvent = (await parseRawEvent(tx, swap, 'AddLiquidity')).args
-            totalSupply = addLiquidityEvent.token_supply
-            const tokenFee = addLiquidityEvent.fee
+            const addLiquidityEvent = (await parseRawEvent(tx, swap, 'TokenExchange')).args
+            totalSupply = await swap.totalSupply({gasLimit})
+            const tokenFee = addLiquidityEvent.trade_fee
             initialPositionSize = initialLiquidity.mul(tokenFee).div(totalSupply)
 
             let { notionalPosition, unrealizedPnl, size, openNotional } = await amm.getNotionalPositionAndUnrealizedPnl(maker1.address)

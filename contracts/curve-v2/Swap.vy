@@ -843,7 +843,7 @@ def add_liquidity(amounts: uint256[N_COINS], min_mint_amount: uint256) -> (uint2
 
     assert d_token >= min_mint_amount, "Slippage"
 
-    log AddLiquidity(msg.sender, amounts, d_token_fee, self.totalSupply)
+    log TokenExchange(0, 0, 0, 0, d_token_fee, self._vars())
     return d_token
 
 @internal
@@ -960,6 +960,7 @@ def remove_liquidity(
     self.D = D
     self.totalSupply -= amount
 
+    log TokenExchange(0, 0, 0, 0, 0, self._vars())
     return makerPosSize, makerOpenNotional, totalOpenNotional, feeAdjustedPnl, d_balances
 
 @internal
