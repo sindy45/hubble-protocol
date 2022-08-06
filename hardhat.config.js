@@ -45,14 +45,22 @@ module.exports = {
         fuji: {
             url: 'https://api.avax-test.network/ext/bc/C/rpc',
             chainId: 43113,
-            throwOnTransactionFailures: false,
+            throwOnTransactionFailures: true,
+            gasLimit: 6000000,
+            accounts: [ PRIVATE_KEY ]
+        },
+        cchain: {
+            url: 'https://api.avax.network/ext/bc/C/rpc',
+            chainId: 43114,
+            throwOnTransactionFailures: true,
             gasLimit: 6000000,
             accounts: [ PRIVATE_KEY ]
         },
     },
     etherscan: {
         apiKey: {
-            avalancheFujiTestnet: process.env.SNOWTRACE || ''
+            avalancheFujiTestnet: process.env.SNOWTRACE || '',
+            avalanche: process.env.SNOWTRACE || '',
         }
     },
     spdxLicenseIdentifier: {
@@ -69,7 +77,7 @@ module.exports = {
         clear: true,
     },
     tenderly: {
-        project: "whirlpool",
+        project: "hubble",
         username: "atvanguard",
     }
 };
