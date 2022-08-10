@@ -1,4 +1,4 @@
-const utils = require('../test/utils')
+const utils = require('../../test/utils')
 
 const {
     constants: { _1e6, _1e18 },

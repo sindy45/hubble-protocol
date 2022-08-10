@@ -41,7 +41,7 @@ jobs:
     - name: Local deploy script
       run: |
         npx hardhat node > /dev/null 2>&1 &
-        npx hardhat run scripts/deploy-local.js --network local
+        npx hardhat run scripts/deploy/local.js --network local
     - name: Run Tests
       env:
         ALCHEMY: ${{ secrets.ALCHEMY }}

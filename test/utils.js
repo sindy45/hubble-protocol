@@ -190,7 +190,7 @@ async function setupUpgradeableProxy(contract, admin, initArgs, deployArgs = [])
         : '0x'
     const constructorArguments = [impl.address, admin, _data]
     const proxy = await TransparentUpgradeableProxy.deploy(...constructorArguments, getTxOptions())
-    verification.push({ name: 'TransparentUpgradeableProxy', impl: contract, address: proxy.address, constructorArguments })
+        verification.push({ name: 'TransparentUpgradeableProxy', impl: contract, address: proxy.address, constructorArguments })
     return ethers.getContractAt(contract, proxy.address)
 }
 

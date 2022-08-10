@@ -1,6 +1,6 @@
 const { expect } = require('chai')
 const { ethers } = require('hardhat')
-const utils = require('../test/utils')
+const utils = require('../../test/utils')
 
 const {
     constants: { _1e18 },

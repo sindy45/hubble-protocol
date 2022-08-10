@@ -191,7 +191,15 @@ contract AMM is IAMM, Governable {
         // don't need an ammState check because there should be no active positions
         Position memory position = positions[trader];
         bool isLongPosition = position.size > 0 ? true : false;
-        uint positionToLiquidate = Math.min(uint(abs(position.size)), position.liquidationThreshold);
+        uint pozSize = uint(abs(position.size));
+        uint positionToLiquidate = Math.min(pozSize, position.liquidationThreshold);
+        if (
+            positionToLiquidate != pozSize
+            && (positionToLiquidate * 101 / 100) >= pozSize
+        ) {
+            // positionToLiquidate is within 1% of the overall position, then liquidate the entire pos
+            positionToLiquidate = pozSize;
+        }
 
         // liquidation price safeguard
         // price before liquidaiton should be within X% range of last liquidation price in the same block or previous block price
