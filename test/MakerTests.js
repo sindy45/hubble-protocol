@@ -522,7 +522,7 @@ describe('Maker Tests', async function() {
             takerPosition = await amm.positions(maker1.address)
             expect(takerPosition.size).to.eq(size)
             expect(takerPosition.openNotional).to.eq(openNotional)
-            expect(takerPosition.liquidationThreshold).to.eq(size.mul(25).div(100).abs())
+            expect(takerPosition.liquidationThreshold).to.eq(size.mul(25).div(100).abs().add(1))
 
             const makerPosition = await amm.makers(maker1.address)
             expect(makerPosition.vAsset).to.eq(ZERO)
@@ -568,7 +568,7 @@ describe('Maker Tests', async function() {
             takerPosition = await amm.positions(maker1.address)
             expect(takerPosition.size).to.eq(size)
             expect(takerPosition.openNotional).to.eq(openNotional)
-            expect(takerPosition.liquidationThreshold).to.eq(size.mul(25).div(100).abs())
+            expect(takerPosition.liquidationThreshold).to.eq(size.mul(25).div(100).abs().add(1))
 
             const makerPosition = await amm.makers(maker1.address)
             expect(makerPosition.vAsset).to.eq(ZERO)
@@ -623,7 +623,7 @@ describe('Maker Tests', async function() {
             takerPosition = await amm.positions(maker1.address)
             expect(takerPosition.size).to.eq(size)
             expect(takerPosition.openNotional).to.eq(openNotional)
-            expect(takerPosition.liquidationThreshold).to.eq(size.mul(25).div(100).abs())
+            expect(takerPosition.liquidationThreshold).to.eq(size.mul(25).div(100).abs().add(1))
             const totalNotionalPosition = await amm.getCloseQuote(takerPosition.size)
             expect(unrealizedPnl).eq(openNotional.sub(totalNotionalPosition))
 
@@ -680,7 +680,7 @@ describe('Maker Tests', async function() {
             takerPosition = await amm.positions(maker1.address)
             expect(takerPosition.size).to.eq(size)
             expect(takerPosition.openNotional).to.eq(openNotional)
-            expect(takerPosition.liquidationThreshold).to.eq(size.mul(25).div(100).abs())
+            expect(takerPosition.liquidationThreshold).to.eq(size.mul(25).div(100).abs().add(1))
             const totalNotionalPosition = await amm.getCloseQuote(takerPosition.size)
             expect(unrealizedPnl).eq(totalNotionalPosition.sub(openNotional))
 
@@ -739,7 +739,7 @@ describe('Maker Tests', async function() {
             takerPosition = await amm.positions(maker1.address)
             expect(takerPosition.size).to.eq(size)
             expect(takerPosition.openNotional).to.eq(openNotional)
-            expect(takerPosition.liquidationThreshold).to.eq(size.mul(25).div(100).abs())
+            expect(takerPosition.liquidationThreshold).to.eq(size.mul(25).div(100).abs().add(1))
 
             const makerPosition = await amm.makers(maker1.address)
             expect(makerPosition.vAsset).to.eq(ZERO)
@@ -796,7 +796,7 @@ describe('Maker Tests', async function() {
             takerPosition = await amm.positions(maker1.address)
             expect(takerPosition.size).to.eq(size)
             expect(takerPosition.openNotional).to.eq(openNotional)
-            expect(takerPosition.liquidationThreshold).to.eq(size.mul(25).div(100).abs())
+            expect(takerPosition.liquidationThreshold).to.eq(size.mul(25).div(100).abs().add(1))
 
             const makerPosition = await amm.makers(maker1.address)
             expect(makerPosition.vAsset).to.eq(ZERO)

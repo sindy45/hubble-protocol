@@ -455,7 +455,7 @@ describe('Partial Liquidation Threshold', async function() {
         await clearingHouse.openPosition(0, baseAssetQuantity, 0)
 
         let position = await amm.positions(alice)
-        expect(position.liquidationThreshold).to.eq(baseAssetQuantity.mul(25).div(100).abs())
+        expect(position.liquidationThreshold).to.eq(baseAssetQuantity.mul(25).div(100).abs().add(1))
 
         // bob longs
         await addMargin(bob, _1e6.mul(40000))
@@ -471,8 +471,8 @@ describe('Partial Liquidation Threshold', async function() {
         await oracle.setUnderlyingPrice(weth.address, markPrice) // to make amm under spread limit
         // alice has 75% position left
         position = await amm.positions(alice)
-        expect(position.size).to.eq(baseAssetQuantity.mul(75).div(100))
-        expect(position.liquidationThreshold).to.eq(baseAssetQuantity.mul(25).div(100).abs())
+        expect(position.size).to.eq(baseAssetQuantity.mul(75).div(100).add(1))
+        expect(position.liquidationThreshold).to.eq(baseAssetQuantity.mul(25).div(100).abs().add(1))
 
         const liquidationPenalty = liquidationEvent.quoteAsset.mul(5e4).div(_1e6)
         const toInsurance = liquidationPenalty.div(2)
@@ -483,8 +483,8 @@ describe('Partial Liquidation Threshold', async function() {
         await clearingHouse.connect(liquidator1).liquidateTaker(alice)
         // alice has 50% position left
         position = await amm.positions(alice)
-        expect(position.size).to.eq(baseAssetQuantity.mul(50).div(100))
-        expect(position.liquidationThreshold).to.eq(baseAssetQuantity.mul(25).div(100).abs())
+        expect(position.size).to.eq(baseAssetQuantity.mul(50).div(100).add(2))
+        expect(position.liquidationThreshold).to.eq(baseAssetQuantity.mul(25).div(100).abs().add(1))
         // alice is out of liquidation zone
         await expect(clearingHouse.connect(liquidator1).liquidateTaker(alice)).to.be.revertedWith(
             'CH: Above Maintenance Margin'
@@ -497,7 +497,7 @@ describe('Partial Liquidation Threshold', async function() {
         await clearingHouse.openPosition(0, baseAssetLong, ethers.constants.MaxUint256)
 
         let position = await amm.positions(alice)
-        expect(position.liquidationThreshold).to.eq(baseAssetLong.mul(25).div(100))
+        expect(position.liquidationThreshold).to.eq(baseAssetLong.mul(25).div(100).add(1))
 
         // bob shorts
         await addMargin(bob, _1e6.mul(40000))
@@ -511,8 +511,8 @@ describe('Partial Liquidation Threshold', async function() {
 
         // alice has 75% position left
         position = await amm.positions(alice)
-        expect(position.liquidationThreshold).to.eq(baseAssetLong.mul(25).div(100))
-        baseAssetLong = baseAssetLong.mul(75).div(100)
+        expect(position.liquidationThreshold).to.eq(baseAssetLong.mul(25).div(100).add(1))
+        baseAssetLong = baseAssetLong.mul(75).div(100).sub(1)
         expect(position.size).to.eq(baseAssetLong)
 
         const liquidationPenalty = liquidationEvent.quoteAsset.mul(5e4).div(_1e6)
@@ -536,7 +536,7 @@ describe('Partial Liquidation Threshold', async function() {
         // liquidation threshold updated
         position = await amm.positions(alice)
         expect(position.size).to.eq(baseAssetLong.add(baseAssetShort))
-        expect(position.liquidationThreshold).to.eq(position.size.mul(25).div(100))
+        expect(position.liquidationThreshold).to.eq(position.size.mul(25).div(100).add(1))
     })
 })
 

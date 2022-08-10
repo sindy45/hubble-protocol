@@ -243,10 +243,10 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
             _amm = amms[i];
             (size,,,) = _amm.positions(trader);
             if (size != 0) {
-                (int _realizedPnl, uint _quoteAsset) = _amm.liquidatePosition(trader);
+                (int _realizedPnl, int _baseAsset, uint _quoteAsset) = _amm.liquidatePosition(trader);
                 realizedPnl += _realizedPnl;
                 quoteAsset += _quoteAsset;
-                emit PositionLiquidated(trader, i, size, _quoteAsset, _realizedPnl, _blockTimestamp());
+                emit PositionLiquidated(trader, i, _baseAsset, _quoteAsset, _realizedPnl, _blockTimestamp());
             }
         }
 

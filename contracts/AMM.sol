@@ -175,7 +175,7 @@ contract AMM is IAMM, Governable {
         require(totalPosSize == 0 || totalPosSize >= minSizeRequirement, "position_less_than_minSize");
         // update liquidation thereshold
         positions[trader].liquidationThreshold = Math.max(
-            totalPosSize * maxLiquidationRatio / 100,
+            (totalPosSize * maxLiquidationRatio / 100) + 1,
             minSizeRequirement
         );
 
@@ -186,19 +186,21 @@ contract AMM is IAMM, Governable {
         override
         external
         onlyClearingHouse
-        returns (int realizedPnl, uint quoteAsset)
+        returns (int realizedPnl, int baseAsset, uint quoteAsset)
     {
         // don't need an ammState check because there should be no active positions
         Position memory position = positions[trader];
         bool isLongPosition = position.size > 0 ? true : false;
         uint pozSize = uint(abs(position.size));
-        uint positionToLiquidate = Math.min(pozSize, position.liquidationThreshold);
+        uint toLiquidate = Math.min(pozSize, position.liquidationThreshold);
+
+        // this is for backwards compatibility with a rounding-error bug which led to ignore upto .75 of a position when setting the liquidationThreshold
         if (
-            positionToLiquidate != pozSize
-            && (positionToLiquidate * 101 / 100) >= pozSize
+            toLiquidate != pozSize
+            && (toLiquidate * 101 / 100) >= pozSize
         ) {
-            // positionToLiquidate is within 1% of the overall position, then liquidate the entire pos
-            positionToLiquidate = pozSize;
+            // toLiquidate is within 1% of the overall position, then liquidate the entire pos
+            toLiquidate = pozSize;
         }
 
         // liquidation price safeguard
@@ -224,9 +226,11 @@ contract AMM is IAMM, Governable {
 
         // liquidate position
         if (isLongPosition) {
-            (realizedPnl, quoteAsset) = _reducePosition(trader, -positionToLiquidate.toInt256(), 0, true /* isLiquidation */);
+            baseAsset = -toLiquidate.toInt256();
+            (realizedPnl, quoteAsset) = _reducePosition(trader, baseAsset, 0, true /* isLiquidation */);
         } else {
-            (realizedPnl, quoteAsset) = _reducePosition(trader, positionToLiquidate.toInt256(), type(uint).max, true /* isLiquidation */);
+            baseAsset = toLiquidate.toInt256();
+            (realizedPnl, quoteAsset) = _reducePosition(trader, baseAsset, type(uint).max, true /* isLiquidation */);
         }
         _emitPositionChanged(trader, realizedPnl);
     }
@@ -420,7 +424,7 @@ contract AMM is IAMM, Governable {
 
                 // update liquidation thereshold
                 position.liquidationThreshold = Math.max(
-                    uint(abs(position.size)) * maxLiquidationRatio / 100,
+                    (uint(abs(position.size)) * maxLiquidationRatio / 100) + 1,
                     minSizeRequirement
                 );
 
