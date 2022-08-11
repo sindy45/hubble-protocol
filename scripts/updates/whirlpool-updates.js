@@ -77,9 +77,10 @@ async function mintUSDC() {
     const usdc = await getContract('ERC20Mintable', contracts.usdc)
     const recipients = [
         // '0xC0BCb6F17Ef0Dd784dcb5a12Bb9Ea9253C1dd998', // faucet
-        '0x835cE0760387BC894E91039a88A00b6a69E65D94' // Deployer
+        // '0x835cE0760387BC894E91039a88A00b6a69E65D94' // Deployer
+        '0xB602D1acBC9ea756e1398AF87BB8b6de73BE8844' // liquidator
     ]
-    const amount = _1e6.mul(2e6)
+    const amount = _1e6.mul(10e6) // 10m
     for (let i = 0; i < recipients.length; i++) {
         await usdc.mint(recipients[i], amount)
     }
@@ -92,7 +93,21 @@ async function updateAMM() {
     await proxyAdmin.upgrade(config.contracts.amms[0].address, newAMM.address)
 }
 
-updateAMM()
+
+async function deployBatchLiquidator() {
+    const BatchLiquidator = await ethers.getContractFactory('BatchLiquidator')
+    const batchLiquidator = await BatchLiquidator.deploy(
+        contracts.ClearingHouse,
+        contracts.MarginAccount,
+        contracts.collateral[0].address,
+        contracts.usdc,
+        contracts.collateral[1].address, // wavax
+        '0xd7f655E3376cE2D7A2b08fF01Eb3B1023191A901' // joeRouter
+    )
+    console.log({ batchLiquidator: batchLiquidator.address }) // 0x85082B8B7c4B79aAfBBbA13b484A28D5A5202C93
+}
+
+mintUSDC()
 .then(() => process.exit(0))
 .catch(error => {
     console.error(error);

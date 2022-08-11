@@ -484,7 +484,7 @@ describe('Position Tests', async function() {
             // bob longs
             const bob = signers[1]
             await addMargin(bob, _1e6.mul(40000))
-            await oracle.setUnderlyingPrice(weth.address, _1e6.mul(1100))
+            await oracle.setUnderlyingPrice(weth.address, _1e6.mul(1110))
             await clearingHouse.connect(bob).openPosition(0, _1e18.mul(140), ethers.constants.MaxUint256)
 
             // console.log((await clearingHouse.getMarginFraction(alice)).toString())
@@ -526,7 +526,7 @@ describe('Position Tests', async function() {
             // bob longs
             const bob = signers[1]
             await addMargin(bob, _1e6.mul(40000))
-            await oracle.setUnderlyingPrice(weth.address, _1e6.mul(1100))
+            await oracle.setUnderlyingPrice(weth.address, _1e6.mul(1110))
             await clearingHouse.connect(bob).openPosition(0, _1e18.mul(140), ethers.constants.MaxUint256)
 
             expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false

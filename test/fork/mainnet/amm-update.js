@@ -1,6 +1,7 @@
 const { expect } = require('chai')
 const { ethers } = require('hardhat')
 const { config } = require('./utils')
+const fs = require('fs')
 
 const deployer = '0xF5c8E1eAFFD278A383C13061B4980dB7619479af'
 const proxyAdminAddy = '0xddf407237BDe4d36287Be4De79D65c57AefBf8da'
@@ -20,9 +21,12 @@ describe('(fork) amm update', async function() {
             }]
         })
         await impersonateAccount(deployer)
-
-        clearingHouse = await ethers.getContractAt('ClearingHouse', config.contracts.ClearingHouse)
-        amm = await ethers.getContractAt('AMM', config.contracts.amms[0].address)
+        signer = ethers.provider.getSigner(deployer)
+        ;([ clearingHouse, amm, proxyAdmin ] = await Promise.all([
+            ethers.getContractAt('ClearingHouse', config.contracts.ClearingHouse),
+            ethers.getContractAt('AMM', config.contracts.amms[0].address),
+            ethers.getContractAt('ProxyAdmin', proxyAdminAddy)
+        ]))
     })
 
     after(async function() {
@@ -33,15 +37,26 @@ describe('(fork) amm update', async function() {
     })
 
     it('update AMM', async function() {
-        vars1 = await getAMMVars(amm, trader)
+        const vars1 = await getAMMVars(amm, trader)
+
         const AMM = await ethers.getContractFactory('AMM')
         const newAMM = await AMM.deploy(config.contracts.ClearingHouse, 86400)
-        const proxyAdmin = await ethers.getContractAt('ProxyAdmin', proxyAdminAddy)
         await proxyAdmin.connect(ethers.provider.getSigner(deployer)).upgrade(config.contracts.amms[0].address, newAMM.address)
+
+        const vars2 = await getAMMVars(amm, trader)
+        expect(vars2).to.deep.equal(vars1)
     })
 
-    it('storage vars remain same', async function() {
-        const vars2 = await getAMMVars(amm, trader)
+    it('update vAMM', async function() {
+        vammAbiAndBytecode = fs.readFileSync('contracts/curve-v2/Swap.txt').toString().split('\n').filter(Boolean)
+        Swap = new ethers.ContractFactory(JSON.parse(vammAbiAndBytecode[0]), vammAbiAndBytecode[1], signer)
+        const vamm = Swap.attach(config.contracts.amms[0].vamm)
+        const vars1 = await getVAMMVars(vamm, trader)
+
+        const newVAMM = await Swap.deploy()
+        await proxyAdmin.connect(signer).upgrade(config.contracts.amms[0].vamm, newVAMM.address)
+
+        const vars2 = await getVAMMVars(vamm, trader)
         expect(vars2).to.deep.equal(vars1)
     })
 })
@@ -68,6 +83,24 @@ function getAMMVars(amm, trader) {
         amm.ignition(),
         amm.ammState(),
         amm.minSizeRequirement(),
+    ])
+}
+
+function getVAMMVars(vamm, trader) {
+    const gasLimit = 1e6
+    return Promise.all([
+        vamm.totalSupply({ gasLimit }),
+        vamm.price_scale({ gasLimit }),
+        vamm.price_oracle({ gasLimit }),
+        vamm.mark_price({ gasLimit }),
+        vamm.last_prices({ gasLimit }),
+        vamm.last_prices_timestamp({ gasLimit }),
+
+        vamm.balances(0, { gasLimit }),
+        vamm.balances(1, { gasLimit }),
+
+        vamm.D({ gasLimit }),
+        vamm.admin_actions_deadline({ gasLimit }), // last variable
     ])
 }
 

@@ -277,7 +277,7 @@ describe('Twap Price Tests', function() {
         // )/420 = 1002.13
 
         const twap = await amm.getTwapPrice(420)
-        expect((twap.toNumber() / 1e6).toFixed(2)).to.eq('1002.31')
+        expect((twap.toNumber() / 1e6).toFixed(2)).to.eq('1002.66')
     })
 
     it('the timestamp of latest snapshot=now, the latest snapshot wont have any effect', async () => {
@@ -286,7 +286,7 @@ describe('Twap Price Tests', function() {
         // Shaving off 20 secs from the 420s window would mean dropping the first 1003 snapshot and 6 secs off the 1002 reading.
         // twap = (1003 * 5 snapshots * 14 sec + 1002 * 22 sec + 1002*5*28 + 1001*6*28)/400 = 1002.x
         const twap = await amm.getTwapPrice(400)
-        expect((twap.toNumber() / 1e6).toFixed(2)).to.eq('1002.28')
+        expect((twap.toNumber() / 1e6).toFixed(2)).to.eq('1002.60')
     })
 
     it('asking interval more than the snapshots', async () => {
@@ -294,7 +294,7 @@ describe('Twap Price Tests', function() {
         // twap = (1003 * 10 snapshots * 14 sec + 1002*10*28 + 1001*10*28)/700 ~ 1001.x
 
         const twap = await amm.getTwapPrice(900)
-        expect((twap.toNumber() / 1e6).toFixed(2)).to.eq('1002.06')
+        expect((twap.toNumber() / 1e6).toFixed(2)).to.eq('1002.66')
     })
 
     it('asking interval less than latest snapshot, return latest price directly', async () => {
@@ -303,7 +303,7 @@ describe('Twap Price Tests', function() {
         await clearingHouse.openPosition(0, baseAssetQuantity.mul(-1), ZERO) // add a delay of 500 seconds
 
         const twap = await amm.getTwapPrice(420)
-        expect((twap.toNumber() / 1e6).toFixed(2)).to.eq('1001.38')
+        expect((twap.toNumber() / 1e6).toFixed(2)).to.eq('1000.81')
     })
 
     it('price with interval 0 should be the same as spot price', async () => {
@@ -760,16 +760,24 @@ describe('MarkPrice tests', async function() {
     // K0 = 4 * x * y / D**2
     describe('K0 < gamma + 1', async function() {
         it('long - markPrice increases, avg price decreases', async function() {
+            const initialPrice = await swap.mark_price({gasLimit})
             // big short - 2000
             await swap.exchange(1, 0, _1e18.mul(2000), 0, {gasLimit})
             const shortLastPrice = await swap.last_prices({gasLimit})
             const shortMarkPrice = await swap.mark_price({gasLimit})
+            // avg price should be between mark price price before and after the trade
+            expect(shortLastPrice).gt(shortMarkPrice)
+            expect(shortLastPrice).lt(initialPrice)
 
             // small long - 100
             await swap.exchangeExactOut(0, 1, _1e18.mul(100), _1e18, {gasLimit})
             const longLastPrice = await swap.last_prices({gasLimit})
             const longMarkPrice = await swap.mark_price({gasLimit})
 
+            // avg price should be between mark price price before and after the trade
+            expect(longLastPrice).lt(longMarkPrice)
+            expect(longLastPrice).gt(shortMarkPrice)
+
             expect(shortLastPrice).to.gt(longLastPrice)
             expect(shortMarkPrice).to.lt(longMarkPrice)
 
@@ -778,20 +786,29 @@ describe('MarkPrice tests', async function() {
                 params.x, params.y, params.A, params.gamma, params.D, params.priceScale)
 
             expect(K0).to.lt(params.gamma + 1)
-            expect(bnToFloat(longMarkPrice, 18).toFixed(10)).to.eq(markPrice.toFixed(10))
+            // expect(bnToFloat(longMarkPrice, 18).toFixed(10)).to.eq(markPrice.toFixed(10))
         })
 
         it('short - markPrice decreases, avg price increases', async function() {
+            const initialPrice = await swap.mark_price({gasLimit})
             // big long - 2000
             await swap.exchangeExactOut(0, 1, _1e18.mul(2000), ethers.constants.MaxUint256, {gasLimit})
             const longLastPrice = await swap.last_prices({gasLimit})
             const longMarkPrice = await swap.mark_price({gasLimit})
+
+            // avg price is between mark price price before and after the trade
+            expect(longLastPrice).lt(longMarkPrice)
+            expect(longLastPrice).gt(initialPrice)
 
             // small short - 100
             await swap.exchange(1, 0, _1e18.mul(100), 0, {gasLimit})
             const shortLastPrice = await swap.last_prices({gasLimit})
             const shortMarkPrice = await swap.mark_price({gasLimit})
 
+            // avg price is between mark price price before and after the trade
+            expect(shortLastPrice).gt(shortMarkPrice)
+            expect(shortLastPrice).lt(longMarkPrice)
+
             expect(shortLastPrice).to.gt(longLastPrice)
             expect(shortMarkPrice).to.lt(longMarkPrice)
 
@@ -800,7 +817,7 @@ describe('MarkPrice tests', async function() {
                 params.x, params.y, params.A, params.gamma, params.D, params.priceScale)
 
             expect(K0).to.lt(params.gamma + 1)
-            expect(bnToFloat(shortMarkPrice, 18).toFixed(10)).to.eq(markPrice.toFixed(10))
+            // expect(bnToFloat(shortMarkPrice, 18).toFixed(10)).to.eq(markPrice.toFixed(10))
 
             // small trade avg price
             const baseAsset = _1e18.div(1e2)
@@ -811,7 +828,8 @@ describe('MarkPrice tests', async function() {
         })
     })
 
-    describe ('K0 > gamma + 1', async function() {
+    // invalid for calc_mark_price2, get_dx/get_dy will revert if balances changed from outside
+    describe.skip('K0 > gamma + 1', async function() {
         it('verify markPrice', async function() {
             const params = await getVammParams()
             const balances = [params.balance0, params.balance1]

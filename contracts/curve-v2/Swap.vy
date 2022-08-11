@@ -331,6 +331,16 @@ def get_xcp(D: uint256) -> uint256:
 def get_virtual_price() -> uint256:
     return 10**18 * self.get_xcp(self.D) / self.totalSupply
 
+@internal
+@view
+def _calc_mark_price2(_balances: uint256[N_COINS], A: uint256, gamma: uint256) -> uint256:
+    # we take the avg price of longing and shorting 0.1 base. so mp = avg * 10 / 2. Also keep it scaled 18 decimals for compatibility
+    smolQ: uint256 = 10 ** 17
+    return (
+        Views(self.views).get_dx(0, 1, smolQ, _balances, self.D)[0] +
+        Views(self.views).get_dy(1, 0, smolQ, _balances, self.D)[0]
+    ) * 5 * PRECISIONS[0]
+
 # @dev works only when N_COINS=2, 0th token is quote asset
 @internal
 @view
@@ -392,7 +402,7 @@ def _calc_mark_price(_balances: uint256[N_COINS], A: uint256, gamma: uint256) ->
 @view
 def calc_mark_price(_balances: uint256[N_COINS]) -> (uint256):
     A_gamma: uint256[2] = self._A_gamma()
-    return self._calc_mark_price(_balances, A_gamma[0], A_gamma[1])
+    return self._calc_mark_price2(_balances, A_gamma[0], A_gamma[1])
 
 
 @internal
@@ -598,7 +608,7 @@ def exchange(i: uint256, j: uint256, dx: uint256, min_dy: uint256) -> (uint256, 
     self.tweak_price(A_gamma, xp, p, 0)
 
     # calculate mark price
-    p = self._calc_mark_price(self.balances, A_gamma[0], A_gamma[1])
+    p = self._calc_mark_price2(self.balances, A_gamma[0], A_gamma[1])
     self.mark_price = p
 
     log TokenExchange(i, dx, j, dy, trade_fee, self._vars())
@@ -697,7 +707,7 @@ def exchangeExactOut(i: uint256, j: uint256, dy: uint256, max_dx: uint256) -> (u
     self.tweak_price(A_gamma, xp, p, 0)
 
     # calculate mark price
-    p = self._calc_mark_price(self.balances, A_gamma[0], A_gamma[1])
+    p = self._calc_mark_price2(self.balances, A_gamma[0], A_gamma[1])
     self.mark_price = p
 
     log TokenExchange(i, dx, j, dy, trade_fee, self._vars())
@@ -832,7 +842,7 @@ def add_liquidity(amounts: uint256[N_COINS], min_mint_amount: uint256) -> (uint2
 
         self.tweak_price(A_gamma, xp, p, D)
         # calculate mark price
-        self.mark_price = self._calc_mark_price(self.balances, A_gamma[0], A_gamma[1])
+        self.mark_price = self._calc_mark_price2(self.balances, A_gamma[0], A_gamma[1])
 
     else:
         self.D = D
