@@ -7,7 +7,8 @@ const {
     assertions,
     parseRawEvent,
     signTransaction,
-    setupContracts
+    setupContracts,
+    setDefaultClearingHouseParams
 } = utils
 
 describe('Clearing House Meta Txs', async function() {
@@ -20,12 +21,7 @@ describe('Clearing House Meta Txs', async function() {
     beforeEach(async function() {
         contracts = await setupContracts()
         ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, forwarder, tradeFee, hubbleViewer } = contracts)
-        await clearingHouse.setParams(
-            1e5 /** maintenance margin */,
-            1e5 /** minimum allowable margin */,
-            5e2 /** tradeFee */,
-            5e4 /** liquidationPenalty */
-        )
+        await setDefaultClearingHouseParams(clearingHouse)
         // add margin
         margin = _1e6.mul(1000)
         await addMargin(signers[0], margin)

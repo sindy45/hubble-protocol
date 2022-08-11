@@ -449,11 +449,15 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         int _maintenanceMargin,
         int _minAllowableMargin,
         uint _tradeFee,
-        uint _liquidationPenality
+        uint _liquidationPenalty,
+        uint _referralShare,
+        uint _tradingFeeDiscount
     ) external onlyGovernance {
-        tradeFee = _tradeFee;
-        liquidationPenalty = _liquidationPenality;
         maintenanceMargin = _maintenanceMargin;
         minAllowableMargin = _minAllowableMargin;
+        tradeFee = _tradeFee;
+        liquidationPenalty = _liquidationPenalty;
+        referralShare = _referralShare;
+        tradingFeeDiscount = _tradingFeeDiscount;
     }
 }

@@ -8,8 +8,8 @@ const proxyAdminAddy = '0xddf407237BDe4d36287Be4De79D65c57AefBf8da'
 const maker = '0x6D3Ee34A020e7565e78540C74300218104C8e4a9' // has liquidity
 const trader = '0x562574AF66836b1d30e69815bDf0740A7BD7C437' // has open position at block 18435700
 
-describe('(fork) amm update', async function() {
-    const blockTag = 18435700
+describe('(fork) v1.1.0 update', async function() {
+    const blockTag = 18503230
     before(async function() {
         await network.provider.request({
             method: "hardhat_reset",
@@ -41,7 +41,7 @@ describe('(fork) amm update', async function() {
 
         const AMM = await ethers.getContractFactory('AMM')
         const newAMM = await AMM.deploy(config.contracts.ClearingHouse, 86400)
-        await proxyAdmin.connect(ethers.provider.getSigner(deployer)).upgrade(config.contracts.amms[0].address, newAMM.address)
+        await proxyAdmin.connect(signer).upgrade(config.contracts.amms[0].address, newAMM.address)
 
         const vars2 = await getAMMVars(amm, trader)
         expect(vars2).to.deep.equal(vars1)
@@ -51,12 +51,23 @@ describe('(fork) amm update', async function() {
         vammAbiAndBytecode = fs.readFileSync('contracts/curve-v2/Swap.txt').toString().split('\n').filter(Boolean)
         Swap = new ethers.ContractFactory(JSON.parse(vammAbiAndBytecode[0]), vammAbiAndBytecode[1], signer)
         const vamm = Swap.attach(config.contracts.amms[0].vamm)
-        const vars1 = await getVAMMVars(vamm, trader)
+        const vars1 = await getVAMMVars(vamm)
 
         const newVAMM = await Swap.deploy()
         await proxyAdmin.connect(signer).upgrade(config.contracts.amms[0].vamm, newVAMM.address)
 
-        const vars2 = await getVAMMVars(vamm, trader)
+        const vars2 = await getVAMMVars(vamm)
+        expect(vars2).to.deep.equal(vars1)
+    })
+
+    it('update ClearingHouse', async function() {
+        const vars1 = await getCHVars(clearingHouse)
+
+        const ClearingHouse = await ethers.getContractFactory('ClearingHouse')
+        const newClearingHouse = await ClearingHouse.deploy('0xEd27FB82DAb4c5384B38aEe8d0Ab81B3b591C0FA') // trustedForwarder
+        await proxyAdmin.connect(signer).upgrade(config.contracts.ClearingHouse, newClearingHouse.address)
+
+        const vars2 = await getCHVars(clearingHouse)
         expect(vars2).to.deep.equal(vars1)
     })
 })
@@ -86,7 +97,23 @@ function getAMMVars(amm, trader) {
     ])
 }
 
-function getVAMMVars(vamm, trader) {
+function getCHVars(ch) {
+    return Promise.all([
+        ch.maintenanceMargin(),
+        ch.tradeFee(),
+        ch.liquidationPenalty(),
+        ch.fixedMakerLiquidationFee(),
+        ch.minAllowableMargin(),
+        ch.referralShare(),
+        ch.tradingFeeDiscount(),
+        ch.vusd(),
+        ch.marginAccount(),
+        ch.amms(0),
+        ch.hubbleReferral(),
+    ])
+}
+
+function getVAMMVars(vamm) {
     const gasLimit = 1e6
     return Promise.all([
         vamm.totalSupply({ gasLimit }),

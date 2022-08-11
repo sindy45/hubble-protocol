@@ -7,7 +7,8 @@ const {
     setupContracts,
     setupRestrictedTestToken,
     filterEvent,
-    addMargin
+    addMargin,
+    setDefaultClearingHouseParams
 } = require('./utils')
 
 describe('Liquidation Tests', async function() {
@@ -18,12 +19,7 @@ describe('Liquidation Tests', async function() {
         ;({ swap, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, oracle, weth, insuranceFund, hubbleViewer } = await setupContracts())
 
         await vusd.grantRole(await vusd.MINTER_ROLE(), admin.address) // will mint vusd to liquidators account
-        await clearingHouse.setParams(
-            1e5 /** maintenance margin */,
-            1e5 /** minimum allowable margin */,
-            5e2 /** tradeFee */,
-            5e4 /** liquidationPenalty */
-        )
+        await setDefaultClearingHouseParams(clearingHouse)
         await amm.setLiquidationParams(100, 1e6)
     })
 
@@ -176,12 +172,7 @@ describe('Multi-collateral Liquidation Tests', async function() {
         alice = signers[0].address
         ;({ swap, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, oracle, weth, insuranceFund } = await setupContracts())
         await vusd.grantRole(await vusd.MINTER_ROLE(), admin.address) // will mint vusd to liquidators account
-        await clearingHouse.setParams(
-            1e5 /** maintenance margin */,
-            1e5 /** minimum allowable margin */,
-            5e2 /** tradeFee */,
-            5e4 /** liquidationPenalty */
-        )
+        await setDefaultClearingHouseParams(clearingHouse)
 
         await amm.setLiquidationParams(100, 1e6)
 
@@ -635,7 +626,7 @@ describe('Liquidation Price Safeguard', async function() {
 
     it('allow price change when there is no trade in the block (only liquidation)', async function() {
         // set maintenanceMargin = minAllowableMargin
-        await clearingHouse.setParams(1e5, 1e5, 5e2, 5e4)
+        await setDefaultClearingHouseParams(clearingHouse)
         // allow 100% position liquidation
         await amm.setLiquidationParams(100, 1e6)
 

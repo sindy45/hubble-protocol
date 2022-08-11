@@ -7,7 +7,8 @@ const {
     impersonateAcccount,
     stopImpersonateAcccount,
     forkCChain,
-    setBalance
+    setBalance,
+    setDefaultClearingHouseParams
 } = require('../utils')
 
 const JoeFactory = '0x9Ad6C38BE94206cA50bb0d90783181662f0Cfa10'
@@ -37,12 +38,7 @@ describe('Atomic liquidations, Arb auction', async function() {
         ;({ marginAccount, clearingHouse, vusd, oracle, marginAccountHelper, hubbleViewer } = await setupContracts({ reserveToken: usdc.address, wavaxAddress: wavax.address }))
 
         await vusd.grantRole(await vusd.MINTER_ROLE(), admin.address) // will mint vusd to liquidators account
-        await clearingHouse.setParams(
-            1e5 /** maintenance margin */,
-            1e5 /** minimum allowable margin */,
-            5e2 /** tradeFee */,
-            5e4 /** liquidationPenalty */
-        )
+        await setDefaultClearingHouseParams(clearingHouse)
 
         await amm.setLiquidationParams(100, 1e6)
         const BatchLiquidator = await ethers.getContractFactory('BatchLiquidator')

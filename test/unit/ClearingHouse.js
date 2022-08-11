@@ -24,7 +24,7 @@ describe('ClearingHouse Unit Tests', function() {
         await expect(clearingHouse.connect(bob).pause()).to.be.revertedWith('ONLY_GOVERNANCE')
         await expect(clearingHouse.connect(bob).unpause()).to.be.revertedWith('ONLY_GOVERNANCE')
         await expect(clearingHouse.connect(bob).whitelistAmm(alice)).to.be.revertedWith('ONLY_GOVERNANCE')
-        await expect(clearingHouse.connect(bob).setParams(0, 0, 0, 0)).to.be.revertedWith('ONLY_GOVERNANCE')
+        await expect(clearingHouse.connect(bob).setParams(0, 0, 0, 0, 0, 0)).to.be.revertedWith('ONLY_GOVERNANCE')
 
         await clearingHouse.setGovernace(bob.address)
         expect(await clearingHouse.governance()).to.eq(bob.address)

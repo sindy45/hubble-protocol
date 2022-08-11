@@ -535,6 +535,17 @@ async function generateConfig(leaderboardAddress, marginAccountHelperAddress, ex
     return res
 }
 
+function setDefaultClearingHouseParams(clearingHouse) {
+    return clearingHouse.setParams(
+        1e5, // maintenance margin
+        1e5, // minimum allowable margin
+        5e2, // tradeFee
+        5e4, // liquidationPenalty
+        0.1 * 1e6, // referralShare = 10%
+        0.05 * 1e6, // feeDiscount = 5%
+    )
+}
+
 function sleep(s) {
     console.log(`Requested a sleep of ${s} seconds...`)
     return new Promise(resolve => setTimeout(resolve, s * 1000));
@@ -603,5 +614,6 @@ module.exports = {
     gotoNextWithdrawEpoch,
     forkCChain,
     gotoNextUnbondEpoch,
-    setBalance
+    setBalance,
+    setDefaultClearingHouseParams
 }

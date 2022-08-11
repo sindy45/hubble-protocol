@@ -3,7 +3,8 @@ const utils = require('../utils')
 const {
     setupContracts,
     addMargin,
-    setupRestrictedTestToken
+    setupRestrictedTestToken,
+    setDefaultClearingHouseParams
 } = utils
 const { constants: { _1e6, _1e18, ZERO } } = utils
 
@@ -166,13 +167,7 @@ describe('Insurance Fund Auction Tests', function() {
         alice = signers[0].address
         ;({ swap, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, oracle, weth, insuranceFund } = await setupContracts())
         await vusd.grantRole(await vusd.MINTER_ROLE(), admin.address) // will mint vusd to liquidators account
-        await clearingHouse.setParams(
-            1e5 /** maintenance margin */,
-            1e5 /** minimum allowable margin */,
-            5e2 /** tradeFee */,
-            5e4 /** liquidationPenalty */
-        )
-
+        await setDefaultClearingHouseParams(clearingHouse)
         await amm.setLiquidationParams(100, 1e6)
 
         // addCollateral

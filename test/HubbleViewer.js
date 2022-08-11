@@ -5,7 +5,8 @@ const {
     setupContracts,
     addMargin,
     assertBounds,
-    unbondAndRemoveLiquidity
+    unbondAndRemoveLiquidity,
+    setDefaultClearingHouseParams
 } = require('./utils')
 
 describe('Hubble Viewer', async function() {
@@ -18,12 +19,7 @@ describe('Hubble Viewer', async function() {
             ;({ swap, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, oracle, weth, hubbleViewer } = contracts)
             const Leaderboard = await ethers.getContractFactory('Leaderboard')
             leaderboard = await Leaderboard.deploy(hubbleViewer.address)
-            await clearingHouse.setParams(
-                1e5 /** maintenance margin */,
-                1e5 /** minimum allowable margin */,
-                5e2 /** tradeFee */,
-                5e4 /** liquidationPenalty */
-            )
+            await setDefaultClearingHouseParams(clearingHouse)
 
             // add margin
             margin = _1e6.mul(4000)

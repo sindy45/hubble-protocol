@@ -12,7 +12,7 @@ const proxyAdminAddy = '0xddf407237BDe4d36287Be4De79D65c57AefBf8da'
 const alice = ethers.provider.getSigner('0x6b365af8d060e7f7989985d62485357e34e2e8f5') // 4m usdc
 
 describe('(fork) mark price', async function() {
-    const blockTag = 18435700
+    const blockTag = 18503230
     before(async function() {
         await network.provider.request({
             method: "hardhat_reset",
@@ -44,15 +44,6 @@ describe('(fork) mark price', async function() {
             method: "hardhat_reset",
             params: [],
         });
-    })
-
-    it('incorrect markPrice and avg price', async function() {
-        const markPrice = await amm.lastPrice()
-        const base = _1e18.mul(10)
-        const avgLongPrice = (await hubbleViewer.getQuote(base, 0)).mul(_1e18).div(base)
-        const avgShortPrice = (await hubbleViewer.getQuote(base.mul(-1), 0)).mul(_1e18).div(base)
-        expect(avgLongPrice).lt(markPrice) // average long price should be greater than markPrice
-        expect(avgShortPrice).lt(markPrice)
     })
 
     it('update vAMM', async function() {
