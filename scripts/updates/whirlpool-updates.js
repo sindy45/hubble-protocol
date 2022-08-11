@@ -107,7 +107,29 @@ async function deployBatchLiquidator() {
     console.log({ batchLiquidator: batchLiquidator.address }) // 0x85082B8B7c4B79aAfBBbA13b484A28D5A5202C93
 }
 
-mintUSDC()
+async function updatev110() {
+    const [ signer ] = await ethers.getSigners()
+    const proxyAdmin = await ethers.getContractAt('ProxyAdmin', proxyAdminAddy)
+
+    const vammAbiAndBytecode = fs.readFileSync('contracts/curve-v2/Swap.txt').toString().split('\n').filter(Boolean)
+    const Swap = new ethers.ContractFactory(JSON.parse(vammAbiAndBytecode[0]), vammAbiAndBytecode[1], signer)
+    const newVAMM = await Swap.deploy()
+    console.log({ vamm: newVAMM.address })
+
+    const AMM = await ethers.getContractFactory('AMM')
+    const newAMM = await AMM.deploy(config.contracts.ClearingHouse, 86400)
+    console.log({ amm: newAMM.address })
+
+    const ClearingHouse = await ethers.getContractFactory('ClearingHouse')
+    const newCH = await ClearingHouse.deploy('0xaCEc31046a2B59B75E8315Fe4BCE4Da943237817') // trustedForwarder
+    console.log({ newCH: newCH.address })
+
+    await proxyAdmin.upgrade(config.contracts.amms[0].vamm, newVAMM.address)
+    await proxyAdmin.upgrade(config.contracts.amms[0].address, newAMM.address)
+    await proxyAdmin.upgrade(config.contracts.ClearingHouse, newCH.address)
+}
+
+updatev110()
 .then(() => process.exit(0))
 .catch(error => {
     console.error(error);
