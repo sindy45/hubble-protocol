@@ -57,6 +57,13 @@ describe('Atomic liquidations, Arb auction', async function() {
         await marginAccount.whitelistCollateral(Wavax, 0.8 * 1e6) // weight = 0.8
     })
 
+    after(async function() {
+        await network.provider.request({
+            method: "hardhat_reset",
+            params: [],
+        });
+    })
+
     it('add margin with avax', async function() {
         const avaxMargin = _1e18.mul(1000 * 1e6).div(avaxOraclePrice) // $1000, decimals = 18
         await marginAccountHelper.addMarginWithAvax({value: avaxMargin})
@@ -189,6 +196,13 @@ describe('Atomic liquidations supernova', async function() {
         hubbleViewer = await ethers.getContractAt('HubbleViewer', '0x03F075fA17aCc799606F78DB1f17CB0d0f0e2e48')
         marginAccount = await ethers.getContractAt('MarginAccount', '0x4BFC1482ecbbc0d448920ee471312E28f85ab903')
         clearingHouse = await ethers.getContractAt('ClearingHouse', '0xdAb9110f9ba395f72B6D6eB12F687E0DFBb1fb85')
+    })
+    
+    after(async function() {
+        await network.provider.request({
+            method: "hardhat_reset",
+            params: [],
+        });
     })
 
     it('flash loan and liquidate', async function() {

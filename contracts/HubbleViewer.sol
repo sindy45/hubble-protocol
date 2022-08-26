@@ -13,6 +13,7 @@ contract HubbleViewer is IHubbleViewer {
     uint256 constant PRECISION_UINT = 1e6;
 
     uint constant VUSD_IDX = 0;
+    uint constant WAVAX_IDX = 1;
 
     IClearingHouse public immutable clearingHouse;
     IMarginAccount public immutable marginAccount;
@@ -132,162 +133,6 @@ contract HubbleViewer is IHubbleViewer {
             IAMM amm = clearingHouse.amms(i);
             _markets[i] = MarketInfo(address(amm), amm.underlyingAsset());
         }
-    }
-
-    /**
-    * Get final margin fraction and liquidation price if user longs/shorts baseAssetQuantity
-    * @param idx AMM Index
-    * @param baseAssetQuantity Positive if long, negative if short, scaled 18 decimals
-    * @return expectedMarginFraction Resultant Margin fraction when the trade is executed
-    * @return quoteAssetQuantity USD rate for the trade
-    * @return liquidationPrice Mark Price at which trader will be liquidated
-    */
-    function getTakerExpectedMFAndLiquidationPrice(address trader, uint idx, int256 baseAssetQuantity)
-        external
-        view
-        returns (int256 expectedMarginFraction, uint256 quoteAssetQuantity, uint256 liquidationPrice)
-    {
-        IAMM amm = clearingHouse.amms(idx);
-        // get quoteAsset required to swap baseAssetQuantity
-        quoteAssetQuantity = getQuote(baseAssetQuantity, idx);
-
-        // get total notionalPosition and margin (including unrealizedPnL and funding)
-        (uint256 notionalPosition, int256 margin) = clearingHouse.getNotionalPositionAndMargin(trader, true /* includeFundingPayments */, IClearingHouse.Mode.Min_Allowable_Margin);
-
-        // get market specific position info
-        (int256 takerPosSize,,,) = amm.positions(trader);
-        uint takerNowNotional = amm.getCloseQuote(takerPosSize);
-        uint takerUpdatedNotional = amm.getCloseQuote(takerPosSize + baseAssetQuantity);
-        // Calculate new total notionalPosition
-        notionalPosition = notionalPosition + takerUpdatedNotional - takerNowNotional;
-
-        margin -= _calculateTradeFee(quoteAssetQuantity).toInt256();
-        expectedMarginFraction = _getMarginFraction(margin, notionalPosition);
-        liquidationPrice = _getLiquidationPrice(trader, amm, notionalPosition, margin, baseAssetQuantity, quoteAssetQuantity);
-    }
-
-    /**
-    * Get final margin fraction and liquidation price if user add/remove liquidity
-    * @param idx AMM Index
-    * @param vUSD vUSD amount to be added/removed in the pool (in 6 decimals)
-    * @param isRemove true is liquidity is being removed, false if added
-    * @return expectedMarginFraction Resultant Margin fraction after the tx
-    * @return liquidationPrice Mark Price at which maker will be liquidated
-    */
-    function getMakerExpectedMFAndLiquidationPrice(address trader, uint idx, uint vUSD, bool isRemove)
-        external
-        view
-        returns (int256 expectedMarginFraction, uint256 liquidationPrice)
-    {
-        // get total notionalPosition and margin (including unrealizedPnL and funding)
-        (uint256 notionalPosition, int256 margin) = clearingHouse.getNotionalPositionAndMargin(trader, true /* includeFundingPayments */, IClearingHouse.Mode.Min_Allowable_Margin);
-
-        IAMM amm = clearingHouse.amms(idx);
-
-        // get taker info
-        (int256 takerPosSize,,,) = amm.positions(trader);
-        uint takerNotional = amm.getCloseQuote(takerPosSize);
-
-        // get maker info
-        IAMM.Maker memory maker = amm.makers(trader);
-
-        {
-            // calculate total value of deposited liquidity after the tx
-            if (isRemove) {
-                (,uint dToken) = getMakerQuote(idx, vUSD, false /* isBase */, false /* deposit */);
-                maker.vUSD = maker.vUSD * (maker.dToken - dToken) / maker.dToken;
-            } else {
-                maker.vUSD += vUSD;
-            }
-        }
-
-        {
-            // calculate effective notionalPosition
-            (int256 makerPosSize,,) = getMakerPositionAndUnrealizedPnl(trader, idx);
-            uint totalPosNotional = amm.getCloseQuote(makerPosSize + takerPosSize);
-            notionalPosition += _max(2 * maker.vUSD + takerNotional, totalPosNotional);
-        }
-
-        {
-            (uint nowNotional,,,) = amm.getNotionalPositionAndUnrealizedPnl(trader);
-            notionalPosition -= nowNotional;
-        }
-
-        expectedMarginFraction = _getMarginFraction(margin, notionalPosition);
-        liquidationPrice = _getLiquidationPrice(trader, amm, notionalPosition, margin, 0, 0);
-    }
-
-    function getLiquidationPrice(address trader, uint idx) external view returns (uint liquidationPrice) {
-        // get total notionalPosition and margin (including unrealizedPnL and funding)
-        (uint256 notionalPosition, int256 margin) = clearingHouse.getNotionalPositionAndMargin(trader, true /* includeFundingPayments */, IClearingHouse.Mode.Maintenance_Margin);
-        IAMM amm = clearingHouse.amms(idx);
-        liquidationPrice = _getLiquidationPrice(trader, amm, notionalPosition, margin, 0, 0);
-    }
-
-    /**
-    * @dev At liquidation,
-    * (margin + pnl) / notionalPosition = maintenanceMargin (MM)
-    * => pnl = MM * notionalPosition - margin
-    *
-    * for long, pnl = liquidationPrice * size - openNotional
-    * => liquidationPrice = (pnl + openNotional) / size
-    *
-    * for short, pnl = openNotional - liquidationPrice * size
-    * => liquidationPrice = (openNotional - pnl) / size
-    */
-    function _getLiquidationPrice(
-            address trader,
-            IAMM amm,
-            uint256 notionalPosition,
-            int256 margin,
-            int256 baseAssetQuantity,
-            uint quoteAssetQuantity
-        )
-        internal
-        view
-        returns(uint256 liquidationPrice)
-    {
-        if (notionalPosition == 0) {
-            return 0;
-        }
-
-        (, int256 unrealizedPnl, int256 totalPosSize, uint256 openNotional) = amm.getNotionalPositionAndUnrealizedPnl(trader);
-
-        if (baseAssetQuantity != 0) {
-            // Calculate effective position and openNotional
-            if (baseAssetQuantity * totalPosSize >= 0) { // increasingPosition i.e. same direction trade
-                openNotional += quoteAssetQuantity;
-            } else { // open reverse position
-                uint totalPosNotional = amm.getCloseQuote(totalPosSize + baseAssetQuantity);
-                if (_abs(totalPosSize) >= _abs(baseAssetQuantity)) { // position side remains same after the trade
-                    (openNotional,) = amm.getOpenNotionalWhileReducingPosition(
-                        totalPosSize,
-                        totalPosNotional,
-                        unrealizedPnl,
-                        baseAssetQuantity
-                    );
-                } else { // position side changes after the trade
-                    openNotional = totalPosNotional;
-                }
-            }
-            totalPosSize += baseAssetQuantity;
-        }
-
-        int256 pnlForLiquidation = clearingHouse.maintenanceMargin() * notionalPosition.toInt256() / PRECISION_INT - margin;
-        int256 _liquidationPrice;
-        if (totalPosSize > 0) {
-            _liquidationPrice = (openNotional.toInt256() + pnlForLiquidation) * 1e18 / totalPosSize;
-        } else if (totalPosSize < 0) {
-            _liquidationPrice = (openNotional.toInt256() - pnlForLiquidation) * 1e18 / (-totalPosSize);
-        }
-
-        // negative liquidation price is possible when position size is small compared to margin added and
-        // hence pnl will not be big enough to reach liquidation
-        // in this case, (openNotional + pnlForLiquidation) < 0 because of high margin
-        if (_liquidationPrice < 0) {
-            _liquidationPrice = 0;
-        }
-        return _liquidationPrice.toUint256();
     }
 
     /**
@@ -518,26 +363,9 @@ contract HubbleViewer is IHubbleViewer {
         }
     }
 
-    // Internal
-
-    function _calculateTradeFee(uint quoteAsset) internal view returns (uint) {
-        return quoteAsset * clearingHouse.tradeFee() / PRECISION_UINT;
-    }
-
     // Pure
-
-    function _getMarginFraction(int256 accountValue, uint notionalPosition) private pure returns(int256) {
-        if (notionalPosition == 0) {
-            return type(int256).max;
-        }
-        return accountValue * PRECISION_INT / notionalPosition.toInt256();
-    }
 
     function _abs(int x) private pure returns (int) {
         return x >= 0 ? x : -x;
-    }
-
-    function _max(uint x, uint y) private pure returns (uint) {
-        return x >= y ? x : y;
     }
 }

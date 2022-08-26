@@ -260,6 +260,8 @@ interface IHubbleViewer {
         returns (int256 position, uint openNotional, int256 unrealizedPnl);
     function clearingHouse() external returns(IClearingHouse);
     function marginAccount() external returns(IMarginAccount);
+    function getMakerQuote(uint idx, uint inputAmount, bool isBase, bool deposit) external view returns (uint fillAmount, uint dToken);
+    function getQuote(int256 baseAssetQuantity, uint idx) external view returns(uint256 quoteAssetQuantity);
 }
 
 interface IHubbleReferral {

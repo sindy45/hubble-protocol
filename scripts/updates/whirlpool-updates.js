@@ -129,7 +129,20 @@ async function updatev110() {
     await proxyAdmin.upgrade(config.contracts.ClearingHouse, newCH.address)
 }
 
-updatev110()
+async function deployHubbleViewer() {
+    const HubbleViewer = await ethers.getContractFactory('HubbleViewer')
+    hubbleViewer = await HubbleViewer.deploy(config.contracts.ClearingHouse, config.contracts.MarginAccount, config.contracts.Registry)
+
+    const LiquidationPriceViewer = await ethers.getContractFactory('LiquidationPriceViewer')
+    liquidationPriceViewer = await LiquidationPriceViewer.deploy(hubbleViewer.address)
+
+    console.log({
+        hubbleViewer: hubbleViewer.address,
+        liquidationPriceViewer: liquidationPriceViewer.address
+    })
+}
+
+deployHubbleViewer()
 .then(() => process.exit(0))
 .catch(error => {
     console.error(error);

@@ -119,6 +119,9 @@ async function setupContracts(options = {}) {
     const HubbleViewer = await ethers.getContractFactory('HubbleViewer')
     hubbleViewer = await HubbleViewer.deploy(clearingHouse.address, marginAccount.address, registry.address, getTxOptions())
 
+    const LiquidationPriceViewer = await ethers.getContractFactory('LiquidationPriceViewer')
+    liquidationPriceViewer = await LiquidationPriceViewer.deploy(hubbleViewer.address, getTxOptions())
+
     const Leaderboard = await ethers.getContractFactory('Leaderboard')
     leaderboard = await Leaderboard.deploy(hubbleViewer.address, getTxOptions())
 
@@ -146,6 +149,7 @@ async function setupContracts(options = {}) {
         marginAccountHelper,
         clearingHouse,
         hubbleViewer,
+        liquidationPriceViewer,
         hubbleReferral,
         vusd,
         usdc,

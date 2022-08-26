@@ -319,7 +319,7 @@ describe('AMM unit tests', async function() {
         bob = signers[1]
 
         contracts = await setupContracts({ amm: { initialLiquidity: 0, ammState: 0 }})
-        ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, swap, hubbleViewer } = contracts)
+        ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, swap, hubbleViewer, liquidationPriceViewer } = contracts)
 
         // add margin
         margin = _1e6.mul(2000)
@@ -363,7 +363,7 @@ describe('AMM unit tests', async function() {
         const rate = 1000 // $1k
         vUSD = _1e6.mul(initialLiquidity * rate)
         await utils.addMargin(maker, vUSD)
-        const { expectedMarginFraction } = await hubbleViewer.getMakerExpectedMFAndLiquidationPrice(maker.address, 0, vUSD, false)
+        const { expectedMarginFraction } = await liquidationPriceViewer.getMakerExpectedMFAndLiquidationPrice(maker.address, 0, vUSD, false)
         expect(expectedMarginFraction).to.eq('500000')
         await clearingHouse.connect(maker).commitLiquidity(0, vUSD.mul(2))
     })
