@@ -112,9 +112,8 @@ async function updatev120() {
 
     const vammAbiAndBytecode = fs.readFileSync('contracts/curve-v2/Swap.txt').toString().split('\n').filter(Boolean)
     const Swap = new ethers.ContractFactory(JSON.parse(vammAbiAndBytecode[0]), vammAbiAndBytecode[1], signer)
-    const vamm = Swap.attach(config.contracts.amms[0].vamm)
     const newVAMM = await Swap.deploy()
-    console.log({ vamm: newVAMM.address })
+    console.log({ vammImpl: newVAMM.address }) // 0x79Be6c6549eb0CAec8Ca58E2435ecdB6E447fC87
 
     // const AMM = await ethers.getContractFactory('AMM')
     // const newAMM = await AMM.deploy(config.contracts.ClearingHouse, 86400)
@@ -122,13 +121,16 @@ async function updatev120() {
 
     const ClearingHouse = await ethers.getContractFactory('ClearingHouse')
     const newCH = await ClearingHouse.deploy('0xaCEc31046a2B59B75E8315Fe4BCE4Da943237817') // trustedForwarder
-    console.log({ newCH: newCH.address })
+    console.log({ newCH: newCH.address }) // 0x17c6E16F7EC6e17a9FA3786D28740e9551aeFb91
+
+    const clearingHouse = ClearingHouse.attach(config.contracts.ClearingHouse)
+    const vamm = Swap.attach(config.contracts.amms[0].vamm)
 
     const proxyAdmin = await ethers.getContractAt('ProxyAdmin', proxyAdminAddy)
     await proxyAdmin.upgrade(config.contracts.amms[0].vamm, newVAMM.address)
     const newFee = '7500000' // 7.5 bps
     await vamm.setNewParameters(newFee)
-    await clearingHouse.connect(signer).setParams(
+    await clearingHouse.setParams(
       100000, // maintenanceMargin
       200000, // minAllowableMargin
       250, // tradeFee
