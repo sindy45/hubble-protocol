@@ -8,19 +8,20 @@ const {
     stopImpersonateAcccount,
     forkCChain,
     setBalance,
-    setDefaultClearingHouseParams
+    setDefaultClearingHouseParams,
+    bnToFloat,
+    BigNumber
 } = require('../utils')
 
-const JoeFactory = '0x9Ad6C38BE94206cA50bb0d90783181662f0Cfa10'
 const Wavax = '0xb31f66aa3c1e785363f0875a1b74e27b85fd66c7'
+const Weth = '0x49D5c2BdFfac6CE2BFdB6640F4F80f226bc10bAB'
 const Usdc = '0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e'
 const JoeRouter = '0x60aE616a2155Ee3d9A68541Ba4544862310933d4'
-const wavaxWhale = '0x9d1968765e37f5cbd4f1c99a012cf0b5b07067ae' // 381 wavax
-// const usdcWhale = '0x7d0f7ad75687d0616701126ef6d0dc6e9725d435' // 100k usdc
+const wethWhale = '0xf3c9861425c32fe81229cebc53fea58fd8cb07cc' // 9428 weth
 
 describe('Atomic liquidations, Arb auction', async function() {
     before(async function() {
-        await forkCChain(16010497)
+        await forkCChain(19644700)
         signers = await ethers.getSigners()
         ;([ _, bob, liquidator1, liquidator2, liquidator3, admin, charlie ] = signers)
         alice = signers[0].address
@@ -51,10 +52,15 @@ describe('Atomic liquidations, Arb auction', async function() {
             JoeRouter
         )
 
+        weth = await ethers.getContractAt('IERC20', Weth)
+
         // addCollateral
-        avaxOraclePrice = 1e6 * 17 // joe pool price at forked block
+        avaxOraclePrice = 1e6 * 18.5 // joe pool price at forked block
+        wethOraclePrice = 1e6 * 1538 // joe pool price at forked block
         await oracle.setUnderlyingPrice(Wavax, avaxOraclePrice),
         await marginAccount.whitelistCollateral(Wavax, 0.8 * 1e6) // weight = 0.8
+        await oracle.setUnderlyingPrice(Weth, wethOraclePrice),
+        await marginAccount.whitelistCollateral(Weth, 0.8 * 1e6) // weight = 0.8
     })
 
     after(async function() {
@@ -65,11 +71,20 @@ describe('Atomic liquidations, Arb auction', async function() {
     })
 
     it('add margin with avax', async function() {
-        const avaxMargin = _1e18.mul(1000 * 1e6).div(avaxOraclePrice) // $1000, decimals = 18
-        await marginAccountHelper.addMarginWithAvax({value: avaxMargin})
-        await marginAccountHelper.connect(charlie).addMarginWithAvax({value: avaxMargin})
+        const avaxMargin = _1e18.mul(500 * 1e6).div(avaxOraclePrice) // $500, decimals = 18
+        const wethMargin = _1e18.mul(500 * 1e6).div(wethOraclePrice) // $500, decimals = 18
+        // console.log(bnToFloat(avaxMargin, 18), bnToFloat(wethMargin, 18)) // 27.02 avax and .32 weth
+        await impersonateAcccount(wethWhale)
+        await weth.connect(ethers.provider.getSigner(wethWhale)).transfer(alice, wethMargin)
+        await weth.approve(marginAccount.address, wethMargin)
+        await Promise.all([
+            marginAccountHelper.addMarginWithAvax({value: avaxMargin}),
+            marginAccount.addMargin(2, wethMargin),
+            marginAccountHelper.connect(charlie).addMarginWithAvax({value: avaxMargin.mul(2)})
+        ])
         expect(await marginAccount.margin(1, alice)).to.eq(avaxMargin)
-        expect(await marginAccount.margin(1, charlie.address)).to.eq(avaxMargin)
+        expect(await marginAccount.margin(2, alice)).to.eq(wethMargin)
+        expect(await marginAccount.margin(1, charlie.address)).to.eq(avaxMargin.mul(2))
     })
 
     it('liquidate alice position', async function() {
@@ -92,42 +107,161 @@ describe('Atomic liquidations, Arb auction', async function() {
         expect((await marginAccount.isLiquidatable(alice, true))[0]).to.eq(0) // IS_LIQUIDATABLE
     })
 
-    it('liquidate and sell avax', async function() {
-        // repay 50%
+    it('liquidateAndSell avax', async function() {
         const debt = await marginAccount.margin(0, alice)
-        const repay = debt.div(-2)
+        // console.log({ debt: bnToFloat(debt) }) // -903.206
+        repay = debt.div(-4) // repay 20% - this value is also used in the next test
+        const minProfit = repay.div(20).mul(_1e6).div(avaxOraclePrice) // / 20 == 5% profit
         await vusd.connect(admin).mint(batchLiquidator.address, repay)
         expect(await usdc.balanceOf(batchLiquidator.address)).to.eq(ZERO)
 
-        const minUsdcOut = repay.add(repay.mul(3).div(100)) // min 3% profit
-        await batchLiquidator.liquidateAndSellAvax(alice, repay, 0)
+        await batchLiquidator.liquidateAndSell(alice, repay, 1, minProfit)
 
         remainingDebt = debt.add(repay)
-        expect(await usdc.balanceOf(batchLiquidator.address)).to.gte(minUsdcOut)
-        expect(await wavax.balanceOf(batchLiquidator.address)).to.eq(ZERO)
+        expect((await wavax.balanceOf(batchLiquidator.address)).gt(minProfit)).to.be.true
+        expect(await usdc.balanceOf(batchLiquidator.address)).to.eq(repay) // vusd was used to repay but collateral was sold for usdc
         expect(await vusd.balanceOf(batchLiquidator.address)).to.eq(ZERO)
         expect(await marginAccount.margin(0, alice)).to.eq(remainingDebt)
+        // console.log(bnToFloat(await marginAccount.margin(1, alice), 18)) // 14.2
+        // console.log(bnToFloat(await marginAccount.margin(2, alice), 18)) // 0.32
         // alice is still liquidable
         expect((await marginAccount.isLiquidatable(alice, true))[0]).to.eq(0) // IS_LIQUIDATABLE
     })
 
-    it('flash loan and liquidate', async function() {
-        // withdraw usdc from batchLiquidator
-        await batchLiquidator.withdraw(usdc.address)
-        expect(await usdc.balanceOf(batchLiquidator.address)).to.eq(ZERO)
+    it('liquidateAndSell weth', async function() {
+        const debt = await marginAccount.margin(0, alice)
+        // console.log({ debt: bnToFloat(debt) }) // -677.404
+        expect(await weth.balanceOf(batchLiquidator.address)).to.eq(ZERO)
+        const minProfit = repay.div(20).mul(_1e6).div(wethOraclePrice) // / 20 == 5% profit
 
-        // repay whole debt
-        const minProfit = _1e18.mul(9).div(10) // min 0.9 avax profit
-        await batchLiquidator.flashLiquidateWithAvax(alice, remainingDebt.mul(-1), minProfit)
+        // contract has usdc from previous test, it will be used to minted vusd to repay debt in the following call
+        await batchLiquidator.liquidateMarginAccount(alice, repay, 2, minProfit)
 
-        expect(await usdc.balanceOf(batchLiquidator.address)).to.eq(ZERO)
-        expect(await wavax.balanceOf(batchLiquidator.address)).to.gte(minProfit)
+        remainingDebt = debt.add(repay)
+        expect((await weth.balanceOf(batchLiquidator.address)).gt(minProfit)).to.be.true // made a profit
+        expect(await usdc.balanceOf(batchLiquidator.address)).to.eq(repay) // we will get usdc back again
         expect(await vusd.balanceOf(batchLiquidator.address)).to.eq(ZERO)
-        expect(await marginAccount.margin(0, alice)).to.eq(ZERO)
-        expect((await marginAccount.isLiquidatable(alice, true))[0]).to.eq(2) // NO_DEBT
+        expect(await marginAccount.margin(0, alice)).to.eq(remainingDebt)
+        // console.log(bnToFloat(await marginAccount.margin(1, alice), 18)) // 14.2
+        // console.log(bnToFloat(await marginAccount.margin(2, alice), 18)) // 0.1709
+        // alice is still liquidable
+        expect((await marginAccount.isLiquidatable(alice, true))[0]).to.eq(0) // IS_LIQUIDATABLE
+    })
+
+    it('withdraw coins', async function() {
+        let [ usdcBal, avaxBal, wethBal ] = await Promise.all([
+            usdc.balanceOf(batchLiquidator.address),
+            wavax.balanceOf(batchLiquidator.address),
+            weth.balanceOf(batchLiquidator.address),
+        ])
+        expect(usdcBal.gt(ZERO)).to.be.true
+        expect(avaxBal.gt(ZERO)).to.be.true
+        expect(wethBal.gt(ZERO)).to.be.true
+        await batchLiquidator.execute(
+            [ usdc.address, wavax.address, weth.address, ],
+            [
+                usdc.interface.encodeFunctionData('transfer', [alice, usdcBal]),
+                wavax.interface.encodeFunctionData('transfer', [alice, avaxBal]),
+                weth.interface.encodeFunctionData('transfer', [alice, wethBal]),
+            ]
+        )
+
+        ;([ usdcBal, avaxBal, wethBal, vusdBal ] = await Promise.all([
+            usdc.balanceOf(batchLiquidator.address),
+            wavax.balanceOf(batchLiquidator.address),
+            weth.balanceOf(batchLiquidator.address),
+            vusd.balanceOf(batchLiquidator.address),
+        ]))
+        const [ usdcBalAlice, avaxBalAlice, wethBalAlice ] = await Promise.all([
+            usdc.balanceOf(batchLiquidator.address),
+            wavax.balanceOf(batchLiquidator.address),
+            weth.balanceOf(batchLiquidator.address),
+        ])
+        expect(usdcBal).to.eq(ZERO)
+        expect(avaxBal).to.eq(ZERO)
+        expect(wethBal).to.eq(ZERO)
+        expect(vusdBal).to.eq(ZERO)
+        expect(usdcBalAlice).to.eq(usdcBal)
+        expect(avaxBalAlice).to.eq(avaxBal)
+        expect(wethBalAlice).to.eq(wethBal)
+    })
+
+    it('liquidateMulti (flashLiquidate)', async function() {
+        // repay whole debt
+        const debt = await marginAccount.margin(0, alice)
+        const avaxRepay = debt.div(4).abs() // trying to repay all debt, causes ABOVE_THRESHOLD in the first liquidation, defeating the purpose of this test
+        // we will pay exactly the amount to seize all weth collateral
+        const wethRepay = (await marginAccount.margin(2, alice)).mul(wethOraclePrice).div(BigNumber.from(10).pow(16).mul(105))
+        // console.log({ debt: bnToFloat(debt), avaxRepay: bnToFloat(avaxRepay), wethRepay: bnToFloat(wethRepay) }) // -451, 112, 250
+        const avaxMinProfit = avaxRepay.div(20).mul(_1e6).div(avaxOraclePrice)
+        const wethMinProfit = ZERO // repay.div(20).mul(_1e6).div(wethOraclePrice)
+
+        await batchLiquidator.liquidateMulti(alice, [avaxRepay, wethRepay], [1, 2], [avaxMinProfit, wethMinProfit])
+
+        // for debugging
+        // await batchLiquidator.liquidateMulti(alice, [avaxRepay], [1], [avaxMinProfit])
+        // console.log(bnToFloat(await marginAccount.margin(1, alice), 18))
+        // console.log(bnToFloat(await marginAccount.margin(2, alice), 18))
+        // console.log(bnToFloat(await marginAccount.margin(0, alice)))
+
+
+        // await batchLiquidator.liquidateMulti(alice, [wethRepay], [2], [wethMinProfit])
+        // console.log(bnToFloat(await marginAccount.margin(1, alice), 18))
+        // console.log(bnToFloat(await marginAccount.margin(2, alice), 18))
+        // console.log(bnToFloat(await marginAccount.margin(0, alice)))
+
+        expect(await usdc.balanceOf(batchLiquidator.address)).to.eq(ZERO)
+        expect(await wavax.balanceOf(batchLiquidator.address)).to.gte(avaxMinProfit)
+        expect(await weth.balanceOf(batchLiquidator.address)).to.gte(wethMinProfit)
+        expect((await marginAccount.isLiquidatable(alice, true))[0]).to.eq(3) // ABOVE_THRESHOLD
+    })
+
+    it('remove margin', async function() {
+        // we settle the remaining debt and assert remove margin works as expected
+        let [ vusdMargin, wavaxMargin, wethMargin, avaxBalAlice, wethBalAlice ] = await Promise.all([
+            marginAccount.margin(0, alice),
+            marginAccount.margin(1, alice),
+            marginAccount.margin(2, alice),
+            wavax.balanceOf(alice),
+            weth.balanceOf(alice),
+        ])
+        vusdMargin = vusdMargin.abs()
+        await vusd.connect(admin).mint(alice, vusdMargin)
+        await vusd.approve(marginAccount.address, vusdMargin)
+        await marginAccount.addMargin(0, vusdMargin)
+
+        await marginAccount.removeMargin(2, wethMargin)
+
+        const avaxBalance = await ethers.provider.getBalance(alice)
+        const removeAmount = _1e18.mul(3)
+        let tx = await marginAccount.removeAvaxMargin(removeAmount)
+        tx = await tx.wait()
+        const txFee = tx.cumulativeGasUsed.mul(tx.effectiveGasPrice)
+
+        expect(await ethers.provider.getBalance(alice)).to.eq(avaxBalance.add(removeAmount).sub(txFee))
+        expect(await marginAccount.margin(1, alice)).to.eq(wavaxMargin.sub(removeAmount))
+        expect(await marginAccount.margin(2, alice)).to.eq(ZERO)
+        expect(await wavax.balanceOf(alice)).to.eq(avaxBalAlice) // no change
+        expect(await weth.balanceOf(alice)).to.eq(wethBalAlice.add(wethMargin))
     })
 
     it('flash buy IF auction', async function() {
+        // flush batchLiquidator balances
+        let [ usdcBal, avaxBal, wethBal ] = await Promise.all([
+            usdc.balanceOf(batchLiquidator.address),
+            wavax.balanceOf(batchLiquidator.address),
+            weth.balanceOf(batchLiquidator.address),
+        ])
+        await batchLiquidator.execute(
+            [ usdc.address, wavax.address, weth.address, ],
+            [
+                usdc.interface.encodeFunctionData('transfer', [alice, usdcBal]),
+                wavax.interface.encodeFunctionData('transfer', [alice, avaxBal]),
+                weth.interface.encodeFunctionData('transfer', [alice, wethBal]),
+            ]
+        )
+
+        // real test starts
         // create bad debt
         await clearingHouse.connect(bob).openPosition(0, _1e18.mul(10), ethers.constants.MaxUint256)
         await clearingHouse.connect(liquidator1).liquidateTaker(charlie.address)
@@ -140,32 +274,16 @@ describe('Atomic liquidations, Arb auction', async function() {
         // increase time by 15 min
         await network.provider.send('evm_setNextBlockTimestamp', [auctionTimestamp + 900]);
 
-        const wavaxBalance = await wavax.balanceOf(batchLiquidator.address)
-
         // arb auction
-        const minProfit = _1e6.mul(50)
+        const minProfit = _1e18.mul(2)
         const ifAvaxBalance = await wavax.balanceOf(insuranceFund.address)
-        await batchLiquidator.arbIFAuction(ifAvaxBalance, minProfit)
+        await batchLiquidator.arbIFAuction(1, ifAvaxBalance, minProfit)
 
-        expect(await wavax.balanceOf(batchLiquidator.address)).to.gt(wavaxBalance) // dust
-        expect(await usdc.balanceOf(batchLiquidator.address)).to.gt(minProfit)
+        expect(await wavax.balanceOf(batchLiquidator.address)).to.gt(minProfit)
+        expect(await usdc.balanceOf(batchLiquidator.address)).to.eq(ZERO)
         expect(await vusd.balanceOf(batchLiquidator.address)).to.eq(ZERO)
         expect(await insuranceFund.isAuctionOngoing(wavax.address)).to.eq(false)
         expect(await wavax.balanceOf(insuranceFund.address)).to.eq(ZERO)
-    })
-
-    it('remove margin with avax', async function() {
-        const avaxBalance = await ethers.provider.getBalance(alice)
-        const wavaxMargin = await marginAccount.margin(1, alice)
-
-        const removeAmount = _1e18.mul(3)
-        let tx = await marginAccount.removeAvaxMargin(removeAmount)
-        tx = await tx.wait()
-        const txFee = tx.cumulativeGasUsed.mul(tx.effectiveGasPrice)
-
-        expect(await ethers.provider.getBalance(alice)).to.eq(avaxBalance.add(removeAmount).sub(txFee))
-        expect(await marginAccount.margin(1, alice)).to.eq(wavaxMargin.sub(removeAmount))
-        expect(await wavax.balanceOf(alice)).to.eq(ZERO)
     })
 })
 
@@ -197,7 +315,7 @@ describe('Atomic liquidations supernova', async function() {
         marginAccount = await ethers.getContractAt('MarginAccount', '0x4BFC1482ecbbc0d448920ee471312E28f85ab903')
         clearingHouse = await ethers.getContractAt('ClearingHouse', '0xdAb9110f9ba395f72B6D6eB12F687E0DFBb1fb85')
     })
-    
+
     after(async function() {
         await network.provider.request({
             method: "hardhat_reset",
@@ -214,7 +332,7 @@ describe('Atomic liquidations supernova', async function() {
         // await marginAccount.connect(ethers.provider.getSigner(liquidator)).liquidateExactRepay(alice, debt, 1, 0)
 
         // await batchLiquidator.flashLiquidateWithAvax(alice, debt, 0)
-        await batchLiquidator.liquidateMarginAccount(alice, repay)
+        await batchLiquidator.liquidateMulti(alice, [repay], [1], [0])
         const after = await hubbleViewer.userInfo(alice)
 
         expect(b4[0].add(repay)).to.eq(after[0])

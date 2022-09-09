@@ -276,6 +276,13 @@ interface IJoeRouter02 {
         address to,
         uint256 deadline
     ) external returns (uint256[] memory amounts);
+    function swapTokensForExactTokens(
+        uint256 amountOut,
+        uint256 amountInMax,
+        address[] calldata path,
+        address to,
+        uint256 deadline
+    ) external returns (uint256[] memory amounts);
     function factory() external returns(address);
     function getAmountsIn(uint256 amountOut, address[] calldata path) external returns (uint256[] memory amounts);
     function getAmountsOut(uint256 amountOut, address[] calldata path) external returns (uint256[] memory amounts);

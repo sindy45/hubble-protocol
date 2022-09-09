@@ -102,8 +102,8 @@ async function setupContracts(options = {}) {
             0.1 * 1e6, // 10% maintenance margin, 10x
             0.2 * 1e6, // 20% minimum allowable margin, 5x
             options.tradeFee,
-            0.1 * 1e6, // referralShare = 10%
-            0.05 * 1e6, // feeDiscount = 5%
+            50, // referralShare = .5bps
+            100, // feeDiscount = 1bps
             0.05 * 1e6, // liquidationPenalty = 5%
         ],
         [ forwarder.address ]
@@ -545,8 +545,8 @@ function setDefaultClearingHouseParams(clearingHouse) {
         1e5, // minimum allowable margin
         5e2, // tradeFee
         5e4, // liquidationPenalty
-        0.1 * 1e6, // referralShare = 10%
-        0.05 * 1e6, // feeDiscount = 5%
+        50, // referralShare = .5bps
+        100, // feeDiscount = 1bps
     )
 }
 

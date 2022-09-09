@@ -84,26 +84,37 @@ async function deployBatchLiquidator() {
     // console.log(await batchLiquidator.owner())
 }
 
-async function updatev110() {
+async function updatev120() {
     const [ signer ] = await ethers.getSigners()
-    const proxyAdmin = await ethers.getContractAt('ProxyAdmin', proxyAdminAddy)
 
     const vammAbiAndBytecode = fs.readFileSync('contracts/curve-v2/Swap.txt').toString().split('\n').filter(Boolean)
     const Swap = new ethers.ContractFactory(JSON.parse(vammAbiAndBytecode[0]), vammAbiAndBytecode[1], signer)
+    const vamm = Swap.attach(config.contracts.amms[0].vamm)
     const newVAMM = await Swap.deploy()
-    console.log({ vamm: newVAMM.address })
+    console.log({ vammImpl: newVAMM.address })
 
-    const AMM = await ethers.getContractFactory('AMM')
-    const newAMM = await AMM.deploy(config.contracts.ClearingHouse, 86400)
-    console.log({ amm: newAMM.address })
+    // const AMM = await ethers.getContractFactory('AMM')
+    // const newAMM = await AMM.deploy(config.contracts.ClearingHouse, 86400)
+    // console.log({ amm: newAMM.address })
 
     const ClearingHouse = await ethers.getContractFactory('ClearingHouse')
     const newCH = await ClearingHouse.deploy('0xEd27FB82DAb4c5384B38aEe8d0Ab81B3b591C0FA') // trustedForwarder
     console.log({ newCH: newCH.address })
 
+    const proxyAdmin = await ethers.getContractAt('ProxyAdmin', proxyAdminAddy)
     await proxyAdmin.upgrade(config.contracts.amms[0].vamm, newVAMM.address)
-    await proxyAdmin.upgrade(config.contracts.amms[0].address, newAMM.address)
-    await proxyAdmin.upgrade(config.contracts.ClearingHouse, newCH.address)
+    const newFee = '7500000' // 7.5 bps
+    await vamm.setNewParameters(newFee)
+    await clearingHouse.connect(signer).setParams(
+      100000, // maintenanceMargin
+      200000, // minAllowableMargin
+      250, // tradeFee
+      50000, // liquidationPenalty
+      50, // referralShare
+      100 // tradingFeeDiscount
+  )
+  await proxyAdmin.upgrade(config.contracts.ClearingHouse, newCH.address)
+  // await proxyAdmin.upgrade(config.contracts.amms[0].address, newAMM.address)
 }
 
 async function deployHubbleViewer() {
@@ -119,7 +130,13 @@ async function deployHubbleViewer() {
     })
 }
 
-deployHubbleViewer()
+async function deployLiquidationPriceViewer() {
+  const LiquidationPriceViewer = await ethers.getContractFactory('LiquidationPriceViewer')
+  const liquidationPriceViewer = await LiquidationPriceViewer.deploy(config.contracts.HubbleViewer)
+  console.log({ liquidationPriceViewer: liquidationPriceViewer.address })
+}
+
+updatev120()
 .then(() => process.exit(0))
 .catch(error => {
     console.error(error);

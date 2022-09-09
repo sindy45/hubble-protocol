@@ -13,7 +13,6 @@ contract HubbleViewer is IHubbleViewer {
     uint256 constant PRECISION_UINT = 1e6;
 
     uint constant VUSD_IDX = 0;
-    uint constant WAVAX_IDX = 1;
 
     IClearingHouse public immutable clearingHouse;
     IMarginAccount public immutable marginAccount;

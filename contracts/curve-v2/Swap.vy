@@ -1061,6 +1061,10 @@ def setAMM(_address: address):
     assert msg.sender == self.owner, 'VAMM: OnlyOwner'
     self.amm = _address
 
+@external
+def setNewParameters(mid_fee: uint256):
+    assert msg.sender == self.owner, 'VAMM: OnlyOwner'
+    self.mid_fee = mid_fee
 
 # @external
 # def ramp_A_gamma(future_A: uint256, future_gamma: uint256, future_time: uint256):

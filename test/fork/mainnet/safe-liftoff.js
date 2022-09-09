@@ -4,7 +4,8 @@ const {
     constants: { _1e6, _1e18, ZERO },
     getTradeDetails,
     getTwapPrice,
-    gotoNextFundingTime
+    gotoNextFundingTime,
+    forkCChain
 } = require('../../utils')
 const { config } = require('./utils')
 
@@ -16,15 +17,7 @@ const bob = ethers.provider.getSigner('0xeeEa93BAd21eefBf4A7e201c680Ebc7bf334Cd6
 describe('(fork) safe liftoff', async function() {
     const blockTag = 18379122
     before(async function() {
-        await network.provider.request({
-            method: "hardhat_reset",
-            params: [{
-                forking: {
-                    jsonRpcUrl: 'https://api.avax.network/ext/bc/C/rpc',
-                    blockNumber: blockTag // having a consistent block number speeds up the tests across runs
-                }
-            }]
-        })
+        await forkCChain(blockTag)
         await impersonateAccount(deployer)
         // await setBalance(liquidatorBot, '0x8AC7230489E80000') // 10 avax to pay for gas fee
         ;([
@@ -32,7 +25,7 @@ describe('(fork) safe liftoff', async function() {
             marginAccount, usdc, hUSD, oracle
         ] = await Promise.all([
             ethers.getContractAt('AMM', config.contracts.amms[0].address),
-            ethers.getContractAt('HubbleViewer', config.contracts.HubbleViewer),
+            ethers.getContractAt('HubbleViewer', '0x690EB0F0D9ddC1D3Df1a5E123000B95b8E708447'), // the one in the config was deployed after the fork block
             ethers.getContractAt('ClearingHouse', config.contracts.ClearingHouse),
             ethers.getContractAt('MarginAccountHelper', config.contracts.MarginAccountHelper),
             ethers.getContractAt('MarginAccount', config.contracts.MarginAccount),
@@ -52,7 +45,7 @@ describe('(fork) safe liftoff', async function() {
     it('liftOff', async function() {
         await amm.connect(ethers.provider.getSigner(deployer)).liftOff()
         expect(await amm.ammState()).to.eq(2)
-        expect(bnToFloat(await amm.lastPrice())).to.approximately(29.364032, 1e-6)
+        expect(bnToFloat(await amm.lastPrice())).to.approximately(29.364032, 1e-5)
 
         expect(bnToFloat((await amm.makers(maker)).dToken, 18)).to.eq(0)
         await clearingHouse.updatePositions(maker)
@@ -78,8 +71,8 @@ describe('(fork) safe liftoff', async function() {
 
         const [ pos ] = await hubbleViewer.userPositions(alice._address)
         expect(pos.size).to.eq(baseAsset)
-        expect(bnToFloat(pos.openNotional)).to.approximately(bnToFloat(quote), 1e-6)
-        expect(bnToFloat(await amm.lastPrice())).to.approximately(29.364361, 1e-6)
+        expect(bnToFloat(pos.openNotional)).to.approximately(bnToFloat(quote), 1e-5)
+        expect(bnToFloat(await amm.lastPrice())).to.approximately(29.364361, 1e-5)
 
         const { fee } = await getTradeDetails(tx, config.systemParams.insuranceFundFee)
         expect(fee).to.gt(ZERO)

@@ -282,18 +282,18 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
             address referrer = hubbleReferral.getTraderRefereeInfo(trader);
             uint referralBonus;
             if (referrer != address(0x0)) {
-                referralBonus = fee * referralShare / PRECISION;
-                fee -= fee * tradingFeeDiscount / PRECISION;
+                referralBonus = quoteAsset * referralShare / PRECISION;
                 // add margin to the referrer
                 marginAccount.realizePnL(referrer, referralBonus.toInt256());
                 emit ReferralBonusAdded(referrer, referralBonus);
-            }
 
+                uint discount = quoteAsset * tradingFeeDiscount / PRECISION;
+                fee -= discount;
+            }
             marginCharge = realizedPnl - fee.toInt256();
             // deduct referral bonus from insurance fund share
             fee -= referralBonus;
         }
-
         marginAccount.realizePnL(trader, marginCharge);
     }
 

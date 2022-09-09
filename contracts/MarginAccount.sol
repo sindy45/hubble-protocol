@@ -332,7 +332,7 @@ contract MarginAccount is IMarginAccount, HubbleBase, ReentrancyGuard {
     * @notice Either seize all available collateral
     *   OR settle debt completely with (most likely) left over collateral.
     *   It's required that trader has no open positions.
-    *   Seized collateral at it's current oracle price should be acceptable to the liquidator.
+    *   Seized collateral at it's current oracle price (+ incentive) should be acceptable to the liquidator.
     * @param trader Account to liquidate
     * @param maxRepay Max vUSD input amount
     * @param idxs Indices of the collateral to seize
@@ -342,7 +342,7 @@ contract MarginAccount is IMarginAccount, HubbleBase, ReentrancyGuard {
         uint repayed;
         for (uint i; i < idxs.length; i++) {
             LiquidationBuffer memory buffer = _getLiquidationInfo(trader, idxs[i]);
-            // revert only if trader has open positions, otherwise fail silently
+            // revert if trader has open positions
             if (buffer.status == IMarginAccount.LiquidationStatus.OPEN_POSITIONS) {
                 revert NOT_LIQUIDATABLE(buffer.status);
             }

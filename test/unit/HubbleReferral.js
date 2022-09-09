@@ -65,15 +65,16 @@ describe('HubbleReferral Unit Tests', function() {
 
         expect(await marginAccount.getNormalizedMargin(alice)).to.eq(ZERO)
         const tx = await clearingHouse.connect(bob).openPosition(0, baseAssetQuantity, 0)
-        ;({ fee } = await getTradeDetails(tx, TRADE_FEE))
+        ;({ quoteAsset, fee } = await getTradeDetails(tx, TRADE_FEE))
         // 10% of the the tradeFee is added to the margin of the referrer
-        const referralBonus = fee.div(10)
+        const referralBonus = quoteAsset.mul(50).div(_1e6)
         expect(await marginAccount.getNormalizedMargin(alice)).to.eq(referralBonus)
         // trader gets 5% a fee discount
-        const feeAfterDiscount = fee.mul(95).div(100)
+        const discount = quoteAsset.mul(100).div(_1e6)
+        const feeAfterDiscount = fee.sub(discount)
         expect(await marginAccount.getNormalizedMargin(bob.address)).to.eq(
-            margin.sub(feeAfterDiscount).sub(1))
+            margin.sub(feeAfterDiscount))
         // insurance fund gets the remaining fee
-        expect(await vusd.balanceOf(insuranceFund.address)).to.eq(feeAfterDiscount.sub(referralBonus).add(1))
+        expect(await vusd.balanceOf(insuranceFund.address)).to.eq(feeAfterDiscount.sub(referralBonus))
     })
 })
