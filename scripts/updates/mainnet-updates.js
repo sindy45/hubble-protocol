@@ -17,7 +17,7 @@ const config = {
       "Oracle": "0x7511E2ccAe82CdAb12d51F0d1519ad5450F157De",
       "InsuranceFund": "0x870850A72490379f60A4924Ca64BcA89a6D53a9d",
       "Registry": "0xfD704bc28097f1065640022Bee386985bDbc4122",
-      "Leaderboard": "0xa3C1E96F7E788DF5a5923c064006e30D17AC588F",
+      "Leaderboard": "0xF2dd88707f2Abd2410593e341d1f67D031e507Fa",
       "BatchLiquidator": "0xeAAFe319454d7bE5C8E5f9Aa5585BeeBAa1BB727",
       "MarginAccountHelper": "0x9Cff75010B16404F2cD58556Db317607A1eebfc5",
       "HubbleReferral": "0x27f48404f6951702EAB36930a6671c459faC0B20",
@@ -133,12 +133,28 @@ async function deployHubbleViewer() {
 }
 
 async function deployLiquidationPriceViewer() {
-  const LiquidationPriceViewer = await ethers.getContractFactory('LiquidationPriceViewer')
-  const liquidationPriceViewer = await LiquidationPriceViewer.deploy(config.contracts.HubbleViewer)
-  console.log({ liquidationPriceViewer: liquidationPriceViewer.address })
+    const LiquidationPriceViewer = await ethers.getContractFactory('LiquidationPriceViewer')
+    const liquidationPriceViewer = await LiquidationPriceViewer.deploy(config.contracts.HubbleViewer)
+    console.log({ liquidationPriceViewer: liquidationPriceViewer.address })
 }
 
-updatev120()
+async function leaderboard() {
+    const Leaderboard = await ethers.getContractFactory('Leaderboard')
+    const leaderboard = await Leaderboard.deploy(config.contracts.HubbleViewer)
+    console.log({ leaderboard: leaderboard.address })
+}
+
+async function wethCollateral() {
+  const weth = {
+    address: '0x49D5c2BdFfac6CE2BFdB6640F4F80f226bc10bAB'
+  }
+  const marginAccount = await ethers.getContractAt('MarginAccount', config.contracts.MarginAccount)
+  const oracle = await ethers.getContractAt('Oracle', config.contracts.Oracle)
+  await oracle.setAggregator(weth.address, '0x976B3D034E162d8bD72D6b9C989d545b839003b0')
+  await marginAccount.whitelistCollateral(weth.address, 8e5)
+}
+
+wethCollateral()
 .then(() => process.exit(0))
 .catch(error => {
     console.error(error);

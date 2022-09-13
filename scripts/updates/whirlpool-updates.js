@@ -161,7 +161,18 @@ async function deployLiquidationPriceViewer() {
     console.log({ liquidationPriceViewer: liquidationPriceViewer.address })
 }
 
-updatev120()
+async function wethCollateral() {
+    const ERC20Mintable = await ethers.getContractFactory('ERC20Mintable')
+    const weth = await ERC20Mintable.deploy('Hubble weth', 'WETH.e', 18)
+    console.log({ weth: weth.address })
+
+    const marginAccount = await ethers.getContractAt('MarginAccount', config.contracts.MarginAccount)
+    const oracle = await ethers.getContractAt('Oracle', config.contracts.Oracle)
+    await oracle.setAggregator(weth.address, '0x86d67c3D38D2bCeE722E601025C25a575021c6EA')
+    await marginAccount.whitelistCollateral(weth.address, 8e5)
+}
+
+wethCollateral()
 .then(() => process.exit(0))
 .catch(error => {
     console.error(error);

@@ -21,11 +21,11 @@ contract Leaderboard {
     function leaderboard(address[] calldata traders)
         external
         view
-        returns(int[] memory makerMargins, int[] memory takerMargins)
+        returns(int[] memory pnls, int[] memory fundings)
     {
         uint numTraders = traders.length;
-        makerMargins = new int[](numTraders);
-        takerMargins = new int[](numTraders);
+        pnls = new int[](numTraders);
+        fundings = new int[](numTraders);
 
         uint l = clearingHouse.getAmmsLength();
         IAMM[] memory amms = new IAMM[](l);
@@ -35,35 +35,24 @@ contract Leaderboard {
 
         // loop over traders
         for (uint i; i < numTraders; i++) {
-            (makerMargins[i], takerMargins[i]) = _calcUnrealizedPnL(traders[i], amms);
+            (pnls[i], fundings[i]) = _calcUnrealizedPnL(traders[i], amms);
         }
     }
 
     function _calcUnrealizedPnL(address trader, IAMM[] memory amms)
         internal
         view
-        returns(int makerMargin, int takerMargin)
+        returns(int unrealizedPnl, int takerFunding)
     {
-        // local vars
         IAMM amm;
-        int unrealizedPnl;
-        int takerFundingPayment;
-        int makerFundingPayment;
-
-        // loop over amms
+        int _unrealizedPnl;
+        int _takerFunding;
         for (uint j = 0; j < amms.length; j++) {
             amm = amms[j];
-            (takerFundingPayment,makerFundingPayment,,) = amm.getPendingFundingPayment(trader);
-
-            // maker
-            IAMM.Maker memory maker = amm.makers(trader);
-            if (maker.ignition != 0 || maker.dToken != 0) {
-                (,,unrealizedPnl) = hubbleViewer.getMakerPositionAndUnrealizedPnl(trader, j);
-                makerMargin += (unrealizedPnl - makerFundingPayment);
-            }
-
-            (,unrealizedPnl) = amm.getTakerNotionalPositionAndUnrealizedPnl(trader);
-            takerMargin += (unrealizedPnl - takerFundingPayment);
+            (,_unrealizedPnl) = amm.getTakerNotionalPositionAndUnrealizedPnl(trader);
+            (_takerFunding,,,) = amm.getPendingFundingPayment(trader);
+            unrealizedPnl += _unrealizedPnl;
+            takerFunding += _takerFunding;
         }
     }
 }

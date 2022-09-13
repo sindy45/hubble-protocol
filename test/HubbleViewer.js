@@ -1,10 +1,9 @@
 const { expect } = require('chai')
 
 const {
-    constants: { _1e6, _1e18, ZERO },
+    constants: { _1e6, _1e18 },
     setupContracts,
     addMargin,
-    assertBounds,
     unbondAndRemoveLiquidity,
     setDefaultClearingHouseParams
 } = require('./utils')
@@ -31,11 +30,6 @@ describe('Hubble Viewer', async function() {
             await marginAccount.whitelistCollateral(weth.address, 0.8 * 1e6) // weight = 0.8
         })
 
-        it('leaderboard - takerMargins is 0', async function() {
-            const { makerMargins, takerMargins } = await leaderboard.leaderboard([alice])
-            expect(takerMargins[0]).to.eq(ZERO)
-        })
-
         it('increase taker position', async function() {
             // alice longs
             const baseAssetQuantity = _1e18.mul(5)
@@ -51,12 +45,6 @@ describe('Hubble Viewer', async function() {
             // liquidationPrice = (openNotional - margin + MM * makerNotional) / ((1 - MM) * size)
             // => (10021.26 - 4000 + 0.1 * 20000) / (10 * 0.9) = 891.25
             expect(parseInt(liquidationPrice.toNumber() / 1e6)).to.eq(892)
-        })
-
-        it.skip('leaderboard', async function() {
-            const { makerMargins, takerMargins } = await leaderboard.leaderboard([alice])
-            assertBounds(makerMargins[0], _1e6.mul(3990), _1e6.mul(3995))
-            assertBounds(takerMargins[0], _1e6.mul(3974), _1e6.mul(3975))
         })
 
         it('reduce taker position', async function() {
