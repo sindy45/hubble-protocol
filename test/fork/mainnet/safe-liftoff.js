@@ -7,7 +7,7 @@ const {
     gotoNextFundingTime,
     forkCChain
 } = require('../../utils')
-const { config } = require('./utils')
+const { mainnetConfig: config } = require('../../../scripts/config')
 
 const deployer = '0xF5c8E1eAFFD278A383C13061B4980dB7619479af'
 const maker = '0x11d67Fa925877813B744aBC0917900c2b1D6Eb81' // committed 500k liquidity
@@ -25,7 +25,7 @@ describe('(fork) safe liftoff', async function() {
             marginAccount, usdc, hUSD, oracle
         ] = await Promise.all([
             ethers.getContractAt('AMM', config.contracts.amms[0].address),
-            ethers.getContractAt('HubbleViewer', '0x690EB0F0D9ddC1D3Df1a5E123000B95b8E708447'), // the one in the config was deployed after the fork block
+            ethers.getContractAt('HubbleViewer', config.contracts.HubbleViewer_0),
             ethers.getContractAt('ClearingHouse', config.contracts.ClearingHouse),
             ethers.getContractAt('MarginAccountHelper', config.contracts.MarginAccountHelper),
             ethers.getContractAt('MarginAccount', config.contracts.MarginAccount),

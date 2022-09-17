@@ -173,6 +173,7 @@ contract InsuranceFund is VanillaGovernable, ERC20Upgradeable {
 
     /**
     * @notice Just a vanity function
+    * @return The hUSD amount backing each Insurance Fund share
     */
     function pricePerShare() external view returns (uint) {
         uint _totalSupply = totalSupply();

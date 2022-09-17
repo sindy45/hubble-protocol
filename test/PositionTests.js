@@ -76,7 +76,7 @@ describe('Position Tests', async function() {
                 expectedMarginFraction,
                 liquidationPrice
             } = await liquidationPriceViewer.getTakerExpectedMFAndLiquidationPrice(alice, 0, baseAssetQuantity)
-            expect(parseInt(liquidationPrice.toNumber() / 1e6)).to.eq(836)
+            expect(parseInt(liquidationPrice.toNumber() / 1e6)).to.eq(834)
 
             const quote = await hubbleViewer.getQuote(baseAssetQuantity, 0)
             tx = await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity /* long exactly */, quote /* max_dx */)
@@ -151,7 +151,7 @@ describe('Position Tests', async function() {
                 quoteAssetQuantity,
                 liquidationPrice
             } = await liquidationPriceViewer.getTakerExpectedMFAndLiquidationPrice(alice, 0, baseAssetQuantity)
-            expect(parseInt(liquidationPrice.toNumber() / 1e6)).to.eq(1133)
+            expect(parseInt(liquidationPrice.toNumber() / 1e6)).to.eq(1134)
 
             const quote = await hubbleViewer.getQuote(baseAssetQuantity, 0)
             tx = await clearingHouse.openPosition(0, baseAssetQuantity, quote)

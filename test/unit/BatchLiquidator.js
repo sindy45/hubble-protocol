@@ -4,8 +4,8 @@ const { expect } = require('chai');
 const {
     constants: { _1e6, _1e18, ZERO },
     setupContracts,
-    impersonateAcccount,
-    stopImpersonateAcccount,
+    impersonateAccount,
+    stopImpersonateAccount,
     forkCChain,
     setBalance,
     setDefaultClearingHouseParams,
@@ -32,9 +32,9 @@ describe('Atomic liquidations, Arb auction', async function() {
         usdc = await ethers.getContractAt('IUSDC', usdc.address)
         const masterMinter = await usdc.masterMinter()
         await setBalance(masterMinter, '0xDE0B6B3A7640000') // 1e18, to pay for gas fee
-        await impersonateAcccount(masterMinter)
+        await impersonateAccount(masterMinter)
         await usdc.connect(ethers.provider.getSigner(masterMinter)).configureMinter(alice, _1e18, { gasPrice: 25e9 })
-        await stopImpersonateAcccount(masterMinter)
+        await stopImpersonateAccount(masterMinter)
 
         ;({ marginAccount, clearingHouse, vusd, oracle, marginAccountHelper, hubbleViewer } = await setupContracts({ reserveToken: usdc.address, wavaxAddress: wavax.address }))
 
@@ -74,7 +74,7 @@ describe('Atomic liquidations, Arb auction', async function() {
         const avaxMargin = _1e18.mul(500 * 1e6).div(avaxOraclePrice) // $500, decimals = 18
         const wethMargin = _1e18.mul(500 * 1e6).div(wethOraclePrice) // $500, decimals = 18
         // console.log(bnToFloat(avaxMargin, 18), bnToFloat(wethMargin, 18)) // 27.02 avax and .32 weth
-        await impersonateAcccount(wethWhale)
+        await impersonateAccount(wethWhale)
         await weth.connect(ethers.provider.getSigner(wethWhale)).transfer(alice, wethMargin)
         await weth.approve(marginAccount.address, wethMargin)
         await Promise.all([
@@ -328,7 +328,7 @@ describe('Atomic liquidations supernova', async function() {
         const b4 = await hubbleViewer.userInfo(alice)
 
         // const liquidator = '0x3C4904418a53b22BD1b6aA69694E29d55bdab398'
-        // await impersonateAcccount(liquidator)
+        // await impersonateAccount(liquidator)
         // await marginAccount.connect(ethers.provider.getSigner(liquidator)).liquidateExactRepay(alice, debt, 1, 0)
 
         // await batchLiquidator.flashLiquidateWithAvax(alice, debt, 0)

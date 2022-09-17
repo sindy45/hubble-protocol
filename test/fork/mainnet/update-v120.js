@@ -4,12 +4,13 @@ const { ethers } = require('hardhat')
 const fs = require('fs')
 
 const {
-    impersonateAcccount,
+    impersonateAccount,
     getTradeDetails,
     setBalance,
     constants: { _1e18, _1e6 }
 } = require('../../utils')
-const { config, getVAMMVars, getCHVars } = require('./utils')
+const { getVAMMVars, getCHVars } = require('./utils')
+const { mainnetConfig: config } = require('../../../scripts/config')
 
 const deployer = '0xF5c8E1eAFFD278A383C13061B4980dB7619479af'
 const proxyAdminAddy = '0xddf407237BDe4d36287Be4De79D65c57AefBf8da'
@@ -29,14 +30,14 @@ describe('v1.2.0 update', async function() {
                 }
             }]
         })
-        await impersonateAcccount(deployer)
+        await impersonateAccount(deployer)
         signer = ethers.provider.getSigner(deployer)
         ;([ clearingHouse, marginAccount, amm, proxyAdmin, hubbleViewer, hUSD ] = await Promise.all([
             ethers.getContractAt('ClearingHouse', config.contracts.ClearingHouse),
             ethers.getContractAt('MarginAccount', config.contracts.MarginAccount),
             ethers.getContractAt('AMM', config.contracts.amms[0].address),
             ethers.getContractAt('ProxyAdmin', proxyAdminAddy),
-            ethers.getContractAt('HubbleViewer', config.contracts.HubbleViewer),
+            ethers.getContractAt('HubbleViewer', config.contracts.HubbleViewer_0),
             ethers.getContractAt('VUSD', config.contracts.collateral[0].address)
         ]))
     })
@@ -101,7 +102,7 @@ describe('v1.2.0 update', async function() {
         const referredHusdBal = await marginAccount.margin(0, traderReferrer)
         const traderHusdBal = await marginAccount.margin(0, trader)
 
-        await impersonateAcccount(trader) // has a 200 short
+        await impersonateAccount(trader) // has a 200 short
         const alice = ethers.provider.getSigner(trader)
         const base = _1e18.mul(-10) // so that there's no realized pnl
         const { quoteAsset } = await getTradeDetails(await clearingHouse.connect(alice).openPosition(0, base, 0))
@@ -117,7 +118,7 @@ describe('v1.2.0 update', async function() {
         const ifBal = await hUSD.balanceOf(config.contracts.InsuranceFund)
         const traderHusdBal = await marginAccount.margin(0, trader2)
 
-        await impersonateAcccount(trader2)
+        await impersonateAccount(trader2)
         const alice = ethers.provider.getSigner(trader2)
         await setBalance(trader2, '0x8AC7230489E80000') // 10 avax to pay for gas fee
         const base = _1e18.mul(5)

@@ -1,15 +1,18 @@
 const { expect } = require('chai')
 
 const {
-    constants: { _1e6, _1e18 },
+    constants: { _1e6, _1e18, ZERO },
     setupContracts,
     addMargin,
     unbondAndRemoveLiquidity,
+    bnToFloat,
+    setupRestrictedTestToken,
+    calcMakerLiquidationPrice,
     setDefaultClearingHouseParams
 } = require('./utils')
 
 describe('Hubble Viewer', async function() {
-    describe('getMakerExpectedMFAndLiquidationPrice when taker+maker', async function() {
+    describe('ExpectedMFAndLiquidationPrice when taker+maker', async function() {
         before('alice adds liquidity', async function() {
             signers = await ethers.getSigners()
             alice = signers[0].address
@@ -35,67 +38,74 @@ describe('Hubble Viewer', async function() {
             const baseAssetQuantity = _1e18.mul(5)
             let quote = await hubbleViewer.getQuote(baseAssetQuantity, 0)
             await clearingHouse.openPosition(0, baseAssetQuantity, quote)
-            const { expectedMarginFraction, liquidationPrice } = await liquidationPriceViewer.getTakerExpectedMFAndLiquidationPrice(alice, 0, baseAssetQuantity)
+            const {
+                expectedMarginFraction,
+                liquidationPrice: expectedLiquidationPrice
+            } = await liquidationPriceViewer.getTakerExpectedMFAndLiquidationPrice(alice, 0, baseAssetQuantity)
             // alice longs again
             quote = await hubbleViewer.getQuote(baseAssetQuantity, 0)
             await clearingHouse.openPosition(0, baseAssetQuantity, quote)
 
             expect((await clearingHouse.getMarginFraction(alice)).div(1e4)).to.eq(expectedMarginFraction.div(1e4))
-            // makerNotional = 20000, margin = 4000, size = 10, openNotional = 10021.26, MM = 0.1
-            // liquidationPrice = (openNotional - margin + MM * makerNotional) / ((1 - MM) * size)
-            // => (10021.26 - 4000 + 0.1 * 20000) / (10 * 0.9) = 891.25
-            expect(parseInt(liquidationPrice.toNumber() / 1e6)).to.eq(892)
+            const liquidationPrice = await getTakerLiquidationPrice(alice, ZERO)
+            expect(bnToFloat(expectedLiquidationPrice)).to.be.approximately(bnToFloat(liquidationPrice), 2)
         })
 
         it('reduce taker position', async function() {
             // alice shorts - netTakerPosition 5+5-5 = 5
             const baseAssetQuantity = _1e18.mul(-5)
-            const { expectedMarginFraction, quoteAssetQuantity: quote, liquidationPrice } = await liquidationPriceViewer.getTakerExpectedMFAndLiquidationPrice(alice, 0, baseAssetQuantity)
+            const {
+                expectedMarginFraction,
+                quoteAssetQuantity: quote,
+                liquidationPrice: expectedLiquidationPrice
+            } = await liquidationPriceViewer.getTakerExpectedMFAndLiquidationPrice(alice, 0, baseAssetQuantity)
 
             await clearingHouse.openPosition(0, baseAssetQuantity, quote)
 
             expect((await clearingHouse.getMarginFraction(alice)).div(1e4)).to.eq(expectedMarginFraction.div(1e4))
-            expect(parseInt(liquidationPrice.toNumber() / 1e6)).to.eq(675)
+            const liquidationPrice = await getTakerLiquidationPrice(alice, ZERO)
+            expect(bnToFloat(expectedLiquidationPrice)).to.be.approximately(bnToFloat(liquidationPrice), 2)
         })
 
         it('reverse taker position', async function() {
             // alice shorts - netTakerPosition 5-15 = -10
             const baseAssetQuantity = _1e18.mul(-15)
-            const { expectedMarginFraction, quoteAssetQuantity: quote, liquidationPrice } = await liquidationPriceViewer.getTakerExpectedMFAndLiquidationPrice(alice, 0, baseAssetQuantity)
+            const {
+                expectedMarginFraction,
+                quoteAssetQuantity: quote,
+                liquidationPrice: expectedLiquidationPrice
+            } = await liquidationPriceViewer.getTakerExpectedMFAndLiquidationPrice(alice, 0, baseAssetQuantity)
 
             await clearingHouse.openPosition(0, baseAssetQuantity, quote)
 
             expect((await clearingHouse.getMarginFraction(alice)).div(1e4)).to.eq(expectedMarginFraction.div(1e4))
-            // makerNotional = 20000, margin = 4000, size = 10, openNotional = 9978.83, MM = 0.1
-            // liquidationPrice = (openNotional + margin - MM * makerNotional) / ((1 + MM) * size)
-            // => (9978.83 + 4000 - 0.1 * 20000) / (10 * 1.1) = 1088.98 (approx because of openNotional calculation before and after the trade)
-            expect(parseInt(liquidationPrice.toNumber() / 1e6)).to.eq(1093)
+            const liquidationPrice = await getTakerLiquidationPrice(alice, ZERO)
+            expect(bnToFloat(expectedLiquidationPrice)).to.be.approximately(bnToFloat(liquidationPrice), 2)
         })
 
         it('alice adds more liquidity', async function() {
             await addMargin(signers[0], _1e6.mul(2000))
             const liquidity = _1e18.mul(10)
             const { fillAmount: vUsd, dToken } = await hubbleViewer.getMakerQuote(0, liquidity, true, true)
-            const { expectedMarginFraction, longLiquidationPrice, shortLiquidationPrice } = await liquidationPriceViewer.getMakerExpectedMFAndLiquidationPrice(alice, 0, vUsd, false)
+            const { expectedMarginFraction, liquidationPriceData } = await liquidationPriceViewer.getMakerExpectedMFAndLiquidationPrice(alice, 0, vUsd, false)
             await clearingHouse.addLiquidity(0, liquidity, dToken)
 
             expect((await clearingHouse.getMarginFraction(alice)).div(1e3)).to.eq(expectedMarginFraction.div(1e3))
-            // makerNotional = 39608.65, initialPrice = 990.21, hUSD = 5945.18, takerSize = 10
-            // longPrice = (39608.65 * 1.1 - 5945.18) / (39608.65 / 990.21 - 0.1*10) = 964.72
-            // shortPrice = (39608.65 * 0.9 + 5945.18) / (39608.65 / 990.21 + 0.1*10) = 1014.45
-            expect(parseInt(longLiquidationPrice.toNumber() / 1e6)).to.eq(964)
-            expect(parseInt(shortLiquidationPrice.toNumber() / 1e6)).to.eq(1014)
+            const makerLiquidationPrices = calcMakerLiquidationPrice(liquidationPriceData)
+            expect(parseInt(makerLiquidationPrices.longLiqPrice)).to.eq(631)
+            expect(parseInt(makerLiquidationPrices.shortLiqPrice)).to.eq(1553)
         })
 
         it('alice removes liquidity', async function() {
             const liquidity = _1e18.mul(5)
             const { fillAmount, dToken } = await hubbleViewer.getMakerQuote(0, liquidity, true, false)
-            const { expectedMarginFraction, longLiquidationPrice, shortLiquidationPrice } = await liquidationPriceViewer.getMakerExpectedMFAndLiquidationPrice(alice, 0, fillAmount, true)
+            const { expectedMarginFraction, liquidationPriceData } = await liquidationPriceViewer.getMakerExpectedMFAndLiquidationPrice(alice, 0, fillAmount, true)
             await unbondAndRemoveLiquidity(signers[0], amm, 0, dToken, 0, 0)
 
             expect((await clearingHouse.getMarginFraction(alice)).div(1e3)).to.eq(expectedMarginFraction.div(1e3))
-            expect(parseInt(longLiquidationPrice.toNumber() / 1e6)).to.eq(922)
-            expect(parseInt(shortLiquidationPrice.toNumber() / 1e6)).to.eq(1053)
+            const makerLiquidationPrices = calcMakerLiquidationPrice(liquidationPriceData)
+            expect(parseInt(makerLiquidationPrices.longLiqPrice)).to.eq(468)
+            expect(parseInt(makerLiquidationPrices.shortLiqPrice)).to.eq(2093)
         })
 
         it('bob adds liquidity and gets more vUSD while removing', async function () {
@@ -124,4 +134,101 @@ describe('Hubble Viewer', async function() {
             expect((await clearingHouse.getMarginFraction(bob.address)).div(1e3)).to.eq(expectedMarginFraction.div(1e3))
         })
     })
+
+    describe('liquidation price', async function() {
+        before('setup contracts', async function() {
+            signers = await ethers.getSigners()
+            alice = signers[0].address
+
+            initialRate = 1000
+            contracts = await setupContracts({amm: {initialRate}})
+            ;({ swap, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, oracle, weth, hubbleViewer, liquidationPriceViewer } = contracts)
+
+            // add collateral
+            // test for ETH-PERP, setting ETH index = 1
+            await marginAccount.whitelistCollateral(weth.address, 0.8 * 1e6) // weight = 0.8
+            const avax = await setupRestrictedTestToken('AVAX', 'AVAX', 18)
+            const avaxPrice = 1e6 * 20 // $20
+            await oracle.setUnderlyingPrice(avax.address, avaxPrice)
+            await marginAccount.whitelistCollateral(avax.address, 0.8 * 1e6) // weight = 0.8
+
+            // add margin
+            const hUsdMargin = _1e6.mul(5000)
+            wethMargin = _1e18.mul(_1e6.mul(1000)).div(await oracle.getUnderlyingPrice(weth.address)) // $1000
+            const avaxMargin = _1e18.mul(_1e6.mul(1000)).div(avaxPrice) // $1000
+            await Promise.all([
+                addMargin(signers[0], hUsdMargin),
+                weth.mint(alice, wethMargin),
+                weth.approve(marginAccount.address, wethMargin),
+                avax.mint(alice, avaxMargin),
+                avax.approve(marginAccount.address, avaxMargin)
+            ])
+            await marginAccount.addMargin(1, wethMargin)
+            await marginAccount.addMargin(2, avaxMargin)
+        })
+
+        it('taker+maker liquidation price', async function() {
+            // add liquidity for non-zero makerNotional and pnl, makerNotional = 2 * 10000
+            await clearingHouse.addLiquidity(0, _1e18.mul(10), 0)
+
+            await clearingHouse.openPosition(0, _1e18.mul(-5), 0)
+            // bob makes a counter-trade
+            bob = signers[1]
+            await addMargin(bob, _1e6.mul(20000))
+            await clearingHouse.connect(bob).openPosition(0, _1e18.mul(70), ethers.constants.MaxUint256)
+            const makerNotional = _1e6.mul(20000)
+
+            expect(await liquidationPriceViewer.getTakerLiquidationPrice(alice, 0)).to.eq(
+                await getTakerLiquidationPrice(alice, wethMargin.mul(8).div(10))
+            )
+            // reverse position
+            const base = _1e18.mul(10)
+            const quote = await hubbleViewer.getQuote(base, 0)
+            await clearingHouse.openPosition(0, base, quote.mul(1005).div(1000))
+            expect(await liquidationPriceViewer.getTakerLiquidationPrice(alice, 0)).to.eq(
+                await getTakerLiquidationPrice(alice, wethMargin.mul(8).div(10))
+            )
+
+            // maker liquidation price
+            const makerLiquidationPrices = calcMakerLiquidationPrice(await liquidationPriceViewer.getMakerLiquidationPrice(alice, 0))
+            expect(makerLiquidationPrices).to.deep.eq(
+                await getMakerLiquidationPrice(alice, makerNotional, _1e6.mul(initialRate))
+            )
+        })
+    })
 })
+
+async function getTakerLiquidationPrice(trader, avax) {
+    let [ { size }, { notionalPosition, margin }, maintenanceMargin, indexPrice ] = await Promise.all([
+        amm.positions(trader),
+        clearingHouse.getNotionalPositionAndMargin(alice, true, 0),
+        clearingHouse.maintenanceMargin(),
+        oracle.getUnderlyingPrice(weth.address)
+    ])
+
+    let liquidationPrice
+    if (size < 0) {
+        // liqPrice = indexPrice + (MM * nowNotional - margin) / (avax + (1 + MM) * size)
+        liquidationPrice = notionalPosition.mul(maintenanceMargin).div(_1e6).sub(margin)
+        liquidationPrice = indexPrice.add(liquidationPrice.mul(_1e18).div(avax.add(size.mul(_1e6.add(maintenanceMargin)).div(_1e6))))
+    } else if (size > 0) {
+        // liqPrice = indexPrice + (MM * nowNotional - margin) / (avax + (1 - MM) * size)
+        liquidationPrice = notionalPosition.mul(maintenanceMargin).div(_1e6).sub(margin)
+        liquidationPrice = indexPrice.add(liquidationPrice.mul(_1e18).div(avax.add(size.mul(_1e6.sub(maintenanceMargin)).div(_1e6))))
+    }
+    return liquidationPrice >= 0 ? liquidationPrice : 0
+}
+
+async function getMakerLiquidationPrice(trader, makerNotional, initialPrice) {
+    let [ { notionalPosition }, { unrealizedPnl: takerPnl }, margin, totalFunding, maintenanceMargin ] = await Promise.all([
+        clearingHouse.getNotionalPositionAndMargin(alice, true, 0),
+        amm.getTakerNotionalPositionAndUnrealizedPnl(alice),
+        marginAccount.getNormalizedMargin(trader),
+        clearingHouse.getTotalFunding(trader),
+        clearingHouse.maintenanceMargin()
+    ])
+
+    margin = margin.add(takerPnl).sub(totalFunding)
+    const coefficient = makerNotional.mul(2 * 1e6).div(maintenanceMargin.mul(notionalPosition).div(1e6).add(makerNotional).sub(margin))
+    return calcMakerLiquidationPrice({ coefficient, initialPrice })
+}

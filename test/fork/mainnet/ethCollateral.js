@@ -1,7 +1,7 @@
 const { expect } = require('chai')
 const { ethers } = require('hardhat')
-const { config } = require('./utils')
-const { impersonateAcccount, constants: { _1e18, ZERO, _1e6 }, forkCChain } = require('../../utils')
+const { mainnetConfig: config } = require('../../../scripts/config')
+const { impersonateAccount, constants: { _1e18, ZERO, _1e6 }, forkCChain } = require('../../utils')
 
 const deployer = '0xF5c8E1eAFFD278A383C13061B4980dB7619479af'
 const proxyAdminAddy = '0xddf407237BDe4d36287Be4De79D65c57AefBf8da'
@@ -16,11 +16,11 @@ describe('(fork) eth collateral', async function() {
     let blockTag = 19246068
     before(async function() {
         await forkCChain(blockTag)
-        await impersonateAcccount(deployer)
+        await impersonateAccount(deployer)
         signer = ethers.provider.getSigner(deployer)
 
         ;([ clearingHouse, marginAccount, amm, proxyAdmin,
-             vusd, wavax, usdc, oracle, hubbleViewer, weth
+            vusd, wavax, usdc, oracle, weth
         ] = await Promise.all([
             ethers.getContractAt('ClearingHouse', config.contracts.ClearingHouse),
             ethers.getContractAt('MarginAccount', config.contracts.MarginAccount),
@@ -30,7 +30,6 @@ describe('(fork) eth collateral', async function() {
             ethers.getContractAt('IERC20', config.contracts.collateral[1].address),
             ethers.getContractAt('IERC20', config.contracts.usdc),
             ethers.getContractAt('Oracle', config.contracts.Oracle),
-            ethers.getContractAt('HubbleViewer', '0x690EB0F0D9ddC1D3Df1a5E123000B95b8E708447'),
             ethers.getContractAt('IERC20', Weth)
         ]))
 
@@ -62,7 +61,7 @@ describe('(fork) eth collateral', async function() {
     it('flash liquidate with eth', async function() {
         const wethMargin = _1e18.mul(6).div(100)
 
-        await impersonateAcccount(WethWhale)
+        await impersonateAccount(WethWhale)
         const wethWhale = ethers.provider.getSigner(WethWhale)
         await weth.connect(wethWhale).approve(marginAccount.address, wethMargin)
         await marginAccount.connect(wethWhale).addMarginFor(2, wethMargin, Trader)
@@ -79,13 +78,12 @@ describe('(fork) eth collateral', async function() {
         expect(await weth.balanceOf(batchLiquidator.address)).to.gt(minProfit)
         expect(await marginAccount.margin(0, Trader)).to.eq(vusdMarginBefore.add(repay))
         expect((await marginAccount.isLiquidatable(Trader, true))[0]).to.eq(0) // IS_LIQUIDABLE
-        // console.log(await hubbleViewer.userInfo(Trader))
         // console.log(await marginAccount.isLiquidatable(Trader, true))
     })
 
     it('liquidate and sell', async function() {
         let repay = _1e6.mul(30)
-        await impersonateAcccount(usdcWhale)
+        await impersonateAccount(usdcWhale)
         await usdc.connect(ethers.provider.getSigner(usdcWhale)).transfer(batchLiquidator.address, repay)
 
         const vusdMarginBefore = await marginAccount.margin(0, Trader)

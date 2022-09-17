@@ -392,14 +392,14 @@ async function getTwapPrice(amm, intervalInSeconds, blockTimestamp) {
     return weightedPrice.div(intervalInSeconds);
 }
 
-async function impersonateAcccount(address) {
+async function impersonateAccount(address) {
     await hre.network.provider.request({
         method: "hardhat_impersonateAccount",
         params: [address],
     });
 }
 
-async function stopImpersonateAcccount(address) {
+async function stopImpersonateAccount(address) {
     await hre.network.provider.request({
         method: "hardhat_stopImpersonatingAccount",
         params: [address],
@@ -586,6 +586,27 @@ async function setBalance(address, balance) {
     ]);
 }
 
+/**
+ * solve x^2 - b * x + 1
+ * x1 = (b - sqrt(b^2 - 4)) / 2, x2 = (b + sqrt(b^2 - 4)) / 2
+ * longLiqPrice = x1^2 * initialPrice, shortLiqPrice = x2^2 * initialPrice
+ */
+function calcMakerLiquidationPrice(liquidationPriceData) {
+    const b = bnToFloat(liquidationPriceData.coefficient)
+    const D = b ** 2 - 4
+    if (D < 0) { // already in liquidation zone
+        return { longLiqPrice: 0, shortLiqPrice: 0 }
+    }
+
+    const x1 = (b - Math.sqrt(D)) / 2
+    const x2 = (b + Math.sqrt(D)) / 2
+    const initialPrice = bnToFloat(liquidationPriceData.initialPrice)
+    return {
+        longLiqPrice: initialPrice * (x1 ** 2),
+        shortLiqPrice: initialPrice * (x2 ** 2)
+    }
+}
+
 module.exports = {
     constants: { _1e6, _1e8, _1e12, _1e18, ZERO },
     BigNumber,
@@ -598,8 +619,8 @@ module.exports = {
     getTradeDetails,
     assertions,
     getTwapPrice,
-    impersonateAcccount,
-    stopImpersonateAcccount,
+    impersonateAccount,
+    stopImpersonateAccount,
     gotoNextFundingTime,
     forkNetwork,
     setupAmm,
@@ -619,5 +640,6 @@ module.exports = {
     forkCChain,
     gotoNextUnbondEpoch,
     setBalance,
+    calcMakerLiquidationPrice,
     setDefaultClearingHouseParams
 }

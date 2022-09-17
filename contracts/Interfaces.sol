@@ -156,6 +156,7 @@ interface IMarginAccount {
     function margin(uint idx, address trader) external view returns(int256);
     function transferOutVusd(address recipient, uint amount) external;
     function liquidateExactRepay(address trader, uint repay, uint idx, uint minSeizeAmount) external;
+    function oracle() external view returns(IOracle);
 }
 
 interface IVAMM {

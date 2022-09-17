@@ -337,7 +337,9 @@ contract HubbleViewer is IHubbleViewer {
 
         (notionalPosition, unrealizedPnl) = clearingHouse.getTotalNotionalPositionAndUnrealizedPnl(trader, margin, IClearingHouse.Mode.Min_Allowable_Margin);
         int256 minAllowableMargin = clearingHouse.minAllowableMargin();
-        freeMargin = margin + unrealizedPnl - clearingHouse.getTotalFunding(trader) - notionalPosition.toInt256() * minAllowableMargin / PRECISION_INT;
+        int256 pendingFunding = clearingHouse.getTotalFunding(trader);
+        totalCollateral -= pendingFunding;
+        freeMargin = margin + unrealizedPnl - pendingFunding - notionalPosition.toInt256() * minAllowableMargin / PRECISION_INT;
     }
 
     /**

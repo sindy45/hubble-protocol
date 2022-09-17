@@ -2,12 +2,17 @@
 
 pragma solidity 0.8.9;
 
-import { IClearingHouse, IMarginAccount, IAMM, IHubbleViewer } from "./Interfaces.sol";
+import { IClearingHouse, IMarginAccount, IAMM, IHubbleViewer, IOracle } from "./Interfaces.sol";
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 contract LiquidationPriceViewer {
     using SafeCast for uint256;
     using SafeCast for int256;
+
+    struct LiquidationPriceData {
+        int256 coefficient;
+        uint initialPrice;
+    }
 
     int256 constant PRECISION_INT = 1e6;
     uint256 constant PRECISION_UINT = 1e6;
@@ -18,6 +23,7 @@ contract LiquidationPriceViewer {
     IClearingHouse public immutable clearingHouse;
     IMarginAccount public immutable marginAccount;
     IHubbleViewer public immutable hubbleViewer;
+    IOracle public immutable oracle;
 
 
     constructor(
@@ -26,6 +32,7 @@ contract LiquidationPriceViewer {
         hubbleViewer = _hubbleViewer;
         clearingHouse = IClearingHouse(hubbleViewer.clearingHouse());
         marginAccount = IMarginAccount(hubbleViewer.marginAccount());
+        oracle = marginAccount.oracle();
     }
 
     /**
@@ -45,19 +52,23 @@ contract LiquidationPriceViewer {
         // get quoteAsset required to swap baseAssetQuantity
         quoteAssetQuantity = hubbleViewer.getQuote(baseAssetQuantity, idx);
 
+        // get market specific position info
+        (int256 takerPosSize,,,) = amm.positions(trader);
         // get total notionalPosition and margin (including unrealizedPnL and funding)
+        // using IClearingHouse.Mode.Min_Allowable_Margin here to calculate correct newNotional
         (uint256 notionalPosition, int256 margin) = clearingHouse.getNotionalPositionAndMargin(trader, true /* includeFundingPayments */, IClearingHouse.Mode.Min_Allowable_Margin);
 
-        // get market specific position info
-        (int256 takerPosSize, uint takerOpenNotional,,) = amm.positions(trader);
-        uint takerNowNotional = amm.getCloseQuote(takerPosSize);
-        uint takerUpdatedNotional = amm.getCloseQuote(takerPosSize + baseAssetQuantity);
-        // Calculate new total notionalPosition
-        notionalPosition = notionalPosition + takerUpdatedNotional - takerNowNotional;
+        {
+            uint takerNowNotional = amm.getCloseQuote(takerPosSize);
+            takerPosSize += baseAssetQuantity;
+            uint takerUpdatedNotional = amm.getCloseQuote(takerPosSize);
+            // Calculate new total notionalPosition
+            notionalPosition = notionalPosition + takerUpdatedNotional - takerNowNotional;
 
-        margin -= _calculateTradeFee(quoteAssetQuantity).toInt256();
-        expectedMarginFraction = _getMarginFraction(margin, notionalPosition);
-        liquidationPrice = _getTakerLiquidationPrice(trader, amm, takerPosSize, takerOpenNotional, baseAssetQuantity, quoteAssetQuantity, margin);
+            margin -= _calculateTradeFee(quoteAssetQuantity).toInt256();
+            expectedMarginFraction = _getMarginFraction(margin, notionalPosition);
+        }
+        liquidationPrice = _getTakerLiquidationPrice(trader, amm, notionalPosition, takerPosSize, margin);
     }
 
     /**
@@ -66,13 +77,12 @@ contract LiquidationPriceViewer {
     * @param vUSD vUSD amount to be added/removed in the pool (in 6 decimals)
     * @param isRemove true is liquidity is being removed, false if added
     * @return expectedMarginFraction Resultant Margin fraction after the tx
-    * @return longLiquidationPrice Price at which maker will be liquidated if long
-    * @return shortLiquidationPrice Price at which maker will be liquidated if short
+    * @return liquidationPriceData data required to calculate maker liquidation price
     */
     function getMakerExpectedMFAndLiquidationPrice(address trader, uint idx, uint vUSD, bool isRemove)
         external
         view
-        returns (int256 expectedMarginFraction, uint256 longLiquidationPrice, uint256 shortLiquidationPrice)
+        returns (int256 expectedMarginFraction, LiquidationPriceData memory liquidationPriceData)
     {
         // get total notionalPosition and margin (including unrealizedPnL and funding)
         (uint256 notionalPosition, int256 margin) = clearingHouse.getNotionalPositionAndMargin(trader, true /* includeFundingPayments */, IClearingHouse.Mode.Min_Allowable_Margin);
@@ -116,180 +126,116 @@ contract LiquidationPriceViewer {
         expectedMarginFraction = _getMarginFraction(margin, notionalPosition);
         // approximating price at the time of add/remove as y / x
         if (maker.vAsset != 0) {
-            (longLiquidationPrice, shortLiquidationPrice) = _getMakerLiquidationPrice(
-                trader, takerPosSize, 2 * maker.vUSD.toInt256(), (maker.vUSD * 1e18 / maker.vAsset).toInt256(), margin
-            );
+            (,int256 takerPnl) = amm.getTakerNotionalPositionAndUnrealizedPnl(trader);
+            liquidationPriceData = LiquidationPriceData({
+                coefficient: _getMakerLiquidationPrice(trader, notionalPosition, 2 * maker.vUSD.toInt256(), takerPnl),
+                initialPrice: maker.vUSD * 1e18 / maker.vAsset
+            });
         }
     }
 
     function getTakerLiquidationPrice(address trader, uint idx) external view returns (uint liquidationPrice) {
-        // get total notionalPosition and margin (including unrealizedPnL and funding)
-        (,int256 margin) = clearingHouse.getNotionalPositionAndMargin(trader, true /* includeFundingPayments */, IClearingHouse.Mode.Maintenance_Margin);
-        IAMM amm = clearingHouse.amms(idx);
-        (int256 takerPosSize, uint takerOpenNotional,,) = amm.positions(trader);
-        liquidationPrice = _getTakerLiquidationPrice(trader, amm, takerPosSize, takerOpenNotional, 0, 0, margin);
-    }
-
-    function getMakerLiquidationPrice(address trader, uint idx) external view returns (uint longLiquidationPrice, uint shortLiquidationPrice) {
-        // get total notionalPosition and margin (including unrealizedPnL and funding)
-        (,int256 margin) = clearingHouse.getNotionalPositionAndMargin(trader, true /* includeFundingPayments */, IClearingHouse.Mode.Maintenance_Margin);
         IAMM amm = clearingHouse.amms(idx);
         (int256 takerPosSize,,,) = amm.positions(trader);
+        // using IClearingHouse.Mode.Maintenance_Margin to get liquidation mode notional
+        (uint256 notionalPosition, int256 margin) = clearingHouse.getNotionalPositionAndMargin(trader, true, IClearingHouse.Mode.Maintenance_Margin);
+        liquidationPrice = _getTakerLiquidationPrice(trader, amm, notionalPosition, takerPosSize, margin);
+    }
+
+    function getMakerLiquidationPrice(address trader, uint idx) external view returns (LiquidationPriceData memory liquidationPriceData) {
+        IAMM amm = clearingHouse.amms(idx);
         IAMM.Maker memory maker = amm.makers(trader);
+        (,int256 takerPnl) = amm.getTakerNotionalPositionAndUnrealizedPnl(trader);
+        (uint256 notionalPosition,) = clearingHouse.getNotionalPositionAndMargin(trader, true, IClearingHouse.Mode.Maintenance_Margin);
         if (maker.vAsset != 0) {
-            return  _getMakerLiquidationPrice(
-                trader, takerPosSize, 2 * maker.vUSD.toInt256(), (maker.vUSD * 1e18 / maker.vAsset).toInt256(), margin
-            );
+            liquidationPriceData =  LiquidationPriceData({
+                coefficient: _getMakerLiquidationPrice(trader, notionalPosition, 2 * maker.vUSD.toInt256(), takerPnl),
+                initialPrice: maker.vUSD * 1e18 / maker.vAsset
+            });
         }
     }
 
    /**
-    * @notice get taker liquidation price, while ignoring maker PnL (but factors in maker's notional)
-    * margin + pnl = MM * notionalPosition - (1)
-    *   where notionalPosition = takerNotional + makerNotional - (1.a)
-    * notionalPosition = takerNotional + makerNotional - (2)
-    * let liquidation price = P2, takerNotional = P2 * size - (3)
-    * margin = hUSD + avax * P2; where - (4)
-    *   hUSD = hUSDBalance + unrealizedPnl - pendingFunding - (4.a)
-    *   avax = avaxBalance * weight - (4.b)
-    * takerNotional = size * P2 - (5)
+    * @notice get taker liquidation price, while ignoring future maker PnL (but factors in maker's notional)
+    * margin + (liqPrice - indexPrice) * avax + takerPnl = MM * notionalPosition - (1) where,
+    * notionalPosition = takerNotional (at liquidation) + makerNotional
+    * takerPnl = (liqPrice - indexPrice) * size - (2), where size is with sign
+    * margin = weightedCollateral + unrealizedPnl - pendingFunding
+    * avax = avaxBalance * weight
 
-    * For long, pnl = takerNotional - openNotional - (6)
-    * substitute (4), (6) and (1.a) in (1),
-    * (hUSD + avax * P2) + (takerNotional - openNotional) = MM * (takerNotional + makerNotional)
-    * substitute (5),
-    * => (hUSD + avax * P2) + (size * P2 - openNotional) = MM * (size * P2 + makerNotional)
-    * => P2 * (avax + size (1 - MM)) = MM * makerNotional + openNotional - hUSD
-    * => P2 = (MM * makerNotional + openNotional - hUSD) / (avax + size (1 - MM))
+    * For long,
+    * notionalPosition = nowNotional + (liqPrice - indexPrice) * size - (3)
+    * substitute (2) and (3) in (1),
+    * liqPrice = indexPrice + (MM * nowNotional - margin) / (avax + (1 - MM) * size)
 
-    * For short, pnl = openNotional - takerNotional - (7)
-    * substitute (4), (7) and (1.a) in (1),
-    * (hUSD + avax * P2) + (openNotional - takerNotional) = MM * (takerNotional + makerNotional)
-    * substitute (5),
-    * => (hUSD + avax * P2) + (openNotional - size * P2) = MM * (size * P2 + makerNotional)
-    * => P2 * (avax - size (1 + MM)) = MM * makerNotional - openNotional - hUSD
-    * => P2 = (MM * makerNotional - openNotional - hUSD) / (avax - size (1 + MM))
-    * Multiply by -1
-    * => P2 = (openNotional + hUSD - MM * makerNotional) / (size * (1 + MM) - avax)
+    * For short,
+    * notionalPosition = nowNotional - (liqPrice - indexPrice) * size - (4)
+    * substitute (2) and (4) in (1),
+    * liqPrice = indexPrice + (MM * nowNotional - margin) / (avax + (1 + MM) * size)
     */
     function _getTakerLiquidationPrice(
         address trader,
         IAMM amm,
+        uint nowNotional,
         int256 takerPosSize,
-        uint takerOpenNotional,
-        int256 baseAssetQuantity,
-        uint quoteAssetQuantity,
         int256 margin
     )
         internal
         view
-        returns(uint256 liquidationPrice)
+        returns(uint256 /* liquidationPrice */)
     {
-        if (takerPosSize + baseAssetQuantity == 0) {
+        if (takerPosSize == 0) {
             return 0;
         }
 
-        (, int256 unrealizedPnl) = amm.getTakerNotionalPositionAndUnrealizedPnl(trader);
-
-        if (baseAssetQuantity != 0) {
-            // Calculate effective position and openNotional
-            if (baseAssetQuantity * takerPosSize >= 0) { // increasingPosition i.e. same direction trade
-                takerOpenNotional += quoteAssetQuantity;
-            } else { // open reverse position
-                uint totalPosNotional = amm.getCloseQuote(takerPosSize + baseAssetQuantity);
-                if (_abs(takerPosSize) >= _abs(baseAssetQuantity)) { // position side remains same after the trade
-                    (takerOpenNotional,) = amm.getOpenNotionalWhileReducingPosition(
-                        takerPosSize,
-                        totalPosNotional,
-                        unrealizedPnl,
-                        baseAssetQuantity
-                    );
-                } else { // position side changes after the trade
-                    takerOpenNotional = totalPosNotional;
-                }
-            }
-            takerPosSize += baseAssetQuantity;
-        }
-
-        (, unrealizedPnl) = clearingHouse.getTotalNotionalPositionAndUnrealizedPnl(trader, margin, IClearingHouse.Mode.Min_Allowable_Margin);
-        int256 hUSD = marginAccount.margin(VUSD_IDX, trader) + unrealizedPnl - clearingHouse.getTotalFunding(trader);
-
         int256 avax = marginAccount.margin(WAVAX_IDX, trader);
         avax = avax * (marginAccount.supportedAssets())[WAVAX_IDX].weight.toInt256() / PRECISION_INT;
-
         int256 MM = clearingHouse.maintenanceMargin();
-        int256 makerNotional = 2 * (amm.makers(trader)).vUSD.toInt256();
-        makerNotional = makerNotional * MM / PRECISION_INT;
+        int256 indexPrice = oracle.getUnderlyingPrice(amm.underlyingAsset());
 
-        int256 _liquidationPrice;
-        if (takerPosSize > 0) {
-            _liquidationPrice = (takerOpenNotional.toInt256() - hUSD + makerNotional) * 1e18 / (takerPosSize * (PRECISION_INT - MM) / PRECISION_INT + avax);
-        } else if (takerPosSize < 0) {
-            takerPosSize = (-takerPosSize) * (PRECISION_INT + MM) / PRECISION_INT;
-            if (takerPosSize != avax) { // otherwise the position is delta-neutral
-                _liquidationPrice = (takerOpenNotional.toInt256() + hUSD - makerNotional) * 1e18 / (takerPosSize - avax);
-            }
-        }
+        int256 multiplier = takerPosSize > 0 ? (PRECISION_INT - MM) : (PRECISION_INT + MM);
+        // assumption : position size and avax have same precision
+        multiplier = multiplier * takerPosSize / PRECISION_INT + avax;
+        int256 liquidationPrice = indexPrice + (nowNotional.toInt256() * MM / PRECISION_INT - margin) * 1e18 / multiplier;
 
-        // negative liquidation price is possible when position size is small compared to margin added and
-        // hence pnl will not be big enough to reach liquidation
-        // in this case, (takerOpenNotional - hUSD) < 0 because of high margin
-        if (_liquidationPrice < 0) {
-            _liquidationPrice = 0;
-        }
-        return _liquidationPrice.toUint256();
+        // negative liquidation price is possible when margin is too high
+        return liquidationPrice >= 0 ? liquidationPrice.toUint256() : 0;
     }
 
 
     /**
-    * @notice get maker liquidation price, while ignoring taker PnL (but factors in taker's notional)
-    * @dev for maker pnl, approximating long/short price as the price at the time of adding liquidity.
-        Since makers take long position when markPrice goes down
-        and short when it goes up, this approximation will result in pessimistic liquidation price for maker
-    * assuming maker notional will be constant = 2 * maker.vAsset and taker PNL = 0
+    * @notice get maker liquidation price
+    * @dev assumes constant collateral value, constant taker pnl and notional
     * P1 - initialPrice, P2 - liquidationPrice
+    * https://medium.com/auditless/how-to-calculate-impermanent-loss-full-derivation-803e8b2497b7
+    * Impermanent Loss (IL) =  2 * sqrt(k) / (k + 1) - 1 - (1), where k = P2 / P1
+    * makerPnl = IL * makerNotional - (2)
+    * assuming maker notional will be constant = 2 * maker.vAsset and constant taker PNL at current price
 
-    * if maker long, P2 < P1, deltaP = P2 - P1
-    * => P2 * (makerNotional / P1 + avax - MM * size) = makerNotional * (1 + MM) - hUSD
-
-    * if maker short, P2 > P1, deltaP = P1 - P2
-    * => P2 * (makerNotional / P1 - avax + MM * size) = makerNotional * (1 - MM) + hUSD
+    * margin + makerPnl = MM * totalNotional - (3)
+    * substitute (1) and (2) in (3)
+    * margin + (2 * sqrt(k) / (k + 1) - 1) * makerNotional = MM * totalNotional - (4)
+    * assuming constant margin here or else equation (4) will become a degree 4 polynomial
+    * let x^2 = k and coefficient b = 2 * makerNotional / (MM * totalNotional + makerNotional - margin)
+    * equation (4) can be simplified as,
+    * x^2 - b * x + 1 = 0 - (5)
+    * longLiqPrice = x1^2 * P1, shortLiqPrice = x2^2 * P1, where x1 and x2 are roots of equation (5)
     */
     function _getMakerLiquidationPrice(
         address trader,
-        int256 takerPosSize,
+        uint totalNotional,
         int256 makerNotional,
-        int256 initialPrice,
-        int256 margin
+        int256 takerPnl
     )
         internal
         view
-        returns(uint longLiquidationPrice, uint shortLiquidationPrice)
+        returns(int256 /* coefficient */)
     {
-        (, int256 unrealizedPnl) = clearingHouse.getTotalNotionalPositionAndUnrealizedPnl(trader, margin, IClearingHouse.Mode.Min_Allowable_Margin);
-        int256 hUSD = marginAccount.margin(VUSD_IDX, trader) + unrealizedPnl - clearingHouse.getTotalFunding(trader);
-
-        int256 avax = marginAccount.margin(WAVAX_IDX, trader);
-        uint weight = (marginAccount.supportedAssets())[WAVAX_IDX].weight;
-        avax = avax * weight.toInt256() / PRECISION_INT;
-
+        // factor in taker position pnl at current price
+        int256 margin = marginAccount.getNormalizedMargin(trader) + takerPnl - clearingHouse.getTotalFunding(trader);
         int256 MM = clearingHouse.maintenanceMargin();
-        takerPosSize = _abs(takerPosSize) * MM / PRECISION_INT;
 
-        int256 _longLiquidationPrice = makerNotional * (PRECISION_INT + MM) / PRECISION_INT - hUSD;
-        _longLiquidationPrice = _longLiquidationPrice * 1e18 / (makerNotional * 1e18 / initialPrice + avax - takerPosSize);
-
-        int256 _shortLiquidationPrice = makerNotional * (PRECISION_INT - MM) / PRECISION_INT + hUSD;
-        _shortLiquidationPrice = _shortLiquidationPrice * 1e18 / (makerNotional * 1e18 / initialPrice - avax + takerPosSize);
-
-        if (_longLiquidationPrice < 0) {
-            _longLiquidationPrice = 0;
-        }
-
-        if (_shortLiquidationPrice < 0) {
-            _shortLiquidationPrice = 0;
-        }
-        return (_longLiquidationPrice.toUint256(), _shortLiquidationPrice.toUint256());
+        return 2 * makerNotional * PRECISION_INT / (MM * totalNotional.toInt256() / PRECISION_INT + makerNotional - margin);
     }
 
     // Internal
