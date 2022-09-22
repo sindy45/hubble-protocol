@@ -92,8 +92,8 @@ describe('Hubble Viewer', async function() {
 
             expect((await clearingHouse.getMarginFraction(alice)).div(1e3)).to.eq(expectedMarginFraction.div(1e3))
             const makerLiquidationPrices = calcMakerLiquidationPrice(liquidationPriceData)
-            expect(parseInt(makerLiquidationPrices.longLiqPrice)).to.eq(631)
-            expect(parseInt(makerLiquidationPrices.shortLiqPrice)).to.eq(1553)
+            expect(parseInt(makerLiquidationPrices.longLiqPrice)).to.eq(518)
+            expect(parseInt(makerLiquidationPrices.shortLiqPrice)).to.eq(1890)
         })
 
         it('alice removes liquidity', async function() {
@@ -104,8 +104,8 @@ describe('Hubble Viewer', async function() {
 
             expect((await clearingHouse.getMarginFraction(alice)).div(1e3)).to.eq(expectedMarginFraction.div(1e3))
             const makerLiquidationPrices = calcMakerLiquidationPrice(liquidationPriceData)
-            expect(parseInt(makerLiquidationPrices.longLiqPrice)).to.eq(468)
-            expect(parseInt(makerLiquidationPrices.shortLiqPrice)).to.eq(2093)
+            expect(parseInt(makerLiquidationPrices.longLiqPrice)).to.eq(389)
+            expect(parseInt(makerLiquidationPrices.shortLiqPrice)).to.eq(2517)
         })
 
         it('bob adds liquidity and gets more vUSD while removing', async function () {
@@ -167,7 +167,7 @@ describe('Hubble Viewer', async function() {
             await marginAccount.addMargin(2, avaxMargin)
         })
 
-        it('taker+maker liquidation price', async function() {
+        it('taker+maker liquidation price when low margin', async function() {
             // add liquidity for non-zero makerNotional and pnl, makerNotional = 2 * 10000
             await clearingHouse.addLiquidity(0, _1e18.mul(10), 0)
 
@@ -176,7 +176,7 @@ describe('Hubble Viewer', async function() {
             bob = signers[1]
             await addMargin(bob, _1e6.mul(20000))
             await clearingHouse.connect(bob).openPosition(0, _1e18.mul(70), ethers.constants.MaxUint256)
-            const makerNotional = _1e6.mul(20000)
+            makerNotional = _1e6.mul(20000)
 
             expect(await liquidationPriceViewer.getTakerLiquidationPrice(alice, 0)).to.eq(
                 await getTakerLiquidationPrice(alice, wethMargin.mul(8).div(10))
@@ -190,10 +190,27 @@ describe('Hubble Viewer', async function() {
             )
 
             // maker liquidation price
-            const makerLiquidationPrices = calcMakerLiquidationPrice(await liquidationPriceViewer.getMakerLiquidationPrice(alice, 0))
+            const liquidationPriceData = await liquidationPriceViewer.getMakerLiquidationPrice(alice, 0)
+            const makerLiquidationPrices = calcMakerLiquidationPrice(liquidationPriceData)
+            expect(liquidationPriceData.coefficient).to.gt(ZERO) // low margin
             expect(makerLiquidationPrices).to.deep.eq(
                 await getMakerLiquidationPrice(alice, makerNotional, _1e6.mul(initialRate))
             )
+            expect(makerLiquidationPrices.longLiqPrice).to.lt(makerLiquidationPrices.shortLiqPrice)
+        })
+
+        it('maker liquidation price when low maker leverage', async function() {
+            await addMargin(signers[0], _1e6.mul(18000))
+            expect(bnToFloat(await liquidationPriceViewer.getMakerLeverage(alice, 0)).toFixed(3)).to.eq('0.839')
+            const liquidationPriceData = await liquidationPriceViewer.getMakerLiquidationPrice(alice, 0)
+            const makerLiquidationPrices = calcMakerLiquidationPrice(liquidationPriceData)
+
+            expect(liquidationPriceData.coefficient).to.lt(ZERO)
+            expect(makerLiquidationPrices).to.deep.eq(
+                await getMakerLiquidationPrice(alice, makerNotional, _1e6.mul(initialRate))
+            )
+            expect(makerLiquidationPrices.longLiqPrice).to.eq(ZERO)
+            expect(makerLiquidationPrices.shortLiqPrice).to.eq(ZERO)
         })
     })
 })
@@ -220,8 +237,7 @@ async function getTakerLiquidationPrice(trader, avax) {
 }
 
 async function getMakerLiquidationPrice(trader, makerNotional, initialPrice) {
-    let [ { notionalPosition }, { unrealizedPnl: takerPnl }, margin, totalFunding, maintenanceMargin ] = await Promise.all([
-        clearingHouse.getNotionalPositionAndMargin(alice, true, 0),
+    let [ { unrealizedPnl: takerPnl }, margin, totalFunding, maintenanceMargin ] = await Promise.all([
         amm.getTakerNotionalPositionAndUnrealizedPnl(alice),
         marginAccount.getNormalizedMargin(trader),
         clearingHouse.getTotalFunding(trader),
@@ -229,6 +245,6 @@ async function getMakerLiquidationPrice(trader, makerNotional, initialPrice) {
     ])
 
     margin = margin.add(takerPnl).sub(totalFunding)
-    const coefficient = makerNotional.mul(2 * 1e6).div(maintenanceMargin.mul(notionalPosition).div(1e6).add(makerNotional).sub(margin))
+    const coefficient = makerNotional.mul(2 * 1e6).div((maintenanceMargin.add(_1e6)).mul(makerNotional).div(_1e6).sub(margin))
     return calcMakerLiquidationPrice({ coefficient, initialPrice })
 }

@@ -158,7 +158,7 @@ async function deployHubbleViewer() {
     const HubbleViewer = await ethers.getContractFactory('HubbleViewer')
     hubbleViewer = await HubbleViewer.deploy(config.contracts.ClearingHouse, config.contracts.MarginAccount, config.contracts.Registry)
 
-    await sleep(10)
+    await utils.sleep(10)
     const LiquidationPriceViewer = await ethers.getContractFactory('LiquidationPriceViewer')
     liquidationPriceViewer = await LiquidationPriceViewer.deploy(hubbleViewer.address)
 

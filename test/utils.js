@@ -434,6 +434,18 @@ function forkCChain(blockNumber) {
     })
 }
 
+function forkFuji(blockNumber) {
+    return network.provider.request({
+        method: "hardhat_reset",
+        params: [{
+            forking: {
+                jsonRpcUrl: `https://api.avax-test.network/ext/bc/C/rpc`,
+                blockNumber
+            }
+        }]
+    })
+}
+
 async function signTransaction(signer, to, data, forwarder, value = 0, gas = 1000000) {
     const types = {
         ForwardRequest: [
@@ -594,12 +606,13 @@ async function setBalance(address, balance) {
 function calcMakerLiquidationPrice(liquidationPriceData) {
     const b = bnToFloat(liquidationPriceData.coefficient)
     const D = b ** 2 - 4
-    if (D < 0) { // already in liquidation zone
+    if (D < 0 || b < 0) { // already in liquidation zone or outside liquidation
         return { longLiqPrice: 0, shortLiqPrice: 0 }
     }
 
-    const x1 = (b - Math.sqrt(D)) / 2
-    const x2 = (b + Math.sqrt(D)) / 2
+    let x1 = (b - Math.sqrt(D)) / 2
+    let x2 = (b + Math.sqrt(D)) / 2
+
     const initialPrice = bnToFloat(liquidationPriceData.initialPrice)
     return {
         longLiqPrice: initialPrice * (x1 ** 2),
@@ -638,6 +651,7 @@ module.exports = {
     unbondAndRemoveLiquidity,
     gotoNextWithdrawEpoch,
     forkCChain,
+    forkFuji,
     gotoNextUnbondEpoch,
     setBalance,
     calcMakerLiquidationPrice,

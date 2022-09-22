@@ -128,7 +128,7 @@ contract LiquidationPriceViewer {
         if (maker.vAsset != 0) {
             (,int256 takerPnl) = amm.getTakerNotionalPositionAndUnrealizedPnl(trader);
             liquidationPriceData = LiquidationPriceData({
-                coefficient: _getMakerLiquidationPrice(trader, notionalPosition, 2 * maker.vUSD.toInt256(), takerPnl),
+                coefficient: _getMakerLiquidationPrice(trader, 2 * maker.vUSD.toInt256(), takerPnl),
                 initialPrice: maker.vUSD * 1e18 / maker.vAsset
             });
         }
@@ -146,14 +146,22 @@ contract LiquidationPriceViewer {
         IAMM amm = clearingHouse.amms(idx);
         IAMM.Maker memory maker = amm.makers(trader);
         (,int256 takerPnl) = amm.getTakerNotionalPositionAndUnrealizedPnl(trader);
-        (uint256 notionalPosition,) = clearingHouse.getNotionalPositionAndMargin(trader, true, IClearingHouse.Mode.Maintenance_Margin);
         if (maker.vAsset != 0) {
             liquidationPriceData =  LiquidationPriceData({
-                coefficient: _getMakerLiquidationPrice(trader, notionalPosition, 2 * maker.vUSD.toInt256(), takerPnl),
+                coefficient: _getMakerLiquidationPrice(trader, 2 * maker.vUSD.toInt256(), takerPnl),
                 initialPrice: maker.vUSD * 1e18 / maker.vAsset
             });
         }
     }
+
+    function getMakerLeverage(address maker, uint idx) external view returns(uint leverage) {
+        IAMM amm = clearingHouse.amms(idx);
+        uint makerNotional = 2 * amm.makers(maker).vUSD;
+        (, int256 margin) = clearingHouse.getNotionalPositionAndMargin(maker, true, IClearingHouse.Mode.Maintenance_Margin);
+        leverage = makerNotional * PRECISION_UINT / margin.toUint256();
+    }
+
+    // Internal
 
    /**
     * @notice get taker liquidation price, while ignoring future maker PnL (but factors in maker's notional)
@@ -205,25 +213,25 @@ contract LiquidationPriceViewer {
 
     /**
     * @notice get maker liquidation price
-    * @dev assumes constant collateral value, constant taker pnl and notional
+    * @dev assumes constant collateral value, constant taker pnl
+    * @dev assumes taker notional = 0
     * P1 - initialPrice, P2 - liquidationPrice
     * https://medium.com/auditless/how-to-calculate-impermanent-loss-full-derivation-803e8b2497b7
     * Impermanent Loss (IL) =  2 * sqrt(k) / (k + 1) - 1 - (1), where k = P2 / P1
     * makerPnl = IL * makerNotional - (2)
     * assuming maker notional will be constant = 2 * maker.vAsset and constant taker PNL at current price
 
-    * margin + makerPnl = MM * totalNotional - (3)
+    * margin + makerPnl = MM * makerNotional - (3)
     * substitute (1) and (2) in (3)
-    * margin + (2 * sqrt(k) / (k + 1) - 1) * makerNotional = MM * totalNotional - (4)
+    * margin + (2 * sqrt(k) / (k + 1) - 1) * makerNotional = MM * makerNotional - (4)
     * assuming constant margin here or else equation (4) will become a degree 4 polynomial
-    * let x^2 = k and coefficient b = 2 * makerNotional / (MM * totalNotional + makerNotional - margin)
+    * let x^2 = k and coefficient b = 2 * makerNotional / (MM * makerNotional + makerNotional - margin)
     * equation (4) can be simplified as,
     * x^2 - b * x + 1 = 0 - (5)
     * longLiqPrice = x1^2 * P1, shortLiqPrice = x2^2 * P1, where x1 and x2 are roots of equation (5)
     */
     function _getMakerLiquidationPrice(
         address trader,
-        uint totalNotional,
         int256 makerNotional,
         int256 takerPnl
     )
@@ -235,10 +243,8 @@ contract LiquidationPriceViewer {
         int256 margin = marginAccount.getNormalizedMargin(trader) + takerPnl - clearingHouse.getTotalFunding(trader);
         int256 MM = clearingHouse.maintenanceMargin();
 
-        return 2 * makerNotional * PRECISION_INT / (MM * totalNotional.toInt256() / PRECISION_INT + makerNotional - margin);
+        return 2 * makerNotional * PRECISION_INT / ((MM + PRECISION_INT) * makerNotional / PRECISION_INT - margin);
     }
-
-    // Internal
 
     function _calculateTradeFee(uint quoteAsset) internal view returns (uint) {
         return quoteAsset * clearingHouse.tradeFee() / PRECISION_UINT;

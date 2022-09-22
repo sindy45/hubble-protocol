@@ -3,8 +3,8 @@ const mainnetConfig = {
     "timestamp": 1659792695,
     "contracts": {
         "ClearingHouse": "0x4E3535964Cb5612a466d8bb25362d485452eFcEF",
-        "HubbleViewer": "0x7935C91b36C00091bD74043F3CBEe00c94ab2841",
-        "LiquidationPriceViewer": "0x0d7fd21215d2879F7AbbcCE76d6D166C866B6aa6",
+        "HubbleViewer": "0x51bB52aA9B6B755B293635d8Ef2192Ccf65a9B3e",
+        "LiquidationPriceViewer": "0xD56bCc48714A4e58c9Dc96Cb42685B8e79Da0659",
         "MarginAccount": "0x7648675cA85DfB9e2F9C764EbC5e9661ef46055D",
         "Oracle": "0x7511E2ccAe82CdAb12d51F0d1519ad5450F157De",
         "InsuranceFund": "0x870850A72490379f60A4924Ca64BcA89a6D53a9d",
@@ -64,7 +64,8 @@ const whirlpoolConfig = {
     "timestamp": 1658830227,
     "contracts": {
         "ClearingHouse": "0xd6693FA24b73d67ef8E19983cda7AAdAcc6B771A",
-        "HubbleViewer": "0xFCaFA336F190532Dc9586FbFc6e409b3127180a3",
+        "HubbleViewer": "0xE9489E6454Ff7d25E4de74Cbdbfd15f8ce834EaC",
+        "LiquidationPriceViewer": "0x4Dd928314b28F91008019B822b0582DC0a409B00",
         "MarginAccount": "0x5124C2dD88B68DB9E5a142dB6E515E8325CeBd20",
         "Oracle": "0x17803c2abE66139d478fA36e4e5Fef4e3aa57054",
         "InsuranceFund": "0x4e3CF7C40FeB07689af4175f444B2a39633E8f4d",
@@ -97,7 +98,10 @@ const whirlpoolConfig = {
                 "weight": "800000",
                 "address": "0xd00ae08403B9bbb9124bB305C09058E32C39A48c"
             }
-        ]
+        ],
+        // older ones
+        "HubbleViewer_0": "0x4ecc1d18e39442d4671f10e921a3da63e757ba26",
+        "LiquidationPriceViewer_0": "0xE219234455Fc75a12E3723100e6D0C4De77Fb9E9"
     },
     "systemParams": {
         "maintenanceMargin": "100000",
