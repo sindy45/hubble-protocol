@@ -79,5 +79,8 @@ module.exports = {
     tenderly: {
         project: "hubble",
         username: "atvanguard",
+    },
+    mocha: {
+        timeout: 0
     }
 };

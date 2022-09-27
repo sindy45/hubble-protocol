@@ -57,9 +57,23 @@ function getVAMMVars(vamm) {
     ])
 }
 
+function getMAVars(ma, trader) {
+    return Promise.all([
+        ma.clearingHouse(),
+        ma.oracle(),
+        ma.insuranceFund(),
+        ma.vusd(),
+        ma.credit(),
+        ma.supportedAssets(),
+        ma.liquidationIncentive(),
+        ma.margin(0, trader)
+    ])
+}
+
 module.exports = {
     config,
     getAMMVars,
     getCHVars,
+    getMAVars,
     getVAMMVars
 }

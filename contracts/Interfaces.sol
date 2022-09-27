@@ -157,6 +157,7 @@ interface IMarginAccount {
     function transferOutVusd(address recipient, uint amount) external;
     function liquidateExactRepay(address trader, uint repay, uint idx, uint minSeizeAmount) external;
     function oracle() external view returns(IOracle);
+    function removeMarginFor(address trader, uint idx, uint256 amount) external;
 }
 
 interface IVAMM {
@@ -246,7 +247,10 @@ interface IERC20FlexibleSupply is IERC20 {
 }
 
 interface IVUSD is IERC20 {
-     function mintWithReserve(address to, uint amount) external;
+    function mintWithReserve(address to, uint amount) external;
+    function reserveToken() external view returns(address);
+    function withdraw(uint amount) external;
+    function processWithdrawals() external;
 }
 
 interface IUSDC is IERC20FlexibleSupply {
@@ -305,4 +309,47 @@ interface IJoeFactory {
 interface IWAVAX is IERC20 {
     function deposit() external payable;
     function withdraw(uint256) external;
+}
+
+interface IYakRouter {
+    struct Trade {
+        uint amountIn;
+        uint amountOut;
+        address[] path;
+        address[] adapters;
+    }
+
+    struct FormattedOfferWithGas {
+        uint[] amounts;
+        address[] adapters;
+        address[] path;
+        uint gasEstimate;
+    }
+
+    struct FormattedOffer {
+        uint[] amounts;
+        address[] adapters;
+        address[] path;
+    }
+
+    function swapNoSplit(
+        Trade calldata _trade,
+        address _to,
+        uint _fee
+    ) external;
+
+    function findBestPathWithGas(
+        uint256 _amountIn,
+        address _tokenIn,
+        address _tokenOut,
+        uint _maxSteps,
+        uint _gasPrice
+    ) external view returns(FormattedOfferWithGas memory);
+
+    function findBestPath(
+        uint256 _amountIn,
+        address _tokenIn,
+        address _tokenOut,
+        uint _maxSteps
+    ) external view returns(FormattedOffer memory);
 }

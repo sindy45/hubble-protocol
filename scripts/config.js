@@ -15,13 +15,15 @@ const mainnetConfig = {
         "HubbleReferral": "0x27f48404f6951702EAB36930a6671c459faC0B20",
         "usdc": "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E",
         "vusd": "0x5c6FC0AaF35A55E7a43Fff45575380bCEdb5Cbc2",
+        "TrustedForwarder": "0xEd27FB82DAb4c5384B38aEe8d0Ab81B3b591C0FA",
+        "PortfolioManager": "0x2FdaAac29aefa974E72ba224DbC45C6E2b7b0055",
         "amms": [
-        {
-            "perp": "AVAX-PERP",
-            "address": "0xD3575CC24dB98Bfa3C61Da7b484CF3a50a6f4fEd",
-            "underlying": "0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7",
-            "vamm": "0x269Cd1827fCa5c4d3c7748C45708806c026052FE"
-        }
+            {
+                "perp": "AVAX-PERP",
+                "address": "0xD3575CC24dB98Bfa3C61Da7b484CF3a50a6f4fEd",
+                "underlying": "0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7",
+                "vamm": "0x269Cd1827fCa5c4d3c7748C45708806c026052FE"
+            }
         ],
         "collateral": [
             {
@@ -46,10 +48,15 @@ const mainnetConfig = {
                 "address": "0x49D5c2BdFfac6CE2BFdB6640F4F80f226bc10bAB"
             }
         ],
+        "thirdParty": {
+            "JoeRouter": "0x60aE616a2155Ee3d9A68541Ba4544862310933d4",
+            "YakRouter": "0xC4729E56b831d74bBc18797e0e17A295fA77488c"
+        },
         // older ones
         "HubbleViewer_0": "0x690EB0F0D9ddC1D3Df1a5E123000B95b8E708447",
         "HubbleViewer_1": "0x6E412ecD0f582DA78D2Dfd51a61e7c06e8744fe5",
         "LiquidationPriceViewer_1": "0x863799D7e804d7b1d7B33dfE0ab1B54B2EEEb2a9"
+
     },
     "systemParams": {
         "maintenanceMargin": "100000",
@@ -75,6 +82,8 @@ const whirlpoolConfig = {
         "HubbleReferral": "0x19A71B4A0F9DcE41366a5F0de4F808937f55948A",
         "usdc": "0xBdAB32601ABbD79efF36bB23A4EFEBE334ffA09c",
         "vusd": "0x4875E6621e9547f858fB88379B56909315607299",
+        "TrustedForwarder": "0xaCEc31046a2B59B75E8315Fe4BCE4Da943237817",
+        "PortfolioManager": "0x61addfc55ecc7382f804ce081289c8dc1ee41113",
         "amms": [
             {
                 "perp": "AVAX-PERP",
@@ -99,6 +108,10 @@ const whirlpoolConfig = {
                 "address": "0xd00ae08403B9bbb9124bB305C09058E32C39A48c"
             }
         ],
+        "thirdParty": {
+            "JoeRouter": "0xd7f655E3376cE2D7A2b08fF01Eb3B1023191A901",
+            "YakRouter": "0x0000000000000000000000000000000000000000"
+        },
         // older ones
         "HubbleViewer_0": "0x4ecc1d18e39442d4671f10e921a3da63e757ba26",
         "LiquidationPriceViewer_0": "0xE219234455Fc75a12E3723100e6D0C4De77Fb9E9"

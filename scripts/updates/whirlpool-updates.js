@@ -1,73 +1,15 @@
 const fs = require('fs')
 const { ethers } = require('hardhat')
 
-
+const { whirlpoolConfig: config } = require('../config')
 const utils = require('../../test/utils')
 const {
     constants: { _1e6, _1e8, _1e18 },
+    sleep
 } = utils
 
-const config = {
-    "genesisBlock": 11951773,
-    "timestamp": 1658830227,
-    "contracts": {
-        "ClearingHouse": "0xd6693FA24b73d67ef8E19983cda7AAdAcc6B771A",
-        "HubbleViewer": "0x4ecc1d18e39442d4671f10e921a3da63e757ba26",
-        "LiquidationPriceViewer": "0xE219234455Fc75a12E3723100e6D0C4De77Fb9E9",
-        "MarginAccount": "0x5124C2dD88B68DB9E5a142dB6E515E8325CeBd20",
-        "Oracle": "0x17803c2abE66139d478fA36e4e5Fef4e3aa57054",
-        "InsuranceFund": "0x4e3CF7C40FeB07689af4175f444B2a39633E8f4d",
-        "Registry": "0xb3C825B5c692fe53054F04B80d947A1966446a28",
-        "Leaderboard": "0xdD3f0a3710a4219F33D3919DD08657F2C92eCD5e",
-        "MarginAccountHelper": "0x9F52Ec123A3180E6b2Ec6Bf16a41949dADF94a03",
-        "HubbleReferral": "0x19A71B4A0F9DcE41366a5F0de4F808937f55948A",
-        "usdc": "0xBdAB32601ABbD79efF36bB23A4EFEBE334ffA09c",
-        "vusd": "0x4875E6621e9547f858fB88379B56909315607299",
-        "amms": [
-            {
-                "perp": "AVAX-PERP",
-                "address": "0x2F3363F05Aa37c18eb7BE4aE3E1bB51601237bA5",
-                "underlying": "0xd00ae08403B9bbb9124bB305C09058E32C39A48c",
-                "vamm": "0xdBf9c6EDFB852F19A57627196b1c7046FCBc45a3"
-            }
-        ],
-        "collateral": [
-            {
-                "name": "Hubble USD",
-                "ticker": "hUSD",
-                "decimals": "6",
-                "weight": "1000000",
-                "address": "0x4875E6621e9547f858fB88379B56909315607299"
-            },
-            {
-                "name": "Wrapped AVAX",
-                "ticker": "WAVAX",
-                "decimals": "18",
-                "weight": "800000",
-                "address": "0xd00ae08403B9bbb9124bB305C09058E32C39A48c"
-            },
-            {
-                "name": "Wrapped Ether",
-                "ticker": "WETH.e",
-                "decimals": "18",
-                "weight": "800000",
-                "address": "0x033e9a95D040B14bB960953D5456eC6b39fd72D5"
-            }
-        ],
-        // older ones
-        "HubbleViewer_0": "0xFCaFA336F190532Dc9586FbFc6e409b3127180a3",
-        "HubbleViewer_1": "0x9f47D19bA2e45a8Bf6860f92f75bB2f124A9e058",
-        "LiquidationPriceViewer_1": "0x9e8BB65d4f23DE948A351007011D66eFB75f970D"
-    },
-    "systemParams": {
-        "maintenanceMargin": "100000",
-        "numCollateral": 2,
-        "insuranceFundFee": "250",
-        "liquidationFee": "50000"
-    }
-}
-
 const contracts = config.contracts
+const governance = '0x835cE0760387BC894E91039a88A00b6a69E65D94' // also deployer
 const proxyAdminAddy = '0xdfE416E61D78855bb47b358353dc3AEa0C0a3ECD'
 
 async function generateConfig() {
@@ -185,7 +127,29 @@ async function wethCollateral() {
     await marginAccount.whitelistCollateral(weth.address, 8e5)
 }
 
-deployHubbleViewer()
+/**
+ * There's no yakSwap on fuji, this is just for consistency sake
+ */
+async function yakSwap() {
+    const PortfolioManager = await ethers.getContractFactory('PortfolioManager')
+    const portfolioManager = await PortfolioManager.deploy(contracts.Registry, contracts.thirdParty.YakRouter)
+    await sleep(5)
+    console.log({ portfolioManager: portfolioManager.address })
+
+    const MarginAccount = await ethers.getContractFactory('MarginAccount')
+    const newMarginAccount = await MarginAccount.deploy(contracts.TrustedForwarder)
+    await sleep(5)
+    console.log({ newMarginAccount: newMarginAccount.address })
+
+    const proxyAdmin = await ethers.getContractAt('ProxyAdmin', proxyAdminAddy)
+    await proxyAdmin.upgrade(contracts.MarginAccount, newMarginAccount.address)
+    await sleep(5)
+
+    const marginAccount = await ethers.getContractAt('MarginAccount', contracts.MarginAccount)
+    await marginAccount.setPortfolioManager(portfolioManager.address)
+}
+
+yakSwap()
 .then(() => process.exit(0))
 .catch(error => {
     console.error(error);

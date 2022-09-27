@@ -287,11 +287,16 @@ async function setupRestrictedTestToken(name, symbol, decimals) {
     return tok
 }
 
-async function addMargin(trader, margin) {
+async function addMargin(trader, margin, token = usdc, index = 0) {
     // omitting the nonce calculation here because this is only used in local
-    await usdc.mint(trader.address, margin, getTxOptions())
-    await usdc.connect(trader).approve(marginAccountHelper.address, margin)
-    await marginAccountHelper.connect(trader).addVUSDMarginWithReserve(margin)
+    await token.mint(trader.address, margin, getTxOptions())
+    if (index == 0) {
+        await token.connect(trader).approve(marginAccountHelper.address, margin)
+        await marginAccountHelper.connect(trader).addVUSDMarginWithReserve(margin)
+    } else {
+        await token.connect(trader).approve(marginAccount.address, margin)
+        await marginAccount.addMargin(index, margin)
+    }
 }
 
 async function filterEvent(tx, name) {

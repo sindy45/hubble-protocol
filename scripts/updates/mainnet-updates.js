@@ -1,13 +1,15 @@
 const fs = require('fs')
 const { ethers } = require('hardhat')
-const { sleep } = require('../../test/utils')
+
 const { mainnetConfig: config } = require('../config')
 const utils = require('../../test/utils')
 const {
     constants: { _1e6, _1e8, _1e18 },
+    sleep
 } = utils
 
 const contracts = config.contracts
+const governance = '0xF5c8E1eAFFD278A383C13061B4980dB7619479af' // also deployer
 const proxyAdminAddy = '0xddf407237BDe4d36287Be4De79D65c57AefBf8da'
 
 async function liftOff() {
@@ -104,7 +106,26 @@ async function wethCollateral() {
     await marginAccount.whitelistCollateral(weth.address, 8e5)
 }
 
-deployHubbleViewer()
+async function yakSwap() {
+    const PortfolioManager = await ethers.getContractFactory('PortfolioManager')
+    const portfolioManager = await PortfolioManager.deploy(contracts.Registry, contracts.thirdParty.YakRouter)
+    await sleep(5)
+    console.log({ portfolioManager: portfolioManager.address })
+
+    const MarginAccount = await ethers.getContractFactory('MarginAccount')
+    const newMarginAccount = await MarginAccount.deploy(contracts.TrustedForwarder)
+    await sleep(5)
+    console.log({ newMarginAccount: newMarginAccount.address })
+
+    const proxyAdmin = await ethers.getContractAt('ProxyAdmin', proxyAdminAddy)
+    await proxyAdmin.upgrade(contracts.MarginAccount, newMarginAccount.address)
+    await sleep(5)
+
+    const marginAccount = await ethers.getContractAt('MarginAccount', contracts.MarginAccount)
+    await marginAccount.setPortfolioManager(portfolioManager.address)
+}
+
+yakSwap()
 .then(() => process.exit(0))
 .catch(error => {
     console.error(error);

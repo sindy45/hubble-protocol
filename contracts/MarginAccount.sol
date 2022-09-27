@@ -77,8 +77,9 @@ contract MarginAccount is IMarginAccount, HubbleBase, ReentrancyGuard {
     * @dev equivalent to margin(uint idx, address user)
     */
     mapping(uint => mapping(address => int)) override public margin;
+    address public portfolioManager;
 
-    uint256[50] private __gap;
+    uint256[49] private __gap;
 
     /* ****************** */
     /*       Events       */
@@ -116,6 +117,11 @@ contract MarginAccount is IMarginAccount, HubbleBase, ReentrancyGuard {
 
     modifier onlyClearingHouse() {
         require(_msgSender() == address(clearingHouse), "Only clearingHouse");
+        _;
+    }
+
+    modifier onlyPortfolioManager () {
+        require(_msgSender() == portfolioManager, "Only portfolioManger");
         _;
     }
 
@@ -197,6 +203,21 @@ contract MarginAccount is IMarginAccount, HubbleBase, ReentrancyGuard {
         safeTransferAVAX(trader, amount);
 
         emit MarginRemoved(trader, WAVAX_IDX, amount, _blockTimestamp());
+    }
+
+    /**
+    * @notice remove margin in Avax
+    * @param amount Amount to withdraw
+    */
+    function removeMarginFor(address trader, uint idx, uint amount) external whenNotPaused onlyPortfolioManager {
+        _validateRemoveMargin(idx, amount, trader);
+
+        if (idx == VUSD_IDX) {
+            _transferOutVusd(portfolioManager, amount);
+        } else {
+            supportedCollateral[idx].token.safeTransfer(portfolioManager, amount);
+        }
+        emit MarginRemoved(trader, idx, amount, _blockTimestamp());
     }
 
     /**
@@ -611,14 +632,14 @@ contract MarginAccount is IMarginAccount, HubbleBase, ReentrancyGuard {
 
         // credit funding payments
         clearingHouse.updatePositions(trader);
-
-        require(margin[VUSD_IDX][trader] >= 0, "Cannot remove margin when vusd balance is negative");
         require(margin[idx][trader] >= amount.toInt256(), "Insufficient balance");
-
         margin[idx][trader] -= amount.toInt256();
 
-        // Check minimum margin requirement after withdrawal
-        clearingHouse.assertMarginRequirement(trader);
+        if (_msgSender() != portfolioManager) {
+            require(margin[VUSD_IDX][trader] >= 0, "Cannot remove margin when vusd balance is negative");
+            // Check minimum margin requirement after withdrawal
+            clearingHouse.assertMarginRequirement(trader);
+        }
     }
 
     function safeTransferAVAX(address to, uint256 value) internal nonReentrant {
@@ -650,5 +671,9 @@ contract MarginAccount is IMarginAccount, HubbleBase, ReentrancyGuard {
         require(_weight <= PRECISION, "weight > 1e6");
         require(idx < supportedCollateral.length, "Collateral not supported");
         supportedCollateral[idx].weight = _weight;
+    }
+
+    function setPortfolioManager(address _portfolioManager) external onlyGovernance {
+        portfolioManager = _portfolioManager;
     }
 }
