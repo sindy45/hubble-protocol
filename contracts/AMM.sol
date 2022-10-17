@@ -78,7 +78,8 @@ contract AMM is IAMM, Governable {
         bool isLiquidation;
     }
 
-    uint256[50] private __gap;
+    int256 public maxFundingRate; // in hourly %,  scaled to 1e6
+    uint256[49] private __gap;
 
     /* ****************** */
     /*       Events       */
@@ -526,6 +527,17 @@ contract AMM is IAMM, Governable {
         int256 underlyingPrice = getUnderlyingTwapPrice(spotPriceTwapInterval);
         int256 premium = getTwapPrice(spotPriceTwapInterval) - underlyingPrice;
         int256 premiumFraction = (premium * int256(fundingPeriod)) / 1 days;
+        // funding rate cap
+        // if premiumFraction > 0, premiumFraction = min(premiumFraction, maxFundingRate * indexTwap)
+        // if premiumFraction < 0, premiumFraction = max(premiumFraction, -maxFundingRate * indexTwap)
+        if (maxFundingRate != 0) {
+            int256 premiumFractionLimit = maxFundingRate * underlyingPrice / 1e8;
+            if (premiumFraction > 0) {
+                premiumFraction = _min(premiumFraction, premiumFractionLimit);
+            } else {
+                premiumFraction = _max(premiumFraction, -premiumFractionLimit);
+            }
+        }
 
         int256 premiumPerDtoken = posAccumulator * premiumFraction;
 
@@ -1073,6 +1085,10 @@ contract AMM is IAMM, Governable {
         return x >= y ? x : y;
     }
 
+    function _min(int x, int y) private pure returns (int) {
+        return x < y ? x : y;
+    }
+
     // Governance
 
     function putAmmInIgnition() external onlyClearingHouse {
@@ -1102,5 +1118,9 @@ contract AMM is IAMM, Governable {
 
     function setMinSizeRequirement(uint _minSizeRequirement) external onlyGovernance {
         minSizeRequirement = _minSizeRequirement;
+    }
+
+    function setMaxFundingRate(int256 _maxFundingRate) external onlyGovernance {
+        maxFundingRate = _maxFundingRate;
     }
 }

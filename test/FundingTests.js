@@ -6,6 +6,8 @@ const {
     gotoNextFundingTime,
     setupContracts,
     getTwapPrice,
+    parseRawEvent,
+    addMargin,
     constants: { _1e6, _1e18, ZERO }
 } = require('./utils')
 
@@ -259,9 +261,98 @@ describe('Funding Tests', function() {
         ).to.be.revertedWith('Above Maintenance Margin')
     })
 
-    async function addMargin(trader, margin) {
-        await usdc.mint(trader.address, margin)
-        await usdc.connect(trader).approve(marginAccountHelper.address, margin)
-        await marginAccountHelper.connect(trader).addVUSDMarginWithReserve(margin)
-    }
+    describe('funding payment cap', async function() {
+        before(async function() {
+            contracts = await setupContracts()
+            ;({ marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, oracle, weth, hubbleViewer } = contracts)
+
+            // add margin
+            const margin = _1e6.mul(2000)
+            await addMargin(signers[0], margin)
+            // set maxFunding rate = 50% annual = 0.00570776% hourly
+            maxFundingRate = 5707
+            await amm.setMaxFundingRate(maxFundingRate)
+        })
+
+        it('fundingRate positive and greater than maxFundingRate', async () => {
+            // alice shorts
+            baseAssetQuantity = _1e18.mul(-5)
+            await clearingHouse.openPosition(0, baseAssetQuantity, 0)
+            await gotoNextFundingTime(amm)
+            const oracleTwap = _1e6.mul(990)
+            await oracle.setUnderlyingTwapPrice(weth.address, oracleTwap)
+            const ammTwap = await amm.getTwapPrice(3600) // 999
+
+            const tx = await clearingHouse.settleFunding()
+            const premiumFraction = (await parseRawEvent(tx, amm, 'FundingRateUpdated')).args.premiumFraction
+
+            expect(ammTwap.sub(oracleTwap).div(24)).to.gt(oracleTwap.mul(maxFundingRate).div(1e8))
+            expect(premiumFraction).to.eq(oracleTwap.mul(maxFundingRate).div(1e8))
+
+            const margin = await marginAccount.margin(0, alice)
+            await clearingHouse.updatePositions(alice)
+
+            let fundingReceived = premiumFraction.mul(baseAssetQuantity.abs()).div(_1e18)
+            fundingReceived = fundingReceived.sub(fundingReceived.div(1e3))
+            expect(await marginAccount.margin(0, alice)).to.eq(margin.add(fundingReceived))
+        })
+
+        it('fundingRate negative and less than -maxFundingRate', async () => {
+            await gotoNextFundingTime(amm)
+            const oracleTwap = _1e6.mul(1010)
+            await oracle.setUnderlyingTwapPrice(weth.address, oracleTwap)
+            const ammTwap = await amm.getTwapPrice(3600) // 999
+
+            const tx = await clearingHouse.settleFunding()
+            const premiumFraction = (await parseRawEvent(tx, amm, 'FundingRateUpdated')).args.premiumFraction
+
+            expect(ammTwap.sub(oracleTwap).div(24)).to.lt(oracleTwap.mul(-maxFundingRate).div(1e8))
+            expect(premiumFraction).to.eq(oracleTwap.mul(-maxFundingRate).div(1e8))
+
+            const margin = await marginAccount.margin(0, alice)
+            await clearingHouse.updatePositions(alice)
+
+            const fundingPaid = premiumFraction.mul(baseAssetQuantity).div(_1e18)
+            expect(await marginAccount.margin(0, alice)).to.eq(margin.sub(fundingPaid))
+        })
+
+        it('fundingRate positive and less than maxFundingRate', async () => {
+            await gotoNextFundingTime(amm)
+            const oracleTwap = _1e6.mul(998)
+            await oracle.setUnderlyingTwapPrice(weth.address, oracleTwap)
+            const ammTwap = await amm.getTwapPrice(3600) // 999
+
+            const tx = await clearingHouse.settleFunding()
+            const premiumFraction = (await parseRawEvent(tx, amm, 'FundingRateUpdated')).args.premiumFraction
+
+            expect(ammTwap.sub(oracleTwap).div(24)).to.lt(oracleTwap.mul(maxFundingRate).div(1e8))
+            expect(premiumFraction).to.eq(ammTwap.sub(oracleTwap).div(24))
+
+            const margin = await marginAccount.margin(0, alice)
+            await clearingHouse.updatePositions(alice)
+
+            let fundingReceived = premiumFraction.mul(baseAssetQuantity.abs()).div(_1e18)
+            fundingReceived = fundingReceived.sub(fundingReceived.div(1e3))
+            expect(await marginAccount.margin(0, alice)).to.eq(margin.add(fundingReceived))
+        })
+
+        it('fundingRate negative and greater than -maxFundingRate', async () => {
+            await gotoNextFundingTime(amm)
+            const oracleTwap = _1e6.mul(1000)
+            await oracle.setUnderlyingTwapPrice(weth.address, oracleTwap)
+            const ammTwap = await amm.getTwapPrice(3600) // 999
+
+            const tx = await clearingHouse.settleFunding()
+            const premiumFraction = (await parseRawEvent(tx, amm, 'FundingRateUpdated')).args.premiumFraction
+
+            expect(ammTwap.sub(oracleTwap).div(24)).to.gt(oracleTwap.mul(-maxFundingRate).div(1e8))
+            expect(premiumFraction).to.eq(ammTwap.sub(oracleTwap).div(24))
+
+            const margin = await marginAccount.margin(0, alice)
+            await clearingHouse.updatePositions(alice)
+
+            const fundingPaid = premiumFraction.mul(baseAssetQuantity).div(_1e18)
+            expect(await marginAccount.margin(0, alice)).to.eq(margin.sub(fundingPaid))
+        })
+    })
 })

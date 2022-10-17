@@ -80,7 +80,7 @@ describe('(fork) yield yak swap - v1.3.0', async function() {
 
         const trade = [
             bestPath.amounts[0],
-            bestPath.amounts[bestPath.amounts.length - 1].mul(998).div(1000), // 0.2% slippage, min usdc to receive
+            bestPath.amounts[bestPath.amounts.length - 1].mul(994).div(1000), // 0.6% slippage, min usdc to receive
             bestPath.path,
             bestPath.adapters
         ]
@@ -136,7 +136,7 @@ describe('(fork) yield yak swap - v1.3.0', async function() {
 
         const trade = [
             bestPath.amounts[0],
-            bestPath.amounts[bestPath.amounts.length - 1].mul(998).div(1000), // 0.2% slippage, min wavax to receive
+            bestPath.amounts[bestPath.amounts.length - 1].mul(994).div(1000), // 0.6% slippage, min wavax to receive
             bestPath.path,
             bestPath.adapters
         ]
@@ -218,7 +218,7 @@ describe('(fork) yield yak swap - v1.3.0', async function() {
 
         const trade = [
             bestPath.amounts[0],
-            bestPath.amounts[bestPath.amounts.length - 1].mul(998).div(1000), // 0.2% slippage,
+            bestPath.amounts[bestPath.amounts.length - 1].mul(995).div(1000), // 0.5% slippage,
             bestPath.path,
             bestPath.adapters
         ]
@@ -258,7 +258,7 @@ describe('(fork) yield yak swap - v1.3.0', async function() {
 
         const trade = [
             bestPath.amounts[0],
-            bestPath.amounts[bestPath.amounts.length - 1].mul(998).div(1000), // 0.2% slippage,
+            bestPath.amounts[bestPath.amounts.length - 1].mul(995).div(1000), // 0.5% slippage,
             bestPath.path,
             bestPath.adapters
         ]
@@ -297,7 +297,7 @@ describe('(fork) yield yak swap - v1.3.0', async function() {
 
         const trade = [
             bestPath.amounts[0],
-            bestPath.amounts[bestPath.amounts.length - 1].mul(998).div(1000), // 0.2% slippage,
+            bestPath.amounts[bestPath.amounts.length - 1].mul(995).div(1000), // 0.5% slippage,
             bestPath.path,
             bestPath.adapters
         ]
@@ -337,7 +337,7 @@ describe('(fork) yield yak swap - v1.3.0', async function() {
 
         const trade = [
             bestPath.amounts[0],
-            bestPath.amounts[bestPath.amounts.length - 1].mul(998).div(1000), // 0.2% slippage
+            bestPath.amounts[bestPath.amounts.length - 1].mul(995).div(1000), // 0.5% slippage
             bestPath.path,
             bestPath.adapters
         ]
