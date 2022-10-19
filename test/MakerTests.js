@@ -828,7 +828,7 @@ describe('Maker Tests', async function() {
             await clearingHouse.connect(maker2).addLiquidity(0, initialLiquidity, 0)
             maintenanceMargin = await clearingHouse.maintenanceMargin()
 
-            await amm.setLiquidationParams(100, 1e6)
+            await amm.setLiquidationParams(1e6, 1e6)
         })
 
         it('taker-notLiquidable, maker-Liquidable', async function() {
@@ -1221,6 +1221,7 @@ describe('Maker Tests', async function() {
         })
 
         it('two makers pos against one another', async function() {
+            await amm.setMaxFundingRate(0)
             // alice longs
             await clearingHouse.openPosition(0, _1e18.mul(5), ethers.constants.MaxUint256)
             // maker2 adds liquidity

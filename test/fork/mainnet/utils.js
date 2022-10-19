@@ -1,4 +1,4 @@
-function getAMMVars(amm, trader) {
+function getAMMVars(amm, trader, maker = trader) {
     return Promise.all([
         amm.vamm(),
         amm.underlyingAsset(),

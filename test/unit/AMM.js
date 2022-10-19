@@ -563,7 +563,7 @@ describe('AMM unit tests', async function() {
     }
 })
 
-describe('Price Spread Check', async function() {
+describe('Oracle Price Spread Check', async function() {
     beforeEach(async function() {
         signers = await ethers.getSigners()
         ;([ alice ] = signers.map(s => s.address))
@@ -749,7 +749,33 @@ describe('Price Spread Check', async function() {
     })
 })
 
-describe('MarkPrice tests', async function() {
+describe('Mark price spread check in single block', async function() {
+    before(async function() {
+        signers = await ethers.getSigners()
+        ;([ alice ] = signers.map(s => s.address))
+
+        contracts = await setupContracts()
+        ;({ marginAccount, oracle, clearingHouse, amm, vusd, weth } = contracts)
+        // addMargin
+        await addMargin(signers[0], _1e12)
+        await clearingHouse.openPosition(0, _1e18.mul(-5), 0)
+
+        // set maxPriceSpreadPerBlock = 1%
+        await amm.setPriceSpreadParams(5 * 1e4, 1e4)
+    })
+
+    it('does not allow trade if mark price move more than 1%', async function() {
+        await expect(clearingHouse.openPosition(0, _1e18.mul(20), _1e18)).to.be.revertedWith('AMM.long_single_block_price_slippage')
+        await expect(clearingHouse.openPosition(0, _1e18.mul(-20), 0)).to.be.revertedWith('AMM.short_single_block_price_slippage')
+    })
+
+    it('allow trade if mark price movement is within 1%', async function() {
+        await clearingHouse.openPosition(0, _1e18.mul(18), _1e18)
+        await clearingHouse.openPosition(0, _1e18.mul(-10), 0)
+    })
+})
+
+describe('Vamm MarkPrice tests', async function() {
     before('contract factories', async function() {
         signers = await ethers.getSigners()
         mockAmm = signers[0]

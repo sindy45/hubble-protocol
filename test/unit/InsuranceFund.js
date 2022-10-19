@@ -168,7 +168,7 @@ describe('Insurance Fund Auction Tests', function() {
         ;({ swap, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, oracle, weth, insuranceFund } = await setupContracts())
         await vusd.grantRole(await vusd.MINTER_ROLE(), admin.address) // will mint vusd to liquidators account
         await setDefaultClearingHouseParams(clearingHouse)
-        await amm.setLiquidationParams(100, 1e6)
+        await amm.setLiquidationParams(1e6, 1e6)
 
         // addCollateral
         avax = await setupRestrictedTestToken('AVAX', 'AVAX', 18)

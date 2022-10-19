@@ -41,8 +41,11 @@ contract AMM is IAMM, Governable {
 
     uint256 public longOpenInterestNotional;
     uint256 public shortOpenInterestNotional;
-    uint256 public maxOracleSpreadRatio; // scaled 2 decimals
-    uint256 public maxLiquidationRatio; // scaled 2 decimals
+    // maximum allowed % difference between mark price and index price
+    uint256 public maxOracleSpreadRatio; // scaled 6 decimals
+    // maximum allowd % size which can be liquidated in one tx
+    uint256 public maxLiquidationRatio; // scaled 6 decimals
+    // maximum allowed % difference between mark price and index price before liquidation
     uint256 public maxLiquidationPriceSpread; // scaled 6 decimals
 
     enum Side { LONG, SHORT }
@@ -78,8 +81,11 @@ contract AMM is IAMM, Governable {
         bool isLiquidation;
     }
 
+    // maximum hourly funding rate allowed in %
     int256 public maxFundingRate; // in hourly %,  scaled to 1e6
-    uint256[49] private __gap;
+    // maximum allowed % difference in mark price in a single block
+    uint256 public maxPriceSpreadPerBlock; // scaled 6 decimals
+    uint256[48] private __gap;
 
     /* ****************** */
     /*       Events       */
@@ -145,10 +151,12 @@ contract AMM is IAMM, Governable {
         // values that most likely wouldn't need to change frequently
         fundingBufferPeriod = 15 minutes;
         withdrawPeriod = 1 days;
-        maxOracleSpreadRatio = 20;
+        maxOracleSpreadRatio = 20 * 1e4; // 20%
         unbondPeriod = 3 days;
-        maxLiquidationRatio = 25;
-        maxLiquidationPriceSpread = 1e6;
+        maxLiquidationRatio = 25 * 1e4; // 25%
+        maxLiquidationPriceSpread = 1 * 1e4; // 1%
+        maxPriceSpreadPerBlock = 1 * 1e4; // 1%
+        maxFundingRate = 50; // 0.005%
     }
 
     /**
@@ -176,7 +184,7 @@ contract AMM is IAMM, Governable {
         require(totalPosSize == 0 || totalPosSize >= minSizeRequirement, "position_less_than_minSize");
         // update liquidation thereshold
         positions[trader].liquidationThreshold = Math.max(
-            (totalPosSize * maxLiquidationRatio / 100) + 1,
+            (totalPosSize * maxLiquidationRatio / 1e6) + 1,
             minSizeRequirement
         );
 
@@ -189,6 +197,13 @@ contract AMM is IAMM, Governable {
         onlyClearingHouse
         returns (int realizedPnl, int baseAsset, uint quoteAsset)
     {
+        // liquidation price safeguard
+        // don't allow trade/liquidations before liquidation
+        require(reserveSnapshots[reserveSnapshots.length - 1].blockNumber != block.number, "AMM.liquidation_not_allowed_after_trade");
+        int256 oraclePrice = oracle.getUnderlyingPrice(underlyingAsset);
+        int256 markPrice = lastPrice().toInt256();
+        require(abs(oraclePrice - markPrice) * 1e6 / oraclePrice < maxLiquidationPriceSpread.toInt256(), "AMM.spread_limit_exceeded_between_markPrice_and_indexPrice");
+
         // don't need an ammState check because there should be no active positions
         Position memory position = positions[trader];
         bool isLongPosition = position.size > 0 ? true : false;
@@ -203,27 +218,6 @@ contract AMM is IAMM, Governable {
             // toLiquidate is within 1% of the overall position, then liquidate the entire pos
             toLiquidate = pozSize;
         }
-
-        // liquidation price safeguard
-        // price before liquidaiton should be within X% range of last liquidation price in the same block or previous block price
-        uint index = reserveSnapshots.length - 1;
-        uint lastTradePrice = reserveSnapshots[index].lastPrice;
-        while(reserveSnapshots[index].blockNumber == block.number && index != 0) {
-            if (reserveSnapshots[index].isLiquidation) {
-                lastTradePrice = reserveSnapshots[index].lastPrice;
-                break;
-            }
-            index -= 1;
-            lastTradePrice = reserveSnapshots[index].lastPrice;
-        }
-
-        uint diff = lastPrice();
-        if (diff >= lastTradePrice) {
-            diff -= lastTradePrice;
-        } else {
-            diff = lastTradePrice - diff;
-        }
-        require(diff <= lastTradePrice * maxLiquidationPriceSpread / 1e8, "AMM.liquidation_price_slippage");
 
         // liquidate position
         if (isLongPosition) {
@@ -425,7 +419,7 @@ contract AMM is IAMM, Governable {
 
                 // update liquidation thereshold
                 position.liquidationThreshold = Math.max(
-                    (uint(abs(position.size)) * maxLiquidationRatio / 100) + 1,
+                    (uint(abs(position.size)) * maxLiquidationRatio / 1e6) + 1,
                     minSizeRequirement
                 );
 
@@ -531,7 +525,7 @@ contract AMM is IAMM, Governable {
         // if premiumFraction > 0, premiumFraction = min(premiumFraction, maxFundingRate * indexTwap)
         // if premiumFraction < 0, premiumFraction = max(premiumFraction, -maxFundingRate * indexTwap)
         if (maxFundingRate != 0) {
-            int256 premiumFractionLimit = maxFundingRate * underlyingPrice / 1e8;
+            int256 premiumFractionLimit = maxFundingRate * underlyingPrice / 1e6;
             if (premiumFraction > 0) {
                 premiumFraction = _min(premiumFraction, premiumFractionLimit);
             } else {
@@ -666,7 +660,7 @@ contract AMM is IAMM, Governable {
         } else {
             oracleSpreadRatioAbs = oraclePrice - markPrice;
         }
-        oracleSpreadRatioAbs = oracleSpreadRatioAbs * 100 / oraclePrice;
+        oracleSpreadRatioAbs = oracleSpreadRatioAbs * 1e6 / oraclePrice;
 
         if (oracleSpreadRatioAbs >= maxOracleSpreadRatio) {
             return true;
@@ -837,14 +831,18 @@ contract AMM is IAMM, Governable {
             max_dx
         ); // 6 decimals precision
 
+        _addReserveSnapshot(_lastPrice, isLiquidation);
+        // markPrice should not change more than X% in a single block
+        uint256 lastBlockTradePrice = _getLastBlockTradePrice();
+        require(_lastPrice < lastBlockTradePrice * (1e6 + maxPriceSpreadPerBlock) / 1e6, "AMM.long_single_block_price_slippage");
+
         // longs not allowed if market price > (1 + maxOracleSpreadRatio)*index price
         uint256 oraclePrice = uint(oracle.getUnderlyingPrice(underlyingAsset));
-        oraclePrice = oraclePrice * (100 + maxOracleSpreadRatio) / 100;
+        oraclePrice = oraclePrice * (1e6 + maxOracleSpreadRatio) / 1e6;
         if (!isLiquidation && _lastPrice > oraclePrice) {
             revert("VAMM._long: longs not allowed");
         }
 
-        _addReserveSnapshot(_lastPrice, isLiquidation);
         // since maker position will be opposite of the trade
         posAccumulator -= baseAssetQuantity * 1e18 / vamm.totalSupply().toInt256();
         emit Swap(_lastPrice, openInterestNotional());
@@ -869,16 +867,30 @@ contract AMM is IAMM, Governable {
             min_dy
         );
 
+        _addReserveSnapshot(_lastPrice, isLiquidation);
+        // markPrice should not change more than X% in a single block
+        uint256 lastBlockTradePrice = _getLastBlockTradePrice();
+        require(_lastPrice > lastBlockTradePrice * (1e6 - maxPriceSpreadPerBlock) / 1e6, "AMM.short_single_block_price_slippage");
+
         // shorts not allowed if market price < (1 - maxOracleSpreadRatio)*index price
         uint256 oraclePrice = uint(oracle.getUnderlyingPrice(underlyingAsset));
-        oraclePrice = oraclePrice * (100 - maxOracleSpreadRatio) / 100;
+        oraclePrice = oraclePrice * (1e6 - maxOracleSpreadRatio) / 1e6;
         if (!isLiquidation && _lastPrice < oraclePrice) {
             revert("VAMM._short: shorts not allowed");
         }
-        _addReserveSnapshot(_lastPrice, isLiquidation);
+
         // since maker position will be opposite of the trade
         posAccumulator -= baseAssetQuantity * 1e18 / vamm.totalSupply().toInt256();
         emit Swap(_lastPrice, openInterestNotional());
+    }
+
+    function _getLastBlockTradePrice() internal view returns(uint256 lastBlockTradePrice) {
+        uint index = reserveSnapshots.length - 1;
+        if (reserveSnapshots[index].blockNumber == block.number && index != 0) {
+            lastBlockTradePrice = reserveSnapshots[index - 1].lastPrice;
+        } else {
+            lastBlockTradePrice = reserveSnapshots[index].lastPrice;
+        }
     }
 
     function _emitPositionChanged(address trader, int256 realizedPnl) internal {
@@ -1107,8 +1119,9 @@ contract AMM is IAMM, Governable {
         unbondPeriod = _unbondPeriod;
     }
 
-    function setMaxOracleSpreadRatio(uint _maxOracleSpreadRatio) external onlyGovernance {
+    function setPriceSpreadParams(uint _maxOracleSpreadRatio, uint _maxPriceSpreadPerBlock) external onlyGovernance {
         maxOracleSpreadRatio = _maxOracleSpreadRatio;
+        maxPriceSpreadPerBlock = _maxPriceSpreadPerBlock;
     }
 
     function setLiquidationParams (uint _maxLiquidationRatio, uint _maxLiquidationPriceSpread) external onlyGovernance {

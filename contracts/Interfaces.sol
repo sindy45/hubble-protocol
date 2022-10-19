@@ -129,6 +129,11 @@ interface IAMM {
     function getOracleBasedPnl(address trader, int256 margin, IClearingHouse.Mode mode) external view returns (uint, int256);
 }
 
+// for backward compatibility in forked tests
+interface IAMM_old is IAMM {
+    function setMaxOracleSpreadRatio(uint) external;
+}
+
 interface IMarginAccount {
     struct Collateral {
         IERC20 token;

@@ -41,7 +41,7 @@ describe('Atomic liquidations, Arb auction', async function() {
         await vusd.grantRole(await vusd.MINTER_ROLE(), admin.address) // will mint vusd to liquidators account
         await setDefaultClearingHouseParams(clearingHouse)
 
-        await amm.setLiquidationParams(100, 1e6)
+        await amm.setLiquidationParams(1e6, 1e6)
         const BatchLiquidator = await ethers.getContractFactory('BatchLiquidator')
         batchLiquidator = await BatchLiquidator.deploy(
             clearingHouse.address,

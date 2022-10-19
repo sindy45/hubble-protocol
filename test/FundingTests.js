@@ -28,6 +28,8 @@ describe('Funding Tests', function() {
             await addMargin(signers[0], margin)
 
             await gotoNextFundingTime(amm)
+            // don't cap funding rate
+            await amm.setMaxFundingRate(0)
         })
 
         it('alice shorts and receives +ve funding', async () => {
@@ -173,7 +175,7 @@ describe('Funding Tests', function() {
         })
 
         it('alice shorts and paying -ve funding causes them to drop below maintenance margin and liquidated', async function() {
-            await amm.setLiquidationParams(100, 1e6)
+            await amm.setLiquidationParams(1e6, 1e4)
 
             const baseAssetQuantity = _1e18.mul(-5)
             let tx = await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity, _1e6.mul(4900))
@@ -232,6 +234,7 @@ describe('Funding Tests', function() {
 
     it('alice is in liquidation zone but saved by positive funding payment', async () => {
         ;({ swap, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, oracle, weth, insuranceFund } = await setupContracts())
+        await amm.setMaxFundingRate(0)
         await marginAccount.whitelistCollateral(weth.address, 0.7 * 1e6) // weight = 0.7
         wethAmount = _1e18.mul(2)
         await weth.mint(alice, wethAmount)
@@ -270,7 +273,7 @@ describe('Funding Tests', function() {
             const margin = _1e6.mul(2000)
             await addMargin(signers[0], margin)
             // set maxFunding rate = 50% annual = 0.00570776% hourly
-            maxFundingRate = 5707
+            maxFundingRate = 57
             await amm.setMaxFundingRate(maxFundingRate)
         })
 
@@ -286,8 +289,8 @@ describe('Funding Tests', function() {
             const tx = await clearingHouse.settleFunding()
             const premiumFraction = (await parseRawEvent(tx, amm, 'FundingRateUpdated')).args.premiumFraction
 
-            expect(ammTwap.sub(oracleTwap).div(24)).to.gt(oracleTwap.mul(maxFundingRate).div(1e8))
-            expect(premiumFraction).to.eq(oracleTwap.mul(maxFundingRate).div(1e8))
+            expect(ammTwap.sub(oracleTwap).div(24)).to.gt(oracleTwap.mul(maxFundingRate).div(1e6))
+            expect(premiumFraction).to.eq(oracleTwap.mul(maxFundingRate).div(1e6))
 
             const margin = await marginAccount.margin(0, alice)
             await clearingHouse.updatePositions(alice)
@@ -306,8 +309,8 @@ describe('Funding Tests', function() {
             const tx = await clearingHouse.settleFunding()
             const premiumFraction = (await parseRawEvent(tx, amm, 'FundingRateUpdated')).args.premiumFraction
 
-            expect(ammTwap.sub(oracleTwap).div(24)).to.lt(oracleTwap.mul(-maxFundingRate).div(1e8))
-            expect(premiumFraction).to.eq(oracleTwap.mul(-maxFundingRate).div(1e8))
+            expect(ammTwap.sub(oracleTwap).div(24)).to.lt(oracleTwap.mul(-maxFundingRate).div(1e6))
+            expect(premiumFraction).to.eq(oracleTwap.mul(-maxFundingRate).div(1e6))
 
             const margin = await marginAccount.margin(0, alice)
             await clearingHouse.updatePositions(alice)
@@ -325,7 +328,7 @@ describe('Funding Tests', function() {
             const tx = await clearingHouse.settleFunding()
             const premiumFraction = (await parseRawEvent(tx, amm, 'FundingRateUpdated')).args.premiumFraction
 
-            expect(ammTwap.sub(oracleTwap).div(24)).to.lt(oracleTwap.mul(maxFundingRate).div(1e8))
+            expect(ammTwap.sub(oracleTwap).div(24)).to.lt(oracleTwap.mul(maxFundingRate).div(1e6))
             expect(premiumFraction).to.eq(ammTwap.sub(oracleTwap).div(24))
 
             const margin = await marginAccount.margin(0, alice)
@@ -345,7 +348,7 @@ describe('Funding Tests', function() {
             const tx = await clearingHouse.settleFunding()
             const premiumFraction = (await parseRawEvent(tx, amm, 'FundingRateUpdated')).args.premiumFraction
 
-            expect(ammTwap.sub(oracleTwap).div(24)).to.gt(oracleTwap.mul(-maxFundingRate).div(1e8))
+            expect(ammTwap.sub(oracleTwap).div(24)).to.gt(oracleTwap.mul(-maxFundingRate).div(1e6))
             expect(premiumFraction).to.eq(ammTwap.sub(oracleTwap).div(24))
 
             const margin = await marginAccount.margin(0, alice)

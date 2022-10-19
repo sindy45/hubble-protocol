@@ -25,7 +25,7 @@ describe('(fork) liquidation price', async function() {
         const LiquidationPriceViewer = await ethers.getContractFactory('LiquidationPriceViewer')
         ;([ clearingHouse, amm, liquidationPriceViewer ] = await Promise.all([
             ethers.getContractAt('ClearingHouse', config.contracts.ClearingHouse),
-            ethers.getContractAt('AMM', config.contracts.amms[0].address),
+            ethers.getContractAt('IAMM_old', config.contracts.amms[0].address),
             LiquidationPriceViewer.deploy(config.contracts.HubbleViewer_0)
         ]))
     })

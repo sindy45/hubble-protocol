@@ -54,6 +54,8 @@ describe('(whirlpool fork) amm update', async function() {
     })
 
     it('liquidation passes', async function() {
+        await amm.connect(ethers.provider.getSigner(deployer)).setLiquidationParams(25 * 1e4, 1e6)
+        await amm.connect(ethers.provider.getSigner(deployer)).setPriceSpreadParams(20 * 1e4, 1e6)
         const clearingHouse = await ethers.getContractAt('ClearingHouse', config.contracts.ClearingHouse)
         await clearingHouse.liquidateTaker(trader)
     })

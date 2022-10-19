@@ -167,6 +167,11 @@ async function setupContracts(options = {}) {
             [ 'ETH-PERP', weth.address, oracle.address, 1e8 /* min liquidity req */],
             options.amm
         ))
+        const maxPriceSpread = await amm.maxOracleSpreadRatio()
+        // set maxPriceSpreadPerBlock = 100%
+        await amm.setPriceSpreadParams(maxPriceSpread, 1e6)
+        // set maxLiquidationPriceSpread = 100%
+        await amm.setLiquidationParams((await amm.maxLiquidationRatio()), 1e6)
         Object.assign(res, { swap: vamm, amm, weth })
     }
 
