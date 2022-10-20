@@ -125,7 +125,28 @@ async function yakSwap() {
     await marginAccount.setPortfolioManager(portfolioManager.address)
 }
 
-yakSwap()
+async function updateAMM() {
+    const amm = await ethers.getContractAt('AMM', config.contracts.amms[0].address)
+    const AMM = await ethers.getContractFactory('AMM')
+    const newAMM = await AMM.deploy(config.contracts.ClearingHouse, 86400)
+    const proxyAdmin = await ethers.getContractAt('ProxyAdmin', proxyAdminAddy)
+    await proxyAdmin.upgrade(config.contracts.amms[0].address, '0xe807aeba82bfe7887da0640fe5a52c43bb31d9aa') // newAMM.address
+    await utils.sleep(5)
+
+    const maxOracleSpreadRatio = 5 * 1e4 // 5%
+    const maxPriceSpreadPerBlock = 1 * 1e4 // 1%
+    await amm.setPriceSpreadParams(maxOracleSpreadRatio, maxPriceSpreadPerBlock)
+
+    const maxLiquidationRatio = 25 * 1e4 // 25%
+    const maxLiquidationPriceSpread = 1 * 1e4 // 1%
+    await amm.setLiquidationParams(maxLiquidationRatio, maxLiquidationPriceSpread)
+
+    // set maxFunding rate = 43.8% annual = 0.005% hourly
+    const maxFundingRate = 50 // 0.005% = .00005 * 1e6 = 50
+    await amm.setMaxFundingRate(maxFundingRate)
+}
+
+updateAMM()
 .then(() => process.exit(0))
 .catch(error => {
     console.error(error);
