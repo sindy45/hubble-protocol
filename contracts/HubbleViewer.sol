@@ -53,7 +53,7 @@ contract HubbleViewer is IHubbleViewer {
         fractions = new int256[](len);
         isMaker = new bool[](len);
         for (uint i; i < len; i++) {
-            fractions[i] = clearingHouse.getMarginFraction(traders[i]);
+            fractions[i] = clearingHouse.calcMarginFraction(traders[i], true, IClearingHouse.Mode.Maintenance_Margin);
             isMaker[i] = clearingHouse.isMaker(traders[i]);
         }
     }
