@@ -9,22 +9,14 @@ import "../AMM.sol";
 contract TestAmm is AMM {
     using SafeCast for uint256;
 
-    constructor(address _clearingHouse, uint _unbondRoundOff) AMM(_clearingHouse, _unbondRoundOff) {}
+    constructor(address _clearingHouse, uint _unbondRoundOff) AMM(_clearingHouse) {}
 
     function getOracleBasedMarginFraction(address trader, int256 margin)
         external
         view
         returns (int oracleBasedNotional, int256 oracleBasedUnrealizedPnl, int256 marginFraction)
     {
-        Maker memory _maker = _makers[trader];
         Position memory _taker = positions[trader];
-        (,int256 size,,uint256 openNotional) = vamm.get_notional(
-            _maker.dToken,
-            _maker.vUSD,
-            _maker.vAsset,
-            _taker.size,
-            _taker.openNotional
-        );
-        return _getOracleBasedMarginFraction(trader, margin, openNotional, size);
+        return _getOracleBasedMarginFraction(margin, _taker.openNotional, _taker.size);
     }
 }

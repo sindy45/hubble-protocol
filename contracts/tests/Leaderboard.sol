@@ -49,8 +49,8 @@ contract Leaderboard {
         int _takerFunding;
         for (uint j = 0; j < amms.length; j++) {
             amm = amms[j];
-            (,_unrealizedPnl) = amm.getTakerNotionalPositionAndUnrealizedPnl(trader);
-            (_takerFunding,,,) = amm.getPendingFundingPayment(trader);
+            (,_unrealizedPnl,,) = amm.getNotionalPositionAndUnrealizedPnl(trader);
+            (_takerFunding,) = amm.getPendingFundingPayment(trader);
             unrealizedPnl += _unrealizedPnl;
             takerFunding += _takerFunding;
         }

@@ -17,7 +17,6 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     int256 override public maintenanceMargin;
     uint override public tradeFee;
     uint override public liquidationPenalty;
-    uint public fixedMakerLiquidationFee;
     int256 public minAllowableMargin;
     uint public referralShare;
     uint public tradingFeeDiscount;
@@ -65,8 +64,15 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         referralShare = _referralShare;
         tradingFeeDiscount = _tradingFeeDiscount;
         liquidationPenalty = _liquidationPenalty;
+    }
 
-        fixedMakerLiquidationFee = 20 * PRECISION; // $20
+    function executeMatchedOrders(uint idx, IAMM.Order memory order1, bytes memory signature1, IAMM.Order memory order2, bytes memory signature2) external {
+        // @todo validate that orders are matching
+
+        // open position for order1
+        _openPosition(idx, order1, signature1);
+        // open position for order2
+        _openPosition(idx, order2, signature2);
     }
 
     /* ****************** */
@@ -76,83 +82,27 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     /**
     * @notice Open/Modify/Close Position
     * @param idx AMM index
-    * @param baseAssetQuantity Quantity of the base asset to Long (baseAssetQuantity > 0) or Short (baseAssetQuantity < 0)
-    * @param quoteAssetLimit Rate at which the trade is executed in the AMM. Used to cap slippage.
+    * @param order Order to be executed
+    * @param signature Signature corresponding to the order
     */
-    function openPosition(uint idx, int256 baseAssetQuantity, uint quoteAssetLimit) override external whenNotPaused {
-        address trader = _msgSender();
-        _openPosition(trader, idx, baseAssetQuantity, quoteAssetLimit);
-    }
+    function _openPosition(uint idx, IAMM.Order memory order, bytes memory signature) internal {
+        require(order.baseAssetQuantity != 0, "CH: baseAssetQuantity == 0");
 
-    function closePosition(uint idx, uint quoteAssetLimit) override external whenNotPaused {
-        address trader = _msgSender();
-        (int256 size,,,) = amms[idx].positions(trader);
-        _openPosition(trader, idx, -size, quoteAssetLimit);
-    }
+        updatePositions(order.trader); // adjust funding payments
 
-    function _openPosition(address trader, uint idx, int256 baseAssetQuantity, uint quoteAssetLimit) internal {
-        require(baseAssetQuantity != 0, "CH: baseAssetQuantity == 0");
-
-        updatePositions(trader); // adjust funding payments
-
-        (int realizedPnl, uint quoteAsset, bool isPositionIncreased) = amms[idx].openPosition(trader, baseAssetQuantity, quoteAssetLimit);
-        uint _tradeFee = _chargeFeeAndRealizePnL(trader, realizedPnl, quoteAsset, false /* isLiquidation */);
+        (int realizedPnl, uint quoteAsset, bool isPositionIncreased) = amms[idx].openPosition(order, signature);
+        uint _tradeFee = _chargeFeeAndRealizePnL(order.trader, realizedPnl, quoteAsset, false /* isLiquidation */);
         marginAccount.transferOutVusd(address(insuranceFund), _tradeFee);
 
         if (isPositionIncreased) {
-            assertMarginRequirement(trader);
+            assertMarginRequirement(order.trader);
         }
-        emit PositionModified(trader, idx, baseAssetQuantity, quoteAsset, realizedPnl, _blockTimestamp());
+        emit PositionModified(order.trader, idx, order.baseAssetQuantity, quoteAsset, realizedPnl, _blockTimestamp());
     }
 
     /* ****************** */
     /*     Liquidity      */
     /* ****************** */
-
-    function commitLiquidity(uint idx, uint quoteAsset)
-        override
-        external
-    {
-        address maker = _msgSender();
-        updatePositions(maker);
-        amms[idx].commitLiquidity(maker, quoteAsset);
-        assertMarginRequirement(maker);
-    }
-    /**
-    * @notice Add liquidity to the amm. The free margin from margin account is utilized for the same
-    *   The liquidity can be provided on leverage.
-    * @param idx Index of the AMM
-    * @param baseAssetQuantity Amount of the asset to add to AMM. Equivalent amount of USD side is automatically added.
-    *   This means that user is actually adding 2 * baseAssetQuantity * markPrice.
-    * @param minDToken Min amount of dTokens to receive. Used to cap slippage.
-    */
-    function addLiquidity(uint idx, uint256 baseAssetQuantity, uint minDToken) override external whenNotPaused returns (uint dToken) {
-        address maker = _msgSender();
-        updatePositions(maker);
-        dToken = amms[idx].addLiquidity(maker, baseAssetQuantity, minDToken);
-        assertMarginRequirement(maker);
-    }
-
-    /**
-    * @notice Remove liquidity from the amm.
-    * @dev dToken > 0 has been asserted during amm.unbondLiquidity
-    * @param idx Index of the AMM
-    * @param dToken Measure of the liquidity to remove.
-    * @param minQuoteValue Min amount of USD to remove.
-    * @param minBaseValue Min amount of base to remove.
-    *   Both the above params enable capping slippage in either direction.
-    */
-    function removeLiquidity(uint idx, uint256 dToken, uint minQuoteValue, uint minBaseValue) override external whenNotPaused {
-        require(dToken > 0, "liquidity_being_removed_should_be_non_0");
-        address maker = _msgSender();
-        updatePositions(maker);
-        (int256 realizedPnl, uint quoteAsset, int baseAssetQuantity) = amms[idx].removeLiquidity(maker, dToken, minQuoteValue, minBaseValue);
-        marginAccount.realizePnL(maker, realizedPnl);
-        if (baseAssetQuantity != 0) {
-            emit PositionTranslated(maker, idx, baseAssetQuantity, quoteAsset, realizedPnl, _blockTimestamp());
-        }
-    }
-
     function updatePositions(address trader) override public whenNotPaused {
         require(address(trader) != address(0), 'CH: 0x0 trader Address');
         int256 fundingPayment;
@@ -177,20 +127,11 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
 
     function liquidate(address trader) override external whenNotPaused {
         updatePositions(trader);
-        if (isMaker(trader)) {
-            _liquidateMaker(trader);
-        } else {
-            _liquidateTaker(trader);
-        }
+        _liquidateTaker(trader);
     }
 
-    function liquidateMaker(address maker) override public whenNotPaused {
-        updatePositions(maker);
-        _liquidateMaker(maker);
-    }
-
+    // @todo redundant
     function liquidateTaker(address trader) override public whenNotPaused {
-        require(!isMaker(trader), 'CH: Remove Liquidity First');
         updatePositions(trader);
         _liquidateTaker(trader);
     }
@@ -198,40 +139,6 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     /* ********************* */
     /* Liquidations Internal */
     /* ********************* */
-
-    function _liquidateMaker(address maker) internal {
-        _assertLiquidationRequirement(maker);
-
-        int256 realizedPnl;
-        bool _isMaker;
-
-        // in-loop reusable var
-        int256 _realizedPnl;
-        uint256 quoteAsset;
-        int256 baseAssetQuantity;
-
-        uint l = getAmmsLength();
-        for (uint i; i < l; ++i) {
-            IAMM.Maker memory _maker = amms[i].makers(maker);
-            if (_maker.dToken == 0 && _maker.ignition == 0) continue;
-            (_realizedPnl, quoteAsset, baseAssetQuantity) = amms[i].forceRemoveLiquidity(maker);
-            _isMaker = true;
-            realizedPnl += _realizedPnl;
-            if (baseAssetQuantity != 0) {
-                emit PositionTranslated(maker, i, baseAssetQuantity, quoteAsset, _realizedPnl, _blockTimestamp());
-            }
-        }
-
-        // charge a fixed liquidation only if the account is a maker in atleast 1 of the markets
-        if (_isMaker) {
-            realizedPnl -= fixedMakerLiquidationFee.toInt256();
-            _disperseLiquidationFee(fixedMakerLiquidationFee);
-        }
-        if (realizedPnl != 0) {
-            marginAccount.realizePnL(maker, realizedPnl);
-        }
-    }
-
     function _liquidateTaker(address trader) internal {
         _assertLiquidationRequirement(trader);
         int realizedPnl;
@@ -306,25 +213,11 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         return _getMarginFraction(margin, notionalPosition);
     }
 
-    function isMaker(address trader) override public view returns(bool) {
-        uint numAmms = amms.length;
-        for (uint i; i < numAmms; ++i) {
-            IAMM.Maker memory maker = amms[i].makers(trader);
-            if (maker.dToken > 0 || maker.ignition > 0) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     function getTotalFunding(address trader) override public view returns(int256 totalFunding) {
-        int256 takerFundingPayment;
-        int256 makerFundingPayment;
         int256 fundingPayment;
         uint numAmms = amms.length;
         for (uint i; i < numAmms; ++i) {
-            (takerFundingPayment, makerFundingPayment,,) = amms[i].getPendingFundingPayment(trader);
-            fundingPayment = takerFundingPayment + makerFundingPayment;
+            (fundingPayment,) = amms[i].getPendingFundingPayment(trader);
             if (fundingPayment < 0) {
                 fundingPayment -= fundingPayment / 1e3; // receivers charged 0.1% to account for rounding-offs
             }
@@ -442,7 +335,6 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         }
         emit MarketAdded(l, _amm);
         amms.push(IAMM(_amm));
-        amms[l].putAmmInIgnition();
     }
 
     function setParams(

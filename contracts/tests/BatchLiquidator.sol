@@ -71,12 +71,6 @@ contract BatchLiquidator is Executor {
         }
     }
 
-    function liquidateMakers(address[] calldata traders) external {
-        for (uint i; i < traders.length; i++) {
-            clearingHouse.liquidateMaker(traders[i]);
-        }
-    }
-
     function liquidateTakers(address[] calldata traders) external {
         for (uint i; i < traders.length; i++) {
             clearingHouse.liquidateTaker(traders[i]);

@@ -2,7 +2,7 @@
 
 pragma solidity 0.8.9;
 
-import { IClearingHouse, IMarginAccount, IAMM, IVAMM, IHubbleViewer } from "./Interfaces.sol";
+import { IClearingHouse, IMarginAccount, IAMM, IHubbleViewer } from "./Interfaces.sol";
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 contract HubbleViewer is IHubbleViewer {
@@ -44,17 +44,15 @@ contract HubbleViewer is IHubbleViewer {
         registry = _registry;
     }
 
-    function getMarginFractionAndMakerStatus(address[] calldata traders)
+    function getMarginFractions(address[] calldata traders)
         external
         view
-        returns(int256[] memory fractions, bool[] memory isMaker)
+        returns(int256[] memory fractions)
     {
         uint len = traders.length;
         fractions = new int256[](len);
-        isMaker = new bool[](len);
         for (uint i; i < len; i++) {
             fractions[i] = clearingHouse.calcMarginFraction(traders[i], true, IClearingHouse.Mode.Maintenance_Margin);
-            isMaker[i] = clearingHouse.isMaker(traders[i]);
         }
     }
 
@@ -90,38 +88,9 @@ contract HubbleViewer is IHubbleViewer {
                 positions[i].unrealizedPnl = 0;
                 positions[i].avgOpen = 0;
             } else {
-                (,positions[i].unrealizedPnl) = amm.getTakerNotionalPositionAndUnrealizedPnl(trader);
+                (,positions[i].unrealizedPnl,,) = amm.getNotionalPositionAndUnrealizedPnl(trader);
                 positions[i].avgOpen = positions[i].openNotional * 1e18 / _abs(positions[i].size).toUint256();
             }
-        }
-    }
-
-    /**
-    * @notice Get information about maker's all impermanent positions
-    * @param maker Maker for which information is to be obtained
-    * @return positions in order of amms
-    *   positions[i].size - BaseAssetQuantity amount longed (+ve) or shorted (-ve)
-    *   positions[i].openNotional - $ value of position
-    *   positions[i].unrealizedPnl - in dollars. +ve is profit, -ve if loss
-    *   positions[i].avgOpen - Average $ value at which position was started
-    */
-    function makerPositions(address maker) external view returns(Position[] memory positions) {
-        uint l = clearingHouse.getAmmsLength();
-        IAMM amm;
-        positions = new Position[](l);
-        for (uint i; i < l; i++) {
-            amm = clearingHouse.amms(i);
-            (
-                positions[i].size,
-                positions[i].openNotional,
-                positions[i].unrealizedPnl
-            ) = _getMakerPositionAndUnrealizedPnl(maker, amm);
-            if (positions[i].size == 0) {
-                positions[i].avgOpen = 0;
-            } else {
-                positions[i].avgOpen = positions[i].openNotional * 1e18 / _abs(positions[i].size).toUint256();
-            }
-            (,positions[i].funding,,) = amm.getPendingFundingPayment(maker);
         }
     }
 
@@ -135,51 +104,13 @@ contract HubbleViewer is IHubbleViewer {
     }
 
     /**
-    * @notice get maker impermanent position and unrealizedPnl for a particular amm
-    * @param _maker maker address
-    * @param idx amm index
-    * @return position Maker's current impermanent position
-    * @return openNotional Position open notional for the current impermanent position inclusive of fee earned
-    * @return unrealizedPnl PnL if maker removes liquidity and closes their impermanent position in the same amm
-    */
-    function getMakerPositionAndUnrealizedPnl(address _maker, uint idx)
-        override
-        public
-        view
-        returns (int256 position, uint openNotional, int256 unrealizedPnl)
-    {
-        return _getMakerPositionAndUnrealizedPnl(_maker, clearingHouse.amms(idx));
-    }
-
-    function _getMakerPositionAndUnrealizedPnl(address _maker, IAMM amm)
-        internal
-        view
-        returns (int256 /* position */, uint /* openNotional */, int256 /* unrealizedPnl */)
-    {
-        IVAMM vamm = amm.vamm();
-        IAMM.Maker memory maker = amm.makers(_maker);
-        if (maker.ignition != 0) {
-            maker.vUSD = maker.ignition;
-            (maker.vAsset, maker.dToken) = amm.getIgnitionShare(maker.vUSD);
-        }
-        return vamm.get_maker_position(maker.dToken, maker.vUSD, maker.vAsset, maker.dToken);
-    }
-
-    /**
     * @notice calculate amount of quote asset required for trade
     * @param baseAssetQuantity base asset to long/short
     * @param idx amm index
     */
     function getQuote(int256 baseAssetQuantity, uint idx) public view returns(uint256 quoteAssetQuantity) {
         IAMM amm = clearingHouse.amms(idx);
-        IVAMM vamm = amm.vamm();
-
-        if (baseAssetQuantity >= 0) {
-            return vamm.get_dx(0, 1, baseAssetQuantity.toUint256()) + 1;
-        }
-        // rounding-down while shorting is not a problem
-        // because lower the min_dy, more permissible it is
-        return vamm.get_dy(1, 0, (-baseAssetQuantity).toUint256());
+        quoteAssetQuantity = _abs(baseAssetQuantity).toUint256() * amm.lastPrice() / 1e18;
     }
 
     /**
@@ -190,105 +121,12 @@ contract HubbleViewer is IHubbleViewer {
     */
     function getBase(uint256 quoteAssetQuantity, uint idx, bool isLong) external view returns(int256 /* baseAssetQuantity */) {
         IAMM amm = clearingHouse.amms(idx);
-        IVAMM vamm = amm.vamm();
 
-        uint256 baseAssetQuantity;
+        uint256 baseAssetQuantity = quoteAssetQuantity * PRECISION_UINT / amm.lastPrice();
         if (isLong) {
-            baseAssetQuantity = vamm.get_dy(0, 1, quoteAssetQuantity);
             return baseAssetQuantity.toInt256();
         }
-        baseAssetQuantity = vamm.get_dx(1, 0, quoteAssetQuantity);
         return -(baseAssetQuantity.toInt256());
-    }
-
-    /**
-    * @notice Get total liquidity deposited by maker and its current value
-    * @param _maker maker for which information to be obtained
-    * @return
-    *   vAsset - current base asset amount of maker in the pool
-    *   vUSD - current quote asset amount of maker in the pool
-    *   totalDeposited - total value of initial liquidity deposited in the pool by maker
-    *   dToken - maker dToken balance
-    *   vAssetBalance - base token liquidity in the pool
-    *   vUSDBalance - quote token liquidity in the pool
-    */
-    function getMakerLiquidity(address _maker, uint idx)
-        external
-        view
-        returns (uint vAsset, uint vUSD, uint totalDeposited, uint dToken, uint unbondTime, uint unbondAmount, uint vAssetBalance, uint vUSDBalance)
-    {
-        IAMM amm = clearingHouse.amms(idx);
-        IVAMM vamm = amm.vamm();
-        IAMM.Maker memory maker = amm.makers(_maker);
-
-        if (amm.ammState() == IAMM.AMMState.Active) {
-            if (maker.ignition > 0) {
-                (,dToken) = amm.getIgnitionShare(maker.ignition);
-            } else {
-                dToken = maker.dToken;
-            }
-            unbondTime = maker.unbondTime;
-            unbondAmount = maker.unbondAmount;
-            totalDeposited = 2 * maker.vUSD;
-
-            vUSDBalance = vamm.balances(0);
-            vAssetBalance = vamm.balances(1);
-            uint totalDTokenSupply = vamm.totalSupply();
-            if (totalDTokenSupply > 0) {
-                vUSD = vUSDBalance * dToken / totalDTokenSupply;
-                vAsset = vAssetBalance * dToken / totalDTokenSupply;
-            }
-        } else {
-            totalDeposited = 2 * maker.ignition;
-            vUSD = totalDeposited;
-        }
-    }
-
-    /**
-    * @notice calculate base and quote asset amount form dToken
-     */
-    function calcWithdrawAmounts(uint dToken, uint idx) external view returns (uint quoteAsset, uint baseAsset) {
-        IAMM amm = clearingHouse.amms(idx);
-        IVAMM vamm = amm.vamm();
-
-        uint totalDTokenSupply = vamm.totalSupply();
-        if (totalDTokenSupply > 0) {
-            quoteAsset = vamm.balances(0) * dToken / totalDTokenSupply;
-            baseAsset = vamm.balances(1) * dToken / totalDTokenSupply;
-        }
-    }
-
-    /**
-    * @notice Get amount of token to add/remove given the amount of other token
-    * @param inputAmount quote/base asset amount to add or remove, base - 18 decimal, quote - 6 decimal
-    * @param isBase true if inputAmount is base asset
-    * @param deposit true -> addLiquidity, false -> removeLiquidity
-    * @return fillAmount base/quote asset amount to be added/removed
-    *         dToken - equivalent dToken amount
-    */
-    function getMakerQuote(uint idx, uint inputAmount, bool isBase, bool deposit) public view returns (uint fillAmount, uint dToken) {
-        IAMM amm = clearingHouse.amms(idx);
-        IVAMM vamm = amm.vamm();
-
-        if (isBase) {
-            // calculate quoteAsset amount, fillAmount = quoteAsset, inputAmount = baseAsset
-            uint baseAssetBal = vamm.balances(1);
-            if (baseAssetBal == 0) {
-                fillAmount = inputAmount * vamm.price_scale() / 1e30;
-            } else {
-                fillAmount = inputAmount * vamm.balances(0) / baseAssetBal;
-            }
-            dToken = vamm.calc_token_amount([fillAmount, inputAmount], deposit);
-        } else {
-            uint bal0 = vamm.balances(0);
-            // calculate quote asset amount, fillAmount = baseAsset, inputAmount = quoteAsset
-            if (bal0 == 0) {
-                fillAmount = inputAmount * 1e30 / vamm.price_scale();
-            } else {
-                fillAmount = inputAmount * vamm.balances(1) / bal0;
-            }
-            dToken = vamm.calc_token_amount([inputAmount, fillAmount], deposit);
-        }
     }
 
     /**
@@ -325,8 +163,7 @@ contract HubbleViewer is IHubbleViewer {
         for (uint i; i < l; i++) {
             IAMM amm = clearingHouse.amms(i);
             (int size,,,) = amm.positions(trader);
-            IAMM.Maker memory maker = amm.makers(trader);
-            if (amm.isOverSpreadLimit() && (size != 0 || maker.dToken != 0 || maker.ignition != 0)) {
+            if (amm.isOverSpreadLimit() && size != 0) {
                 isOverSpreadLimit = true;
             }
         }
@@ -348,18 +185,16 @@ contract HubbleViewer is IHubbleViewer {
     function getPendingFundings(address[] calldata traders)
         external
         view
-        returns(int[][] memory takerFundings, int[][] memory makerFundings)
+        returns(int[][] memory takerFundings)
     {
         uint l = clearingHouse.getAmmsLength();
         uint t = traders.length;
         takerFundings = new int[][](t);
-        makerFundings = new int[][](t);
         for (uint j; j < t; j++) {
             takerFundings[j] = new int[](l);
-            makerFundings[j] = new int[](l);
             for (uint i; i < l; i++) {
                 IAMM amm = clearingHouse.amms(i);
-                (takerFundings[j][i],makerFundings[j][i],,) = amm.getPendingFundingPayment(traders[j]);
+                (takerFundings[j][i],) = amm.getPendingFundingPayment(traders[j]);
             }
         }
     }

@@ -19,10 +19,6 @@ interface IOracle {
 
 interface IClearingHouse {
     enum Mode { Maintenance_Margin, Min_Allowable_Margin }
-    function openPosition(uint idx, int256 baseAssetQuantity, uint quoteAssetLimit) external;
-    function closePosition(uint idx, uint quoteAssetLimit) external;
-    function addLiquidity(uint idx, uint256 baseAssetQuantity, uint minDToken) external returns (uint dToken);
-    function removeLiquidity(uint idx, uint256 dToken, uint minQuoteValue, uint minBaseValue) external;
     function settleFunding() external;
     function getTotalNotionalPositionAndUnrealizedPnl(address trader, int256 margin, Mode mode)
         external
@@ -43,11 +39,8 @@ interface IClearingHouse {
         external
         view
         returns(uint256 notionalPosition, int256 margin);
-    function isMaker(address trader) external view returns(bool);
     function liquidate(address trader) external;
-    function liquidateMaker(address trader) external;
     function liquidateTaker(address trader) external;
-    function commitLiquidity(uint idx, uint quoteAsset) external;
     function insuranceFund() external view returns(IInsuranceFund);
     function calcMarginFraction(address trader, bool includeFundingPayments, Mode mode) external view returns(int256);
 }
@@ -64,39 +57,21 @@ interface IInsuranceFund {
 }
 
 interface IAMM {
-    struct Maker {
-        uint vUSD;
-        uint vAsset;
-        uint dToken;
-        int pos; // position
-        int posAccumulator; // value of global.posAccumulator until which pos has been updated
-        int lastPremiumFraction;
-        int lastPremiumPerDtoken;
-        uint unbondTime;
-        uint unbondAmount;
-        uint ignition;
+    struct Order {
+        address trader;
+        int256 baseAssetQuantity;
+        uint256 price;
+        uint256 salt;
     }
 
-    struct Ignition {
-        uint quoteAsset;
-        uint baseAsset;
-        uint dToken;
+    enum OrderStatus {
+        Unfilled,
+        Filled,
+        Cancelled
     }
-
-    /**
-    * @dev We do not deliberately have a Pause state. There is only a master-level pause at clearingHouse level
-    */
-    enum AMMState { Inactive, Ignition, Active }
-    function ammState() external view returns(AMMState);
-    function ignition() external view returns(uint quoteAsset, uint baseAsset, uint dToken);
-    function getIgnitionShare(uint vUSD) external view returns (uint vAsset, uint dToken);
-
-    function openPosition(address trader, int256 baseAssetQuantity, uint quoteAssetLimit)
+    function openPosition(Order memory order, bytes memory signature)
         external
         returns (int realizedPnl, uint quoteAsset, bool isPositionIncreased);
-    function addLiquidity(address trader, uint baseAssetQuantity, uint minDToken) external returns (uint dToken);
-    function removeLiquidity(address maker, uint amount, uint minQuote, uint minBase) external returns (int /* realizedPnl */, uint /* makerOpenNotional */, int /* makerPosition */);
-    function forceRemoveLiquidity(address maker) external returns (int realizedPnl, uint makerOpenNotional, int makerPosition);
     function getNotionalPositionAndUnrealizedPnl(address trader)
         external
         view
@@ -106,27 +81,21 @@ interface IAMM {
     function settleFunding() external;
     function underlyingAsset() external view returns (address);
     function positions(address trader) external view returns (int256,uint256,int256,uint256);
-    function getCloseQuote(int256 baseAssetQuantity) external view returns(uint256 quoteAssetQuantity);
-    function getTakerNotionalPositionAndUnrealizedPnl(address trader) external view returns(uint takerNotionalPosition, int256 unrealizedPnl);
+    function getNotionalPosition(int256 baseAssetQuantity) external view returns(uint256 quoteAssetQuantity);
     function getPendingFundingPayment(address trader)
         external
         view
         returns(
             int256 takerFundingPayment,
-            int256 makerFundingPayment,
-            int256 latestCumulativePremiumFraction,
-            int256 latestPremiumPerDtoken
+            int256 latestCumulativePremiumFraction
         );
     function getOpenNotionalWhileReducingPosition(int256 positionSize, uint256 notionalPosition, int256 unrealizedPnl, int256 baseAssetQuantity)
         external
         pure
         returns(uint256 remainOpenNotional, int realizedPnl);
-    function makers(address maker) external view returns(Maker memory);
-    function vamm() external view returns(IVAMM);
-    function commitLiquidity(address maker, uint quoteAsset) external;
-    function putAmmInIgnition() external;
     function isOverSpreadLimit() external view returns (bool);
     function getOracleBasedPnl(address trader, int256 margin, IClearingHouse.Mode mode) external view returns (uint, int256);
+    function lastPrice() external view returns(uint256);
 }
 
 // for backward compatibility in forked tests
@@ -163,56 +132,6 @@ interface IMarginAccount {
     function liquidateExactRepay(address trader, uint repay, uint idx, uint minSeizeAmount) external;
     function oracle() external view returns(IOracle);
     function removeMarginFor(address trader, uint idx, uint256 amount) external;
-}
-
-interface IVAMM {
-    function balances(uint256) external view returns (uint256);
-
-    function get_dy(
-        uint256 i,
-        uint256 j,
-        uint256 dx
-    ) external view returns (uint256);
-
-    function get_dx(
-        uint256 i,
-        uint256 j,
-        uint256 dy
-    ) external view returns (uint256);
-
-    function exchange(
-        uint256 i,
-        uint256 j,
-        uint256 dx,
-        uint256 min_dy
-    ) external returns (uint256 dy, uint256 last_price);
-
-    function exchangeExactOut(
-        uint256 i,
-        uint256 j,
-        uint256 dy,
-        uint256 max_dx
-    ) external returns (uint256 dx, uint256 last_price);
-
-    function get_notional(uint256 makerDToken, uint256 vUSD, uint256 vAsset, int256 takerPosSize, uint256 takerOpenNotional) external view returns (uint256, int256, int256, uint256);
-    function last_prices() external view returns(uint256);
-    function mark_price() external view returns(uint256);
-    function price_oracle() external view returns(uint256);
-    function price_scale() external view returns(uint256);
-    function add_liquidity(uint256[2] calldata amounts, uint256 min_mint_amount) external returns (uint256);
-    function calc_token_amount(uint256[2] calldata amounts, bool deposit) external view returns (uint256);
-    function remove_liquidity(
-        uint256 amount,
-        uint256[2] calldata minAmounts,
-        uint256 vUSD,
-        uint256 vAsset,
-        uint256 makerDToken,
-        int256 takerPosSize,
-        uint256 takerOpenNotional
-    ) external returns (int256, uint256, uint256, int256, uint[2] calldata);
-    function get_maker_position(uint256 amount, uint256 vUSD, uint256 vAsset, uint256 makerDToken) external view returns (int256, uint256, int256);
-    function totalSupply() external view returns (uint256);
-    function setinitialPrice(uint) external;
 }
 
 interface AggregatorV3Interface {
@@ -264,13 +183,8 @@ interface IUSDC is IERC20FlexibleSupply {
 }
 
 interface IHubbleViewer {
-    function getMakerPositionAndUnrealizedPnl(address _maker, uint idx)
-        external
-        view
-        returns (int256 position, uint openNotional, int256 unrealizedPnl);
     function clearingHouse() external returns(IClearingHouse);
     function marginAccount() external returns(IMarginAccount);
-    function getMakerQuote(uint idx, uint inputAmount, bool isBase, bool deposit) external view returns (uint fillAmount, uint dToken);
     function getQuote(int256 baseAssetQuantity, uint idx) external view returns(uint256 quoteAssetQuantity);
 }
 
