@@ -69,7 +69,7 @@ interface IAMM {
         Filled,
         Cancelled
     }
-    function openPosition(Order memory order, bytes memory signature)
+    function openPosition(Order memory order, bytes memory signature, int256 fillAmount)
         external
         returns (int realizedPnl, uint quoteAsset, bool isPositionIncreased);
     function getNotionalPositionAndUnrealizedPnl(address trader)

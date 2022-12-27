@@ -66,13 +66,19 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         liquidationPenalty = _liquidationPenalty;
     }
 
-    function executeMatchedOrders(uint idx, IAMM.Order memory order1, bytes memory signature1, IAMM.Order memory order2, bytes memory signature2) external {
+    function executeMatchedOrders(
+        uint idx,
+        IAMM.Order[2] memory orders,
+        bytes[2] memory signatures,
+        int256 fillAmount
+    ) external {
         // @todo validate that orders are matching
+            // min fillAmount and min order.baseAsset check?
 
         // open position for order1
-        _openPosition(idx, order1, signature1);
+        _openPosition(idx, orders[0], signatures[0], fillAmount);
         // open position for order2
-        _openPosition(idx, order2, signature2);
+        _openPosition(idx, orders[1], signatures[1], fillAmount);
     }
 
     /* ****************** */
@@ -85,19 +91,19 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     * @param order Order to be executed
     * @param signature Signature corresponding to the order
     */
-    function _openPosition(uint idx, IAMM.Order memory order, bytes memory signature) internal {
-        require(order.baseAssetQuantity != 0, "CH: baseAssetQuantity == 0");
+    function _openPosition(uint idx, IAMM.Order memory order, bytes memory signature, int256 fillAmount) internal {
+        require(order.baseAssetQuantity != 0 && fillAmount != 0, "CH: baseAssetQuantity == 0");
 
         updatePositions(order.trader); // adjust funding payments
 
-        (int realizedPnl, uint quoteAsset, bool isPositionIncreased) = amms[idx].openPosition(order, signature);
+        (int realizedPnl, uint quoteAsset, bool isPositionIncreased) = amms[idx].openPosition(order, signature, fillAmount);
         uint _tradeFee = _chargeFeeAndRealizePnL(order.trader, realizedPnl, quoteAsset, false /* isLiquidation */);
         marginAccount.transferOutVusd(address(insuranceFund), _tradeFee);
 
         if (isPositionIncreased) {
             assertMarginRequirement(order.trader);
         }
-        emit PositionModified(order.trader, idx, order.baseAssetQuantity, quoteAsset, realizedPnl, _blockTimestamp());
+        emit PositionModified(order.trader, idx, fillAmount, quoteAsset, realizedPnl, _blockTimestamp());
     }
 
     /* ****************** */

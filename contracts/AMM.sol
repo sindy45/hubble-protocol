@@ -54,7 +54,8 @@ contract AMM is IAMM, VanillaGovernable, EIP712Upgradeable {
         uint liquidationThreshold;
     }
     mapping(address => Position) override public positions;
-    mapping(bytes32 => OrderStatus) public ordersStatus;
+    // order hash to order amount filled mapping
+    mapping(bytes32 => int256) public filledAmount;
 
     struct ReserveSnapshot {
         uint256 lastPrice;
@@ -134,26 +135,26 @@ contract AMM is IAMM, VanillaGovernable, EIP712Upgradeable {
     /**
     * @dev baseAssetQuantity != 0 has been validated in clearingHouse._openPosition()
     */
-    function openPosition(Order memory order, bytes memory signature)
+    function openPosition(Order memory order, bytes memory signature, int256 fillAmount)
         override
         external
         onlyClearingHouse
         returns (int realizedPnl, uint quoteAsset, bool isPositionIncreased)
     {
         // verify signature and change order status
-        _verifyAndUpdateOrder(order, signature, OrderStatus.Filled);
+        _verifyAndUpdateOrder(order, signature, fillAmount);
 
         Position memory position = positions[order.trader];
         bool isNewPosition = position.size == 0 ? true : false;
-        Side side = order.baseAssetQuantity > 0 ? Side.LONG : Side.SHORT;
+        Side side = fillAmount > 0 ? Side.LONG : Side.SHORT;
         // @todo replace quoteAssetLimit with price
-        uint quoteAssetLimit = abs(order.baseAssetQuantity).toUint256() * order.price / 1e18;
+        uint quoteAssetLimit = abs(fillAmount).toUint256() * order.price / 1e18;
         if (isNewPosition || (position.size > 0 ? Side.LONG : Side.SHORT) == side) {
             // realizedPnl = 0;
-            quoteAsset = _increasePosition(order.trader, order.baseAssetQuantity, quoteAssetLimit);
+            quoteAsset = _increasePosition(order.trader, fillAmount, quoteAssetLimit);
             isPositionIncreased = true;
         } else {
-            (realizedPnl, quoteAsset, isPositionIncreased) = _openReversePosition(order.trader, order.baseAssetQuantity, quoteAssetLimit);
+            (realizedPnl, quoteAsset, isPositionIncreased) = _openReversePosition(order.trader, fillAmount, quoteAssetLimit);
         }
 
         uint totalPosSize = uint(abs(positions[order.trader].size));
@@ -676,11 +677,12 @@ contract AMM is IAMM, VanillaGovernable, EIP712Upgradeable {
         );
     }
 
-    function _verifyAndUpdateOrder(Order memory order, bytes memory signature, OrderStatus status) internal {
+    function _verifyAndUpdateOrder(Order memory order, bytes memory signature, int256 fillAmount) internal {
         (, bytes32 orderHash) = _verifySigner(order, signature);
-        // AMM_OMBU: Order Must Be Unfilled
-        require(ordersStatus[orderHash] == OrderStatus.Unfilled, "AMM_OMBU");
-        ordersStatus[orderHash] = status;
+        // fillAmount[orderHash] should be strictly increasing or strictly decreasing
+        require(filledAmount[orderHash] * fillAmount >= 0, "AMM_invalid_fillAmount");
+        filledAmount[orderHash] += fillAmount;
+        require(abs(filledAmount[orderHash]) <= abs(order.baseAssetQuantity), "AMM_filled_amount_higher_than_order_base");
     }
 
     function _verifySigner(Order memory order, bytes memory signature) internal view returns (address, bytes32) {
