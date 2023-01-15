@@ -5,12 +5,17 @@ pragma solidity 0.8.9;
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 import { HubbleBase } from "./legos/HubbleBase.sol";
-import { IAMM, IInsuranceFund, IMarginAccount, IClearingHouse, IHubbleReferral } from "./Interfaces.sol";
+import { IAMM, IInsuranceFund, IMarginAccount, IClearingHouse, IHubbleReferral, IOrderBook } from "./Interfaces.sol";
 import { VUSD } from "./VUSD.sol";
 
 contract ClearingHouse is IClearingHouse, HubbleBase {
     using SafeCast for uint256;
     using SafeCast for int256;
+
+    modifier onlyOrderBook() {
+        require(msg.sender == address(orderBook), "Only orderBook");
+        _;
+    }
 
     uint256 constant PRECISION = 1e6;
 
@@ -24,16 +29,18 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     VUSD public vusd;
     IInsuranceFund override public insuranceFund;
     IMarginAccount public marginAccount;
+    IOrderBook public orderBook;
     IAMM[] override public amms;
     IHubbleReferral public hubbleReferral;
 
     uint256[50] private __gap;
 
-    event PositionModified(address indexed trader, uint indexed idx, int256 baseAsset, uint quoteAsset, int256 realizedPnl, uint256 timestamp);
-    event PositionLiquidated(address indexed trader, uint indexed idx, int256 baseAsset, uint256 quoteAsset, int256 realizedPnl, uint256 timestamp);
-    event PositionTranslated(address indexed trader, uint indexed idx, int256 baseAsset, uint256 quoteAsset, int256 realizedPnl, uint256 timestamp);
+    event PositionModified(address indexed trader, uint indexed idx, int256 baseAsset, uint quoteAsset, int256 realizedPnl, int256 size, uint256 openNotional, uint256 timestamp);
+    event PositionLiquidated(address indexed trader, uint indexed idx, int256 baseAsset, uint256 quoteAsset, int256 realizedPnl, int256 size, uint256 openNotional, uint256 timestamp);
     event MarketAdded(uint indexed idx, address indexed amm);
     event ReferralBonusAdded(address indexed referrer, uint referralBonus);
+    event FundingPaid(address indexed trader, uint indexed idx, int256 takerFundingPayment);
+    event FundingRateUpdated(uint indexed idx, int256 premiumFraction, uint256 underlyingPrice, int256 cumulativePremiumFraction, uint256 nextFundingTime, uint256 timestamp, uint256 blockNumber);
 
     constructor(address _trustedForwarder) HubbleBase(_trustedForwarder) {}
 
@@ -41,6 +48,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         address _governance,
         address _insuranceFund,
         address _marginAccount,
+        address _orderBook,
         address _vusd,
         address _hubbleReferral,
         int256 _maintenanceMargin,
@@ -54,6 +62,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
 
         insuranceFund = IInsuranceFund(_insuranceFund);
         marginAccount = IMarginAccount(_marginAccount);
+        orderBook = IOrderBook(_orderBook);
         vusd = VUSD(_vusd);
         hubbleReferral = IHubbleReferral(_hubbleReferral);
 
@@ -66,64 +75,65 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         liquidationPenalty = _liquidationPenalty;
     }
 
-    function executeMatchedOrders(
-        uint idx,
-        IAMM.Order[2] memory orders,
-        bytes[2] memory signatures,
-        int256 fillAmount
-    ) external {
-        // @todo validate that orders are matching
-            // min fillAmount and min order.baseAsset check?
-
-        // open position for order1
-        _openPosition(idx, orders[0], signatures[0], fillAmount);
-        // open position for order2
-        _openPosition(idx, orders[1], signatures[1], fillAmount);
-    }
-
     /* ****************** */
     /*     Positions      */
     /* ****************** */
 
     /**
     * @notice Open/Modify/Close Position
-    * @param idx AMM index
     * @param order Order to be executed
-    * @param signature Signature corresponding to the order
     */
-    function _openPosition(uint idx, IAMM.Order memory order, bytes memory signature, int256 fillAmount) internal {
+    function openPosition(IOrderBook.Order memory order, int256 fillAmount) external whenNotPaused onlyOrderBook {
         require(order.baseAssetQuantity != 0 && fillAmount != 0, "CH: baseAssetQuantity == 0");
-
         updatePositions(order.trader); // adjust funding payments
 
-        (int realizedPnl, uint quoteAsset, bool isPositionIncreased) = amms[idx].openPosition(order, signature, fillAmount);
+        (
+            int realizedPnl,
+            uint quoteAsset,
+            bool isPositionIncreased,
+            int size,
+            uint openNotional
+        ) = amms[order.ammIndex].openPosition(order, fillAmount);
+
         uint _tradeFee = _chargeFeeAndRealizePnL(order.trader, realizedPnl, quoteAsset, false /* isLiquidation */);
         marginAccount.transferOutVusd(address(insuranceFund), _tradeFee);
 
         if (isPositionIncreased) {
             assertMarginRequirement(order.trader);
         }
-        emit PositionModified(order.trader, idx, fillAmount, quoteAsset, realizedPnl, _blockTimestamp());
+        emit PositionModified(order.trader, order.ammIndex, fillAmount, quoteAsset, realizedPnl, size, openNotional, _blockTimestamp());
     }
 
-    /* ****************** */
-    /*     Liquidity      */
-    /* ****************** */
     function updatePositions(address trader) override public whenNotPaused {
         require(address(trader) != address(0), 'CH: 0x0 trader Address');
         int256 fundingPayment;
         uint numAmms = amms.length;
         for (uint i; i < numAmms; ++i) {
-            fundingPayment += amms[i].updatePosition(trader);
+            int256 _fundingPayment = amms[i].updatePosition(trader);
+            if (_fundingPayment != 0) {
+                fundingPayment += _fundingPayment;
+                emit FundingPaid(trader, i, _fundingPayment);
+            }
         }
         // -ve fundingPayment means trader should receive funds
         marginAccount.realizePnL(trader, -fundingPayment);
     }
 
-    function settleFunding() override external whenNotPaused {
+    function settleFunding() override external whenNotPaused onlyOrderBook {
         uint numAmms = amms.length;
         for (uint i; i < numAmms; ++i) {
-            amms[i].settleFunding();
+            (int _premiumFraction, int _underlyingPrice, int _cumulativePremiumFraction, uint _nextFundingTime) = amms[i].settleFunding();
+            if (_nextFundingTime != 0) {
+                emit FundingRateUpdated(
+                    i,
+                    _premiumFraction,
+                    _underlyingPrice.toUint256(),
+                    _cumulativePremiumFraction,
+                    _nextFundingTime,
+                    _blockTimestamp(),
+                    block.number
+                );
+            }
         }
     }
 
@@ -131,48 +141,36 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     /*    Liquidations    */
     /* ****************** */
 
-    function liquidate(address trader) override external whenNotPaused {
+    function liquidate(address trader, uint ammIndex, uint price, int fillAmount, address liquidator) override external whenNotPaused onlyOrderBook {
         updatePositions(trader);
-        _liquidateTaker(trader);
-    }
-
-    // @todo redundant
-    function liquidateTaker(address trader) override public whenNotPaused {
-        updatePositions(trader);
-        _liquidateTaker(trader);
+        _liquidateTakerSingleAmm(trader, ammIndex, price, fillAmount, liquidator);
     }
 
     /* ********************* */
     /* Liquidations Internal */
     /* ********************* */
-    function _liquidateTaker(address trader) internal {
+
+    function _liquidateTakerSingleAmm(address trader, uint ammIndex, uint price, int fillAmount, address liquidator) internal {
         _assertLiquidationRequirement(trader);
-        int realizedPnl;
-        uint quoteAsset;
-        int256 size;
-        IAMM _amm;
-        uint numAmms = amms.length;
-        for (uint i; i < numAmms; ++i) { // liquidate all positions
-            _amm = amms[i];
-            (size,,,) = _amm.positions(trader);
-            if (size != 0) {
-                (int _realizedPnl, int _baseAsset, uint _quoteAsset) = _amm.liquidatePosition(trader);
-                realizedPnl += _realizedPnl;
-                quoteAsset += _quoteAsset;
-                emit PositionLiquidated(trader, i, _baseAsset, _quoteAsset, _realizedPnl, _blockTimestamp());
-            }
-        }
+        (
+            int realizedPnl,
+            uint quoteAsset,
+            int size,
+            uint openNotional
+        ) = amms[ammIndex].liquidatePosition(trader, price, fillAmount);
+        emit PositionLiquidated(trader, ammIndex, fillAmount, quoteAsset, realizedPnl, size, openNotional, _blockTimestamp());
 
         _disperseLiquidationFee(
-            _chargeFeeAndRealizePnL(trader, realizedPnl, quoteAsset, true /* isLiquidation */)
+            _chargeFeeAndRealizePnL(trader, realizedPnl, quoteAsset, true /* isLiquidation */),
+            liquidator
         );
     }
 
-    function _disperseLiquidationFee(uint liquidationFee) internal {
+    function _disperseLiquidationFee(uint liquidationFee, address liquidator) internal {
         if (liquidationFee > 0) {
             uint toInsurance = liquidationFee / 2;
             marginAccount.transferOutVusd(address(insuranceFund), toInsurance);
-            marginAccount.transferOutVusd(_msgSender(), liquidationFee - toInsurance);
+            marginAccount.transferOutVusd(liquidator, liquidationFee - toInsurance);
         }
     }
 

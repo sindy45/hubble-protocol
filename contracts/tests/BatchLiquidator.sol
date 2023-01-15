@@ -65,17 +65,17 @@ contract BatchLiquidator is Executor {
         wavax_usdc_pool = joeFactory.getPair(address(wavax), address(usdc));
     }
 
-    function liquidate(address[] calldata traders) external {
-        for (uint i; i < traders.length; i++) {
-            clearingHouse.liquidate(traders[i]);
-        }
-    }
+    // function liquidate(address[] calldata traders) external {
+    //     for (uint i; i < traders.length; i++) {
+    //         clearingHouse.liquidate(traders[i]);
+    //     }
+    // }
 
-    function liquidateTakers(address[] calldata traders) external {
-        for (uint i; i < traders.length; i++) {
-            clearingHouse.liquidateTaker(traders[i]);
-        }
-    }
+    // function liquidateTakers(address[] calldata traders) external {
+    //     for (uint i; i < traders.length; i++) {
+    //         clearingHouse.liquidateTaker(traders[i]);
+    //     }
+    // }
 
     function liquidateMulti(address trader, uint[] calldata repay, uint[] calldata idx, uint[] calldata minProfit) external {
         uint len = repay.length;

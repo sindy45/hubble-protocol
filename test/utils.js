@@ -90,6 +90,22 @@ async function setupContracts(options = {}) {
 
     const hubbleReferral = await setupUpgradeableProxy('HubbleReferral', proxyAdmin.address)
 
+    constructorArguments = [
+        oracle.address /* random contract address */,
+        proxyAdmin.address,
+        '0x'
+    ]
+    const clearingHouseProxy = await TransparentUpgradeableProxy.deploy(...constructorArguments, getTxOptions())
+    orderBook = await setupUpgradeableProxy(
+        'OrderBook',
+        proxyAdmin.address,
+        [
+            'Hubble',
+            '2.0',
+        ],
+        [ clearingHouseProxy.address ]
+    )
+
     clearingHouse = await setupUpgradeableProxy(
         'ClearingHouse',
         proxyAdmin.address,
@@ -97,6 +113,7 @@ async function setupContracts(options = {}) {
             governance,
             insuranceFund.address,
             marginAccount.address,
+            orderBook.address,
             vusd.address,
             hubbleReferral.address,
             0.1 * 1e6, // 10% maintenance margin, 10x
@@ -106,8 +123,10 @@ async function setupContracts(options = {}) {
             100, // feeDiscount = 1bps
             0.05 * 1e6, // liquidationPenalty = 5%
         ],
-        [ forwarder.address ]
+        [ forwarder.address ],
+        clearingHouseProxy
     )
+
     await vusd.grantRole(ethers.utils.id('MINTER_ROLE'), marginAccount.address, getTxOptions())
 
     constructorArguments = [oracle.address, clearingHouse.address, insuranceFund.address, marginAccount.address, vusd.address]
@@ -125,29 +144,12 @@ async function setupContracts(options = {}) {
     const Leaderboard = await ethers.getContractFactory('Leaderboard')
     leaderboard = await Leaderboard.deploy(hubbleViewer.address, getTxOptions())
 
-    // we will initialize the amm deps so that can be used as  global vars later
-    let abiAndBytecode = fs.readFileSync('./contracts/curve-v2/CurveMath.txt').toString().split('\n').filter(Boolean)
-    const CurveMath = new ethers.ContractFactory(JSON.parse(abiAndBytecode[0]), abiAndBytecode[1], signers[0])
-
-    abiAndBytecode = fs.readFileSync('./contracts/curve-v2/Views.txt').toString().split('\n').filter(Boolean)
-    const Views = new ethers.ContractFactory(JSON.parse(abiAndBytecode[0]), abiAndBytecode[1], signers[0])
-
-    vammAbiAndBytecode = fs.readFileSync('./contracts/curve-v2/Swap.txt').toString().split('\n').filter(Boolean)
-    Swap = new ethers.ContractFactory(JSON.parse(vammAbiAndBytecode[0]), vammAbiAndBytecode[1], signers[0])
-    ;([ curveMath, vammImpl, ammImpl ] = await Promise.all([
-        CurveMath.deploy(getTxOptions()),
-        Swap.deploy(Object.assign(getTxOptions())),
-        AMM.deploy(clearingHouse.address, options.unbondRoundOff, getTxOptions())
-    ]))
-    views = await Views.deploy(curveMath.address, getTxOptions())
-    verification.push({ name: 'AMM', address: ammImpl.address, constructorArguments: [clearingHouse.address, options.unbondRoundOff] })
-    // amm deps complete
-
     const res = {
         registry,
         marginAccount,
         marginAccountHelper,
         clearingHouse,
+        orderBook,
         hubbleViewer,
         liquidationPriceViewer,
         hubbleReferral,
@@ -156,13 +158,12 @@ async function setupContracts(options = {}) {
         oracle,
         insuranceFund,
         forwarder,
-        vammImpl,
         tradeFee: options.tradeFee,
     }
 
     if (options.setupAMM) {
         weth = await setupRestrictedTestToken('Hubble Ether', 'hWETH', 18)
-        ;({ amm, vamm } = await setupAmm(
+        ;({ amm } = await setupAmm(
             governance,
             [ 'ETH-PERP', weth.address, oracle.address, 1e8 /* min liquidity req */],
             options.amm
@@ -172,7 +173,7 @@ async function setupContracts(options = {}) {
         await amm.setPriceSpreadParams(maxPriceSpread, 1e6)
         // set maxLiquidationPriceSpread = 100%
         await amm.setLiquidationParams((await amm.maxLiquidationRatio()), 1e6)
-        Object.assign(res, { swap: vamm, amm, weth })
+        Object.assign(res, { amm, weth })
     }
 
     // console.log(await generateConfig(leaderboard.address))
@@ -190,7 +191,7 @@ function getTxOptions() {
     return res
 }
 
-async function setupUpgradeableProxy(contract, admin, initArgs, deployArgs = []) {
+async function setupUpgradeableProxy(contract, admin, initArgs, deployArgs = [], proxy) {
     const factory = await ethers.getContractFactory(contract)
     const impl = await factory.deploy(...deployArgs, getTxOptions())
     verification.push({ name: contract, address: impl.address, constructorArguments: deployArgs })
@@ -198,8 +199,13 @@ async function setupUpgradeableProxy(contract, admin, initArgs, deployArgs = [])
         ? impl.interface.encodeFunctionData('initialize', initArgs)
         : '0x'
     const constructorArguments = [impl.address, admin, _data]
-    const proxy = await TransparentUpgradeableProxy.deploy(...constructorArguments, getTxOptions())
-        verification.push({ name: 'TransparentUpgradeableProxy', impl: contract, address: proxy.address, constructorArguments })
+    if(!proxy) {
+        proxy = await TransparentUpgradeableProxy.deploy(...constructorArguments, getTxOptions())
+    } else {
+        proxyAdmin.upgradeAndCall(proxy.address, impl.address, _data)
+    }
+
+    verification.push({ name: 'TransparentUpgradeableProxy', impl: contract, address: proxy.address, constructorArguments })
     return ethers.getContractAt(contract, proxy.address)
 }
 
@@ -208,46 +214,22 @@ async function setupAmm(governance, args, ammOptions) {
         {
             index: 0,
             initialRate: 1000, // for ETH perp
-            initialLiquidity: 1000, // 1000 eth
             fee: 10000000, // 0.1%
-            ammState: 2, // Active
             unbondPeriod: 3 * 86400 // 3 days
         },
         ammOptions
     )
-    const { initialRate, initialLiquidity, fee, ammState, index, testAmm, unbondPeriod } = options
+    const { initialRate, fee, index, testAmm, unbondPeriod } = options
 
+    const ammImpl = await AMM.deploy(clearingHouse.address, getTxOptions())
     let constructorArguments = [
-        vammImpl.address,
-        proxyAdmin.address,
-        vammImpl.interface.encodeFunctionData('initialize', [
-            governance, // owner
-            curveMath.address, // math
-            views.address, // views
-            400000, // A
-            '145000000000000', // gamma
-            fee, 0, 0, 0, // mid_fee, out_fee, allowed_extra_profit, fee_gamma
-            '146000000000000', // adjustment_step
-            0, // admin_fee
-            600 // ma_half_time
-        ])
-    ]
-    const vammProxy = await TransparentUpgradeableProxy.deploy(...constructorArguments, getTxOptions())
-    verification.push({ name: 'TransparentUpgradeableProxy', impl: 'VAMM', address: vammProxy.address, constructorArguments })
-    const vamm = new ethers.Contract(vammProxy.address, JSON.parse(vammAbiAndBytecode[0]), signers[0])
-
-    constructorArguments = [
         ammImpl.address,
         proxyAdmin.address,
-        ammImpl.interface.encodeFunctionData('initialize', args.concat([ vamm.address, governance ]))
+        ammImpl.interface.encodeFunctionData('initialize', args.concat([ governance ]))
     ]
     const ammProxy = await TransparentUpgradeableProxy.deploy(...constructorArguments, getTxOptions())
     verification.push({ name: 'TransparentUpgradeableProxy', impl: 'AMM', address: ammProxy.address, constructorArguments })
     const amm = await ethers.getContractAt(testAmm ? 'TestAmm' : 'AMM', ammProxy.address)
-    if (unbondPeriod != 86400*3) { // not default value
-        await amm.setUnbondPeriod(unbondPeriod, getTxOptions())
-    }
-    await vamm.setAMM(amm.address, getTxOptions())
 
     if (initialRate) {
         // amm.liftOff() needs the price for the underlying to be set
@@ -257,24 +239,8 @@ async function setupAmm(governance, args, ammOptions) {
         await oracle.setUnderlyingPrice(underlyingAsset, ethers.utils.parseUnits(initialRate.toString(), 6), getTxOptions())
     }
 
-    if (ammState > 0) { // Ignition or Active
-        await clearingHouse.whitelistAmm(amm.address, getTxOptions())
-        if (initialLiquidity) {
-            await commitLiquidity(index, initialLiquidity, initialRate)
-        }
-        if (ammState == 2) { // Active
-            await amm.liftOff()
-        }
-    }
-
-    return { amm, vamm }
-}
-
-async function commitLiquidity(index, initialLiquidity, rate) {
-    maker = (await ethers.getSigners())[9]
-    const netUSD = ethers.utils.parseUnits((initialLiquidity * rate * 2).toString(), 6)
-    await addMargin(maker, netUSD)
-    await clearingHouse.connect(maker).commitLiquidity(index, netUSD)
+    await clearingHouse.whitelistAmm(amm.address, getTxOptions())
+    return { amm }
 }
 
 async function addLiquidity(index, liquidity, rate, minDtoken = 0) {
@@ -510,7 +476,6 @@ async function generateConfig(leaderboardAddress, marginAccountHelperAddress, ex
             perp: await a.name(),
             address: a.address,
             underlying: await a.underlyingAsset(),
-            vamm: await a.vamm()
         })
     }
     let _collateral = await marginAccount.supportedAssets()
@@ -655,7 +620,6 @@ module.exports = {
     assertBounds,
     generateConfig,
     sleep,
-    commitLiquidity,
     addLiquidity,
     bnToFloat,
     unbondAndRemoveLiquidity,

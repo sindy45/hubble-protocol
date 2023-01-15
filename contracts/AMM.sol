@@ -5,12 +5,10 @@ pragma solidity 0.8.9;
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 
-import { VanillaGovernable } from "./legos/Governable.sol";
-import { ERC20Detailed, IOracle, IRegistry, IAMM, IClearingHouse } from "./Interfaces.sol";
-import { ECDSAUpgradeable } from "@openzeppelin/contracts-upgradeable/utils/cryptography/ECDSAUpgradeable.sol";
-import { EIP712Upgradeable } from "@openzeppelin/contracts-upgradeable/utils/cryptography/draft-EIP712Upgradeable.sol";
+import { Governable } from "./legos/Governable.sol";
+import { ERC20Detailed, IOracle, IRegistry, IAMM, IClearingHouse, IOrderBook } from "./Interfaces.sol";
 
-contract AMM is IAMM, VanillaGovernable, EIP712Upgradeable {
+contract AMM is IAMM, Governable {
     using SafeCast for uint256;
     using SafeCast for int256;
 
@@ -54,8 +52,6 @@ contract AMM is IAMM, VanillaGovernable, EIP712Upgradeable {
         uint liquidationThreshold;
     }
     mapping(address => Position) override public positions;
-    // order hash to order amount filled mapping
-    mapping(bytes32 => int256) public filledAmount;
 
     struct ReserveSnapshot {
         uint256 lastPrice;
@@ -78,8 +74,6 @@ contract AMM is IAMM, VanillaGovernable, EIP712Upgradeable {
     // maximum allowed % difference in mark price in a single block
     uint256 public maxPriceSpreadPerBlock; // scaled 6 decimals
 
-    // keccak256("Order(address trader,int256 baseAssetQuantity,uint256 price,uint256 salt)");
-    bytes32 public constant ORDER_TYPEHASH = 0x4cab2d4fcf58d07df65ee3d9d1e6e3c407eae39d76ee15b247a025ab52e2c45d;
     uint256[50] private __gap;
 
     /* ****************** */
@@ -87,17 +81,10 @@ contract AMM is IAMM, VanillaGovernable, EIP712Upgradeable {
     /* ****************** */
 
     // Generic AMM related events
-    event FundingRateUpdated(int256 premiumFraction, uint256 underlyingPrice, int256 cumulativePremiumFraction, uint256 nextFundingTime, uint256 timestamp, uint256 blockNumber);
-    event FundingPaid(address indexed trader, int256 takerFundingPayment);
     event Swap(uint256 lastPrice, uint256 openInterestNotional);
 
     // Trader related events
     event PositionChanged(address indexed trader, int256 size, uint256 openNotional, int256 realizedPnl);
-
-    /**
-    * @dev This is only emitted when maker funding related events are updated.
-    * These fields are: ignition,dToken,lastPremiumFraction,pos,lastPremiumPerDtoken,posAccumulator
-    */
 
     modifier onlyClearingHouse() {
         require(msg.sender == clearingHouse, "Only clearingHouse");
@@ -110,7 +97,6 @@ contract AMM is IAMM, VanillaGovernable, EIP712Upgradeable {
 
     function initialize(
         string memory _name,
-        string memory version,
         address _underlyingAsset,
         address _oracle,
         uint _minSizeRequirement,
@@ -121,7 +107,6 @@ contract AMM is IAMM, VanillaGovernable, EIP712Upgradeable {
         oracle = IOracle(_oracle);
         minSizeRequirement = _minSizeRequirement;
         _setGovernace(_governance);
-        __EIP712_init(name, version);
 
         // values that most likely wouldn't need to change frequently
         fundingBufferPeriod = 15 minutes;
@@ -135,15 +120,12 @@ contract AMM is IAMM, VanillaGovernable, EIP712Upgradeable {
     /**
     * @dev baseAssetQuantity != 0 has been validated in clearingHouse._openPosition()
     */
-    function openPosition(Order memory order, bytes memory signature, int256 fillAmount)
+    function openPosition(IOrderBook.Order memory order, int256 fillAmount)
         override
         external
         onlyClearingHouse
-        returns (int realizedPnl, uint quoteAsset, bool isPositionIncreased)
+        returns (int realizedPnl, uint quoteAsset, bool isPositionIncreased, int size, uint openNotional)
     {
-        // verify signature and change order status
-        _verifyAndUpdateOrder(order, signature, fillAmount);
-
         Position memory position = positions[order.trader];
         bool isNewPosition = position.size == 0 ? true : false;
         Side side = fillAmount > 0 ? Side.LONG : Side.SHORT;
@@ -157,7 +139,10 @@ contract AMM is IAMM, VanillaGovernable, EIP712Upgradeable {
             (realizedPnl, quoteAsset, isPositionIncreased) = _openReversePosition(order.trader, fillAmount, quoteAssetLimit);
         }
 
-        uint totalPosSize = uint(abs(positions[order.trader].size));
+        size = positions[order.trader].size;
+        openNotional = positions[order.trader].openNotional;
+
+        uint totalPosSize = uint(abs(size));
         require(totalPosSize == 0 || totalPosSize >= minSizeRequirement, "position_less_than_minSize");
         // update liquidation thereshold
         positions[order.trader].liquidationThreshold = Math.max(
@@ -168,13 +153,14 @@ contract AMM is IAMM, VanillaGovernable, EIP712Upgradeable {
         _emitPositionChanged(order.trader, realizedPnl);
     }
 
-    function liquidatePosition(address trader)
+    function liquidatePosition(address trader, uint price, int fillAmount)
         override
         external
         onlyClearingHouse
-        returns (int realizedPnl, int baseAsset, uint quoteAsset)
+        returns (int realizedPnl, uint quoteAsset, int size, uint openNotional)
     {
         // liquidation price safeguard
+        // @todo validate liquidation price and markPrice are within X% of each other
         // don't allow trade/liquidations before liquidation
         require(reserveSnapshots[reserveSnapshots.length - 1].blockNumber != block.number, "AMM.liquidation_not_allowed_after_trade");
         int256 oraclePrice = oracle.getUnderlyingPrice(underlyingAsset);
@@ -187,23 +173,22 @@ contract AMM is IAMM, VanillaGovernable, EIP712Upgradeable {
         uint pozSize = uint(abs(position.size));
         uint toLiquidate = Math.min(pozSize, position.liquidationThreshold);
 
-        // this is for backwards compatibility with a rounding-error bug which led to ignore upto .75 of a position when setting the liquidationThreshold
-        if (
-            toLiquidate != pozSize
-            && (toLiquidate * 101 / 100) >= pozSize
-        ) {
-            // toLiquidate is within 1% of the overall position, then liquidate the entire pos
-            toLiquidate = pozSize;
-        }
+        require(abs(fillAmount).toUint256() <= toLiquidate, "AMM_liquidating_too_much_at_once");
 
         // liquidate position
+        // if fillAmount is lower, liquidate till fillAmount
         if (isLongPosition) {
-            baseAsset = -toLiquidate.toInt256();
-            (realizedPnl, quoteAsset) = _reducePosition(trader, baseAsset, 0, true /* isLiquidation */);
+            require(fillAmount > 0, "AMM_matching_trade_should_be_opposite");
+            quoteAsset = fillAmount.toUint256() * price / 1e18;
+            (realizedPnl, quoteAsset) = _reducePosition(trader, -fillAmount, quoteAsset, true /* isLiquidation */);
         } else {
-            baseAsset = toLiquidate.toInt256();
-            (realizedPnl, quoteAsset) = _reducePosition(trader, baseAsset, type(uint).max, true /* isLiquidation */);
+            require(fillAmount < 0, "AMM_matching_trade_should_be_opposite");
+            quoteAsset = (-fillAmount).toUint256() * price / 1e18;
+            (realizedPnl, quoteAsset) = _reducePosition(trader, -fillAmount, quoteAsset, true /* isLiquidation */);
         }
+
+        size = positions[trader].size;
+        openNotional = positions[trader].openNotional;
         _emitPositionChanged(trader, realizedPnl);
     }
 
@@ -217,10 +202,6 @@ contract AMM is IAMM, VanillaGovernable, EIP712Upgradeable {
             fundingPayment,
             positions[trader].lastPremiumFraction
         ) = getPendingFundingPayment(trader);
-
-        if (fundingPayment != 0) {
-            emit FundingPaid(trader, fundingPayment);
-        }
     }
 
     function getOpenNotionalWhileReducingPosition(
@@ -248,17 +229,23 @@ contract AMM is IAMM, VanillaGovernable, EIP712Upgradeable {
         override
         external
         onlyClearingHouse
+        returns (
+            int256 premiumFraction,
+            int256 underlyingPrice,
+            int256 /* cumulativePremiumFraction */, // required for emitting events
+            uint256 /* nextFundingTime */
+        )
     {
         if (
             _blockTimestamp() < nextFundingTime
-        ) return;
+        ) return (0, 0, 0, 0);
 
         // premium = twapMarketPrice - twapIndexPrice
         // timeFraction = fundingPeriod(1 hour) / 1 day
         // premiumFraction = premium * timeFraction
-        int256 underlyingPrice = getUnderlyingTwapPrice(spotPriceTwapInterval);
+        underlyingPrice = getUnderlyingTwapPrice(spotPriceTwapInterval);
         int256 premium = getTwapPrice(spotPriceTwapInterval) - underlyingPrice;
-        int256 premiumFraction = (premium * int256(fundingPeriod)) / 1 days;
+        premiumFraction = (premium * int256(fundingPeriod)) / 1 days;
         // funding rate cap
         // if premiumFraction > 0, premiumFraction = min(premiumFraction, maxFundingRate * indexTwap)
         // if premiumFraction < 0, premiumFraction = max(premiumFraction, -maxFundingRate * indexTwap)
@@ -285,7 +272,7 @@ contract AMM is IAMM, VanillaGovernable, EIP712Upgradeable {
             ? nextFundingTimeOnHourStart
             : minNextValidFundingTime;
 
-        _emitFundingRateUpdated(premiumFraction, underlyingPrice);
+        return (premiumFraction, underlyingPrice, cumulativePremiumFraction, nextFundingTime);
     }
 
     // View
@@ -422,10 +409,6 @@ contract AMM is IAMM, VanillaGovernable, EIP712Upgradeable {
 
     function openInterestNotional() public view returns (uint256) {
         return longOpenInterestNotional + shortOpenInterestNotional;
-    }
-
-    function getOrderHash(Order memory order) public view returns (bytes32) {
-        return _hashTypedDataV4(keccak256(abi.encode(ORDER_TYPEHASH, order)));
     }
 
     // internal
@@ -661,38 +644,6 @@ contract AMM is IAMM, VanillaGovernable, EIP712Upgradeable {
             previousTimestamp = currentSnapshot.timestamp;
         }
         return weightedPrice / _intervalInSeconds;
-    }
-
-    function _emitFundingRateUpdated(
-        int256 _premiumFraction,
-        int256 _underlyingPrice
-    ) internal {
-        emit FundingRateUpdated(
-            _premiumFraction,
-            _underlyingPrice.toUint256(),
-            cumulativePremiumFraction,
-            nextFundingTime,
-            _blockTimestamp(),
-            block.number
-        );
-    }
-
-    function _verifyAndUpdateOrder(Order memory order, bytes memory signature, int256 fillAmount) internal {
-        (, bytes32 orderHash) = _verifySigner(order, signature);
-        // fillAmount[orderHash] should be strictly increasing or strictly decreasing
-        require(filledAmount[orderHash] * fillAmount >= 0, "AMM_invalid_fillAmount");
-        filledAmount[orderHash] += fillAmount;
-        require(abs(filledAmount[orderHash]) <= abs(order.baseAssetQuantity), "AMM_filled_amount_higher_than_order_base");
-    }
-
-    function _verifySigner(Order memory order, bytes memory signature) internal view returns (address, bytes32) {
-        bytes32 orderHash = getOrderHash(order);
-        address signer = ECDSAUpgradeable.recover(orderHash, signature);
-
-        // AMM_SINT: Signer Is Not Trader
-        require(signer == order.trader, "AMM_SINT");
-
-        return (signer, orderHash);
     }
 
     // Pure

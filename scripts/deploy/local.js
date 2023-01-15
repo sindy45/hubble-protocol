@@ -27,10 +27,6 @@ async function main() {
 
     const { marginAccountHelper } =  await setupContracts({
         governance,
-        unbondRoundOff: 1, // 1s
-        amm: {
-            unbondPeriod: 300, // 5 mins
-        },
         restrictedVUSD: false
     })
 
