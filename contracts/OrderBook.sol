@@ -13,10 +13,13 @@ contract OrderBook is IOrderBook, EIP712Upgradeable {
     using SafeCast for int256;
 
     IClearingHouse public immutable clearingHouse;
-    // order hash to order amount filled mapping
-    mapping(bytes32 => int256) public filledAmount;
-    // order hash to order status mapping
-    mapping(bytes32 => OrderStatus) public orderStatus;
+
+    struct OrderInfo {
+        uint blockPlaced;
+        int256 filledAmount;
+        OrderStatus status;
+    }
+    mapping(bytes32 => OrderInfo) public orderInfo;
 
     // keccak256("Order(uint256 ammIndex,address trader,int256 baseAssetQuantity,uint256 price,uint256 salt)");
     bytes32 public constant ORDER_TYPEHASH = 0xba5bdc08c77846c2444ea7c84fcaf3479e3389b274ebc7ab59358538ca00dbe0;
@@ -38,25 +41,40 @@ contract OrderBook is IOrderBook, EIP712Upgradeable {
         __EIP712_init(_name, _version);
     }
 
-    // @todo onlyValidator modifier
+    /**
+     * Execute matched orders
+     * @param orders It is required that orders[0] is a LONG and orders[1] is a short
+     * @param signatures To verify authenticity of the order
+     * @param fillAmount fillAmount to support partial fills
+    */
     function executeMatchedOrders(
         Order[2] memory orders,
         bytes[2] memory signatures,
-        uint256 fillAmount
-    )  external {
-        // @todo validate that orders are matching
-        // @todo min fillAmount and min order.baseAsset check?
+        int256 fillAmount
+    )   external
+        /* onlyValidator */
+    {
+        // Checks and Effects
+        require(orders[0].baseAssetQuantity > 0, "OB_order_0_is_not_long");
+        require(orders[1].baseAssetQuantity < 0, "OB_order_1_is_not_short");
+        require(orders[0].price /* buy */ >= orders[1].price /* sell */, "OB_orders_do_not_match");
+        (bytes32 orderHash0, uint blockPlaced0) = _verifyOrder(orders[0], signatures[0], fillAmount);
+        (bytes32 orderHash1, uint blockPlaced1) = _verifyOrder(orders[1], signatures[1], -fillAmount);
+        // @todo min fillAmount and min order.baseAsset check
 
-        // verify signature and open position for order1
-        int256 _fillAmount = orders[0].baseAssetQuantity > 0 ? fillAmount.toInt256() : -fillAmount.toInt256();
-        _verifyAndUpdateOrder(orders[0], signatures[0], _fillAmount);
-        clearingHouse.openPosition(orders[0], _fillAmount);
+        // Effects
+        _updateOrder(orderHash0, fillAmount, orders[0].baseAssetQuantity);
+        _updateOrder(orderHash1, -fillAmount, orders[1].baseAssetQuantity);
 
-        // verify signature and open position for order2
-        _verifyAndUpdateOrder(orders[1], signatures[1], -_fillAmount);
-        clearingHouse.openPosition(orders[1], -_fillAmount);
+        // Interactions
+        uint fulfillPrice = orders[0].price; // if prices are equal or long blockPlaced <= short blockPlaced
+        if (orders[0].price != orders[1].price && blockPlaced0 > blockPlaced1) {
+            fulfillPrice = orders[1].price;
+        }
+        clearingHouse.openPosition(orders[0], fillAmount, fulfillPrice);
+        clearingHouse.openPosition(orders[1], -fillAmount, fulfillPrice);
 
-        emit OrdersMatched(orders, signatures, fillAmount, msg.sender);
+        emit OrdersMatched(orders, signatures, fillAmount.toUint256(), msg.sender);
     }
 
     function placeOrder(Order memory order, bytes memory signature) external {
@@ -64,9 +82,10 @@ contract OrderBook is IOrderBook, EIP712Upgradeable {
         // verifying signature here to avoid too many fake placeOrders
         (, bytes32 orderHash) = verifySigner(order, signature);
         // order should not exist in the orderStatus map already
-        require(orderStatus[orderHash] == OrderStatus.UnPlaced, "OB_Order_already_exists");
-        orderStatus[orderHash] = OrderStatus.Placed;
+        require(orderInfo[orderHash].status == OrderStatus.Invalid, "OB_Order_already_exists");
+        orderInfo[orderHash] = OrderInfo(block.number, 0, OrderStatus.Placed);
         // @todo assert margin requirements for placing the order
+        // @todo min size requirement while placing order
 
         emit OrderPlaced(order.trader, order, signature);
     }
@@ -75,8 +94,8 @@ contract OrderBook is IOrderBook, EIP712Upgradeable {
         require(msg.sender == order.trader, "OB_sender_is_not_trader");
         bytes32 orderHash = getOrderHash(order);
         // order status should be placed
-        require(orderStatus[orderHash] == OrderStatus.Placed, "OB_Order_does_not_exist");
-        orderStatus[orderHash] = OrderStatus.Cancelled;
+        require(orderInfo[orderHash].status == OrderStatus.Placed, "OB_Order_does_not_exist");
+        orderInfo[orderHash].status = OrderStatus.Cancelled;
 
         emit OrderCancelled(order.trader, order);
     }
@@ -96,8 +115,9 @@ contract OrderBook is IOrderBook, EIP712Upgradeable {
     */
     function liquidateAndExecuteOrder(address trader, Order memory order, bytes memory signature, int toLiquidate) external {
         clearingHouse.liquidate(trader, order.ammIndex, order.price, toLiquidate, msg.sender);
-        _verifyAndUpdateOrder(order, signature, toLiquidate);
-        clearingHouse.openPosition(order, toLiquidate);
+        (bytes32 orderHash,) = _verifyOrder(order, signature, toLiquidate);
+        _updateOrder(orderHash, toLiquidate, order.baseAssetQuantity);
+        clearingHouse.openPosition(order, toLiquidate, order.price);
     }
 
     /* ****************** */
@@ -121,7 +141,7 @@ contract OrderBook is IOrderBook, EIP712Upgradeable {
         bytes32 orderHash = getOrderHash(order);
         address signer = ECDSAUpgradeable.recover(orderHash, signature);
 
-        // AMM_SINT: Signer Is Not Trader
+        // OB_SINT: Signer Is Not Trader
         require(signer == order.trader, "OB_SINT");
 
         return (signer, orderHash);
@@ -135,20 +155,27 @@ contract OrderBook is IOrderBook, EIP712Upgradeable {
     /*      Internal      */
     /* ****************** */
 
-    function _verifyAndUpdateOrder(Order memory order, bytes memory signature, int256 fillAmount) internal returns(bytes32 orderHash) {
-        (, orderHash) = verifySigner(order, signature);
+    function _verifyOrder(Order memory order, bytes memory signature, int256 fillAmount)
+        internal
+        view
+        returns (bytes32 /* orderHash */, uint /* blockPlaced */)
+    {
+        (, bytes32 orderHash) = verifySigner(order, signature);
         // order should be in placed status
-        require(orderStatus[orderHash] == OrderStatus.Placed, "OB_invalid_order");
+        require(orderInfo[orderHash].status == OrderStatus.Placed, "OB_invalid_order");
         // order.baseAssetQuantity and fillAmount should have same sign
         require(order.baseAssetQuantity * fillAmount > 0, "OB_fill_and_base_sign_not_match");
         // fillAmount[orderHash] should be strictly increasing or strictly decreasing
-        require(filledAmount[orderHash] * fillAmount >= 0, "OB_invalid_fillAmount");
-        filledAmount[orderHash] += fillAmount;
-        require(abs(filledAmount[orderHash]) <= abs(order.baseAssetQuantity), "OB_filled_amount_higher_than_order_base");
+        require(orderInfo[orderHash].filledAmount * fillAmount >= 0, "OB_invalid_fillAmount");
+        require(abs(orderInfo[orderHash].filledAmount) <= abs(order.baseAssetQuantity), "OB_filled_amount_higher_than_order_base");
+        return (orderHash, orderInfo[orderHash].blockPlaced);
+    }
 
+    function _updateOrder(bytes32 orderHash, int256 fillAmount, int256 baseAssetQuantity) internal {
+        orderInfo[orderHash].filledAmount += fillAmount;
         // update order status if filled
-        if (filledAmount[orderHash] == order.baseAssetQuantity) {
-            orderStatus[orderHash] = OrderStatus.Filled;
+        if (orderInfo[orderHash].filledAmount == baseAssetQuantity) {
+            orderInfo[orderHash].status = OrderStatus.Filled;
         }
     }
 

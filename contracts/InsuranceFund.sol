@@ -264,9 +264,10 @@ contract InsuranceFund is VanillaGovernable, ERC20Upgradeable {
     /*   onlyGovernance   */
     /* ****************** */
 
-    function syncDeps(IRegistry _registry) public onlyGovernance {
-        vusd = IERC20(_registry.vusd());
-        marginAccount = _registry.marginAccount();
-        oracle = IOracle(_registry.oracle());
+    function syncDeps(address _registry) public onlyGovernance {
+        IRegistry registry = IRegistry(_registry);
+        vusd = IERC20(registry.vusd());
+        marginAccount = registry.marginAccount();
+        oracle = IOracle(registry.oracle());
     }
 }

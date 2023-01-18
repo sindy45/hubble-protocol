@@ -39,7 +39,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     event PositionLiquidated(address indexed trader, uint indexed idx, int256 baseAsset, uint256 quoteAsset, int256 realizedPnl, int256 size, uint256 openNotional, uint256 timestamp);
     event MarketAdded(uint indexed idx, address indexed amm);
     event ReferralBonusAdded(address indexed referrer, uint referralBonus);
-    event FundingPaid(address indexed trader, uint indexed idx, int256 takerFundingPayment);
+    event FundingPaid(address indexed trader, uint indexed idx, int256 takerFundingPayment, int256 cumulativePremiumFraction);
     event FundingRateUpdated(uint indexed idx, int256 premiumFraction, uint256 underlyingPrice, int256 cumulativePremiumFraction, uint256 nextFundingTime, uint256 timestamp, uint256 blockNumber);
 
     constructor(address _trustedForwarder) HubbleBase(_trustedForwarder) {}
@@ -83,17 +83,16 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     * @notice Open/Modify/Close Position
     * @param order Order to be executed
     */
-    function openPosition(IOrderBook.Order memory order, int256 fillAmount) external whenNotPaused onlyOrderBook {
+    function openPosition(IOrderBook.Order memory order, int256 fillAmount, uint256 fulfillPrice) external whenNotPaused onlyOrderBook {
         require(order.baseAssetQuantity != 0 && fillAmount != 0, "CH: baseAssetQuantity == 0");
         updatePositions(order.trader); // adjust funding payments
-
+        uint quoteAsset = abs(fillAmount).toUint256() * fulfillPrice / 1e18;
         (
             int realizedPnl,
-            uint quoteAsset,
             bool isPositionIncreased,
             int size,
             uint openNotional
-        ) = amms[order.ammIndex].openPosition(order, fillAmount);
+        ) = amms[order.ammIndex].openPosition(order, fillAmount, fulfillPrice);
 
         uint _tradeFee = _chargeFeeAndRealizePnL(order.trader, realizedPnl, quoteAsset, false /* isLiquidation */);
         marginAccount.transferOutVusd(address(insuranceFund), _tradeFee);
@@ -109,10 +108,10 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         int256 fundingPayment;
         uint numAmms = amms.length;
         for (uint i; i < numAmms; ++i) {
-            int256 _fundingPayment = amms[i].updatePosition(trader);
+            (int256 _fundingPayment, int256 cumulativePremiumFraction) = amms[i].updatePosition(trader);
             if (_fundingPayment != 0) {
                 fundingPayment += _fundingPayment;
-                emit FundingPaid(trader, i, _fundingPayment);
+                emit FundingPaid(trader, i, _fundingPayment, cumulativePremiumFraction);
             }
         }
         // -ve fundingPayment means trader should receive funds
@@ -326,6 +325,10 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
             return type(int256).max;
         }
         return accountValue * PRECISION.toInt256() / notionalPosition.toInt256();
+    }
+
+    function abs(int x) internal pure returns (int) {
+        return x >= 0 ? x : -x;
     }
 
     /* ****************** */

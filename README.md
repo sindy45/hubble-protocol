@@ -1,14 +1,11 @@
 # Hubble Exchange
 Perpetual futures exchange on Avalanche.
 
-### One-Time vyper setup
-Vyper compilation with hardhat takes a ton of time and is performed on every run (no caching). Therefore, we place .vy files outside the contracts directory and manually compile and dump the abi and bytecode in files that are then picked up in the tests.
-
+### Foundry installation
+Follow [this](https://book.getfoundry.sh/getting-started/installation) to intall foundry
+#### Install libs
 ```
-python3 -m venv venv
-source venv/bin/activate
-pip install vyper==0.2.12
-npm run vyper-compile
+forge install foundry-rs/forge-std
 ```
 
 ### Compile
@@ -17,8 +14,14 @@ npm run vyper-compile && npm run compile
 ```
 
 ### Tests
+#### HardHat tests
 ```
 npm t
+```
+#### Foundry tests
+```
+forge test -vvv
+forge test -vvv --watch // for watch mode
 ```
 
 ### Local Deployment

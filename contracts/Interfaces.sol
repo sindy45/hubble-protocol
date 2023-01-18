@@ -19,7 +19,7 @@ interface IOracle {
 
 interface IClearingHouse {
     enum Mode { Maintenance_Margin, Min_Allowable_Margin }
-    function openPosition(IOrderBook.Order memory order, int256 fillAmount) external;
+    function openPosition(IOrderBook.Order memory order, int256 fillAmount, uint256 fulfillPrice) external;
     function settleFunding() external;
     function getTotalNotionalPositionAndUnrealizedPnl(address trader, int256 margin, Mode mode)
         external
@@ -66,26 +66,26 @@ interface IOrderBook {
     }
 
     enum OrderStatus {
-        UnPlaced,
+        Invalid,
         Placed,
         Filled,
         Cancelled
     }
 
-    function executeMatchedOrders(Order[2] memory orders, bytes[2] memory signatures, uint256 fillAmount) external;
+    function executeMatchedOrders(Order[2] memory orders, bytes[2] memory signatures, int256 fillAmount) external;
     function executeFundingPayment() external;
     function getLastTradePrices() external view returns(uint[] memory lastTradePrices);
 }
 
 interface IAMM {
-    function openPosition(IOrderBook.Order memory order, int256 fillAmount)
+    function openPosition(IOrderBook.Order memory order, int256 fillAmount, uint256 fulfillPrice)
         external
-        returns (int realizedPnl, uint quoteAsset, bool isPositionIncreased, int size, uint openNotional);
+        returns (int realizedPnl, bool isPositionIncreased, int size, uint openNotional);
     function getNotionalPositionAndUnrealizedPnl(address trader)
         external
         view
         returns(uint256 notionalPosition, int256 unrealizedPnl, int256 size, uint256 openNotional);
-    function updatePosition(address trader) external returns(int256 fundingPayment);
+    function updatePosition(address trader) external returns(int256 fundingPayment, int256 cumulativePremiumFraction);
     function liquidatePosition(address trader, uint price, int fillAmount) external returns (int realizedPnl, uint quoteAsset, int size, uint openNotional);
     function settleFunding() external returns (int256 premiumFraction, int256 underlyingPrice, int256 /* cumulativePremiumFraction */, uint256 /* nextFundingTime */);
     function underlyingAsset() external view returns (address);

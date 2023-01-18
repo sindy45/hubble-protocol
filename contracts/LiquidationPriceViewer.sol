@@ -27,9 +27,9 @@ contract LiquidationPriceViewer {
 
 
     constructor(
-        IHubbleViewer _hubbleViewer
+        address _hubbleViewer
     ) {
-        hubbleViewer = _hubbleViewer;
+        hubbleViewer = IHubbleViewer(_hubbleViewer);
         clearingHouse = IClearingHouse(hubbleViewer.clearingHouse());
         marginAccount = IMarginAccount(hubbleViewer.marginAccount());
         oracle = marginAccount.oracle();

@@ -35,12 +35,12 @@ contract HubbleViewer is IHubbleViewer {
     }
 
     constructor(
-        IClearingHouse _clearingHouse,
-        IMarginAccount _marginAccount,
+        address _clearingHouse,
+        address _marginAccount,
         address _registry
     ) {
-        clearingHouse = _clearingHouse;
-        marginAccount = _marginAccount;
+        clearingHouse = IClearingHouse(_clearingHouse);
+        marginAccount = IMarginAccount(_marginAccount);
         registry = _registry;
     }
 

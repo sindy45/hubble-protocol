@@ -120,23 +120,22 @@ contract AMM is IAMM, Governable {
     /**
     * @dev baseAssetQuantity != 0 has been validated in clearingHouse._openPosition()
     */
-    function openPosition(IOrderBook.Order memory order, int256 fillAmount)
+    function openPosition(IOrderBook.Order memory order, int256 fillAmount, uint256 fulfillPrice)
         override
         external
         onlyClearingHouse
-        returns (int realizedPnl, uint quoteAsset, bool isPositionIncreased, int size, uint openNotional)
+        returns (int realizedPnl, bool isPositionIncreased, int size, uint openNotional)
     {
         Position memory position = positions[order.trader];
         bool isNewPosition = position.size == 0 ? true : false;
         Side side = fillAmount > 0 ? Side.LONG : Side.SHORT;
-        // @todo replace quoteAssetLimit with price
-        uint quoteAssetLimit = abs(fillAmount).toUint256() * order.price / 1e18;
+
         if (isNewPosition || (position.size > 0 ? Side.LONG : Side.SHORT) == side) {
             // realizedPnl = 0;
-            quoteAsset = _increasePosition(order.trader, fillAmount, quoteAssetLimit);
+            _increasePosition(order.trader, fillAmount, fulfillPrice);
             isPositionIncreased = true;
         } else {
-            (realizedPnl, quoteAsset, isPositionIncreased) = _openReversePosition(order.trader, fillAmount, quoteAssetLimit);
+            (realizedPnl, isPositionIncreased) = _openReversePosition(order.trader, fillAmount, fulfillPrice);
         }
 
         size = positions[order.trader].size;
@@ -180,11 +179,11 @@ contract AMM is IAMM, Governable {
         if (isLongPosition) {
             require(fillAmount > 0, "AMM_matching_trade_should_be_opposite");
             quoteAsset = fillAmount.toUint256() * price / 1e18;
-            (realizedPnl, quoteAsset) = _reducePosition(trader, -fillAmount, quoteAsset, true /* isLiquidation */);
+            realizedPnl = _reducePosition(trader, -fillAmount, price, true /* isLiquidation */);
         } else {
             require(fillAmount < 0, "AMM_matching_trade_should_be_opposite");
             quoteAsset = (-fillAmount).toUint256() * price / 1e18;
-            (realizedPnl, quoteAsset) = _reducePosition(trader, -fillAmount, quoteAsset, true /* isLiquidation */);
+            realizedPnl = _reducePosition(trader, -fillAmount, price, true /* isLiquidation */);
         }
 
         size = positions[trader].size;
@@ -196,12 +195,14 @@ contract AMM is IAMM, Governable {
         override
         external
         onlyClearingHouse
-        returns(int256 fundingPayment)
+        returns(int256 fundingPayment, int256 latestCumulativePremiumFraction)
     {
         (
             fundingPayment,
-            positions[trader].lastPremiumFraction
+            latestCumulativePremiumFraction
         ) = getPendingFundingPayment(trader);
+
+        positions[trader].lastPremiumFraction = latestCumulativePremiumFraction;
     }
 
     function getOpenNotionalWhileReducingPosition(
@@ -416,23 +417,21 @@ contract AMM is IAMM, Governable {
     /**
     * @dev Go long on an asset
     * @param baseAssetQuantity Exact base asset quantity to go long
-    * @param quoteAssetQuantity Maximum amount of quote asset to be used while longing baseAssetQuantity. Lower means longing at a lower price (desirable).
+    * @param price price at which trade to be executed
     * @param isLiquidation true if liquidaiton else false
     */
-    function _long(int256 baseAssetQuantity, uint quoteAssetQuantity, bool isLiquidation) internal {
+    function _long(int256 baseAssetQuantity, uint price, bool isLiquidation) internal {
         require(baseAssetQuantity > 0, "VAMM._long: baseAssetQuantity is <= 0");
 
-        uint _lastPrice = quoteAssetQuantity * 1e18 / uint(baseAssetQuantity);
-
-        _addReserveSnapshot(_lastPrice);
+        _addReserveSnapshot(price);
         // markPrice should not change more than X% in a single block
         uint256 lastBlockTradePrice = _getLastBlockTradePrice();
-        require(_lastPrice < lastBlockTradePrice * (1e6 + maxPriceSpreadPerBlock) / 1e6, "AMM.long_single_block_price_slippage");
+        require(price < lastBlockTradePrice * (1e6 + maxPriceSpreadPerBlock) / 1e6, "AMM.long_single_block_price_slippage");
 
         // longs not allowed if market price > (1 + maxOracleSpreadRatio)*index price
         uint256 oraclePrice = uint(oracle.getUnderlyingPrice(underlyingAsset));
         oraclePrice = oraclePrice * (1e6 + maxOracleSpreadRatio) / 1e6;
-        if (!isLiquidation && _lastPrice > oraclePrice) {
+        if (!isLiquidation && price > oraclePrice) {
             revert("VAMM._long: longs not allowed");
         }
     }
@@ -440,23 +439,21 @@ contract AMM is IAMM, Governable {
     /**
     * @dev Go short on an asset
     * @param baseAssetQuantity Exact base asset quantity to short
-    * @param quoteAssetQuantity Minimum amount of quote asset to be used while shorting baseAssetQuantity. Higher means shorting at a higher price (desirable).
+    * @param price price at which trade to be executed
     * @param isLiquidation true if liquidaiton else false
     */
-    function _short(int256 baseAssetQuantity, uint quoteAssetQuantity, bool isLiquidation) internal {
+    function _short(int256 baseAssetQuantity, uint price, bool isLiquidation) internal {
         require(baseAssetQuantity < 0, "VAMM._short: baseAssetQuantity is >= 0");
 
-        uint _lastPrice = quoteAssetQuantity * 1e18 / uint(-baseAssetQuantity);
-
-        _addReserveSnapshot(_lastPrice);
+        _addReserveSnapshot(price);
         // markPrice should not change more than X% in a single block
         uint256 lastBlockTradePrice = _getLastBlockTradePrice();
-        require(_lastPrice > lastBlockTradePrice * (1e6 - maxPriceSpreadPerBlock) / 1e6, "AMM.short_single_block_price_slippage");
+        require(price > lastBlockTradePrice * (1e6 - maxPriceSpreadPerBlock) / 1e6, "AMM.short_single_block_price_slippage");
 
         // shorts not allowed if market price < (1 - maxOracleSpreadRatio)*index price
         uint256 oraclePrice = uint(oracle.getUnderlyingPrice(underlyingAsset));
         oraclePrice = oraclePrice * (1e6 - maxOracleSpreadRatio) / 1e6;
-        if (!isLiquidation && _lastPrice < oraclePrice) {
+        if (!isLiquidation && price < oraclePrice) {
             revert("VAMM._short: shorts not allowed");
         }
     }
@@ -507,39 +504,31 @@ contract AMM is IAMM, Governable {
         }
     }
 
-    function _increasePosition(address trader, int256 baseAssetQuantity, uint quoteAssetLimit)
+    function _increasePosition(address trader, int256 baseAssetQuantity, uint price)
         internal
-        returns(uint quoteAsset)
     {
         if (baseAssetQuantity > 0) { // Long - purchase baseAssetQuantity
             longOpenInterestNotional += baseAssetQuantity.toUint256();
-            _long(baseAssetQuantity, quoteAssetLimit, false /* isLiquidation */);
+            _long(baseAssetQuantity, price, false /* isLiquidation */);
         } else { // Short - sell baseAssetQuantity
             shortOpenInterestNotional += (-baseAssetQuantity).toUint256();
-            _short(baseAssetQuantity, quoteAssetLimit, false /* isLiquidation */);
+            _short(baseAssetQuantity, price, false /* isLiquidation */);
         }
-        quoteAsset = quoteAssetLimit;
         positions[trader].size += baseAssetQuantity; // -ve baseAssetQuantity will increase short position
-        positions[trader].openNotional += quoteAsset;
+        positions[trader].openNotional += abs(baseAssetQuantity).toUint256() * price / 1e18;
     }
 
-    function _openReversePosition(address trader, int256 baseAssetQuantity, uint quoteAssetLimit)
+    function _openReversePosition(address trader, int256 baseAssetQuantity, uint price)
         internal
-        returns (int realizedPnl, uint quoteAsset, bool isPositionIncreased)
+        returns (int realizedPnl, bool isPositionIncreased)
     {
         Position memory position = positions[trader];
         if (abs(position.size) >= abs(baseAssetQuantity)) {
-            (realizedPnl, quoteAsset) = _reducePosition(trader, baseAssetQuantity, quoteAssetLimit, false /* isLiqudation */);
+            (realizedPnl) = _reducePosition(trader, baseAssetQuantity, price, false /* isLiqudation */);
         } else {
-            uint closedRatio = (quoteAssetLimit * abs(position.size).toUint256()) / abs(baseAssetQuantity).toUint256();
-            (realizedPnl, quoteAsset) = _reducePosition(trader, -position.size, closedRatio, false /* isLiqudation */);
-
-            // this is required because the user might pass a very less value (slippage-prone) while shorting
-            // @todo if statement is not required
-            if (quoteAssetLimit >= quoteAsset) {
-                quoteAssetLimit -= quoteAsset;
-            }
-            quoteAsset += _increasePosition(trader, baseAssetQuantity + position.size, quoteAssetLimit);
+            uint closedRatio = (price * abs(position.size).toUint256()) / abs(baseAssetQuantity).toUint256();
+            (realizedPnl) = _reducePosition(trader, -position.size, closedRatio, false /* isLiqudation */);
+            _increasePosition(trader, baseAssetQuantity + position.size, price);
             isPositionIncreased = true;
         }
     }
@@ -547,9 +536,9 @@ contract AMM is IAMM, Governable {
     /**
     * @dev validate that baseAssetQuantity <= position.size should be performed before the call to _reducePosition
     */
-    function _reducePosition(address trader, int256 baseAssetQuantity, uint quoteAssetLimit, bool isLiquidation)
+    function _reducePosition(address trader, int256 baseAssetQuantity, uint price, bool isLiquidation)
         internal
-        returns (int realizedPnl, uint256 quoteAsset)
+        returns (int realizedPnl)
     {
         (, int256 unrealizedPnl,,) = getNotionalPositionAndUnrealizedPnl(trader);
 
@@ -558,12 +547,11 @@ contract AMM is IAMM, Governable {
 
         if (isLongPosition) {
             longOpenInterestNotional -= (-baseAssetQuantity).toUint256();
-            _short(baseAssetQuantity, quoteAssetLimit, isLiquidation);
+            _short(baseAssetQuantity, price, isLiquidation);
         } else {
             shortOpenInterestNotional -= baseAssetQuantity.toUint256();
-            _long(baseAssetQuantity, quoteAssetLimit, isLiquidation);
+            _long(baseAssetQuantity, price, isLiquidation);
         }
-        quoteAsset = quoteAssetLimit;
         (position.openNotional, realizedPnl) = getOpenNotionalWhileReducingPosition(position.size, position.openNotional, unrealizedPnl, baseAssetQuantity);
         position.size += baseAssetQuantity;
     }

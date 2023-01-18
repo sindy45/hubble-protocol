@@ -61,7 +61,7 @@ describe.only('Order Book', function () {
             signature1,
         )
         await expect(orderBook.connect(alice).placeOrder(shortOrder, signature1)).to.revertedWith('OB_Order_already_exists')
-        expect(await orderBook.orderStatus(order1Hash)).to.eq(1) // placed
+        expect((await orderBook.orderInfo(order1Hash)).status).to.eq(1) // placed
     })
 
     it('matches orders with same price and opposite base asset quantity', async function() {
@@ -77,8 +77,8 @@ describe.only('Order Book', function () {
         await orderBook.connect(bob).placeOrder(longOrder, signature2)
 
         const tx = await orderBook.executeMatchedOrders(
-            [ shortOrder, longOrder ],
-            [ signature1, signature2 ],
+            [ longOrder, shortOrder ],
+            [ signature2, signature1 ],
             longOrder.baseAssetQuantity
         )
 
@@ -86,16 +86,16 @@ describe.only('Order Book', function () {
 
         await expect(tx).to.emit(orderBook, "OrdersMatched")
         const event = await filterEvent(tx, 'OrdersMatched')
-        expect(event.args.orders.slice(0)).to.deep.eq([ Object.values(shortOrder), Object.values(longOrder) ])
-        expect(event.args.signatures).to.deep.eq([ signature1, signature2])
+        expect(event.args.orders.slice(0)).to.deep.eq([ Object.values(longOrder), Object.values(shortOrder) ])
+        expect(event.args.signatures).to.deep.eq([ signature2, signature1])
         expect(event.args.relayer).to.eq(governance)
         expect(event.args.fillAmount).to.eq(longOrder.baseAssetQuantity)
 
-        expect(await orderBook.orderStatus(order1Hash)).to.eq(2) // filled
-        expect(await orderBook.orderStatus(order2Hash)).to.eq(2) // filled
+        expect((await orderBook.orderInfo(order1Hash)).status).to.eq(2) // filled
+        expect((await orderBook.orderInfo(order2Hash)).status).to.eq(2) // filled
         await expect(orderBook.executeMatchedOrders(
-            [ shortOrder, longOrder ],
-            [ signature1, signature2 ],
+            [ longOrder, shortOrder ],
+            [ signature2, signature1 ],
             longOrder.baseAssetQuantity
         )).to.revertedWith('OB_invalid_order')
     })
@@ -131,16 +131,16 @@ describe.only('Order Book', function () {
 
         // match 1
         let tx = await orderBook.executeMatchedOrders(
-            [ shortOrder1, longOrder1 ],
-            [ shortSignature1, longSignature1 ],
+            [ longOrder1, shortOrder1 ],
+            [ longSignature1, shortSignature1 ],
             longOrder1.baseAssetQuantity
         )
         await expect(tx).to.emit(orderBook, 'OrdersMatched')
 
         // match 2
         tx = await orderBook.executeMatchedOrders(
-            [ shortOrder2, longOrder2 ],
-            [ shortSignature2, longSignature2 ],
+            [ longOrder2, shortOrder2 ],
+            [ longSignature2, shortSignature2 ],
             longOrder2.baseAssetQuantity
         )
         await expect(tx).to.emit(orderBook, 'OrdersMatched')

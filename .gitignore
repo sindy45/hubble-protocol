@@ -16,3 +16,6 @@ coverage.json
 docgen
 
 dist
+out
+forge-cache
+lib/forge-std
