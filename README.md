@@ -10,7 +10,7 @@ forge install foundry-rs/forge-std
 
 ### Compile
 ```
-npm run vyper-compile && npm run compile
+npm run compile
 ```
 
 ### Tests
@@ -26,10 +26,18 @@ forge test -vvv --watch // for watch mode
 
 ### Local Deployment
 ```
-# starts node on `http://127.0.0.1:8545/` with 10K ETH in 20 accounts generated from mnemonic: "test test test test test test test test test test test junk"
+# starts node on `http://127.0.0.1:8545/` with 10K ETH in 20 accounts generated from mnemonic: `test test test test test test test test test test test junk`
 
 npx hardhat node
 npx hardhat run scripts/deploy-local.js --network local
+```
+
+### Local Subnet Deployment
+- Add the rpc in [hardhat.config.js](./hardhat.config.js) after starting a subnet node
+- Expects some gas token in the first 3 accounts generated from mnemonic: `test test test test test test test test test test test junk`
+- Deploy contracts
+```
+npx hardhat run scripts/deploy/local.js --network subnet
 ```
 
 ### Fuji Deployment

@@ -1,7 +1,7 @@
 const { expect } = require('chai')
-const fs = require('fs')
 const { BigNumber } = require('ethers')
 const { ethers, network } = require('hardhat')
+const Bluebird = require('bluebird')
 
 const ZERO = BigNumber.from(0)
 const _1e6 = BigNumber.from(10).pow(6)
@@ -10,6 +10,9 @@ const _1e12 = BigNumber.from(10).pow(12)
 const _1e18 = ethers.constants.WeiPerEther
 
 const DEFAULT_TRADE_FEE = 0.0005 * 1e6 /* 0.05% */
+const OBGenesisProxyAddress = '0x0300000000000000000000000000000000000069'
+const MAGenesisProxyAddress = '0x0300000000000000000000000000000000000070'
+const CHGenesisProxyAddress = '0x0300000000000000000000000000000000000071'
 
 let txOptions = {}
 const verification = []
@@ -63,12 +66,34 @@ async function setupContracts(options = {}) {
         [ usdc.address ]
     )
 
-    marginAccount = await setupUpgradeableProxy(
-        `${options.mockMarginAccount ? 'Mock' : ''}MarginAccount`,
-        proxyAdmin.address,
-        [ governance, vusd.address ],
-        [ forwarder.address ]
-    )
+    // setup genesis proxies on the hubblenet if requested
+    let clearingHouseProxy, orderBookProxy, marginAccountProxy
+    if (options.genesisProxies) {
+        ;([orderBookProxy, marginAccountProxy, clearingHouseProxy] = await Promise.all([
+            ethers.getContractAt('GenesisTUP', OBGenesisProxyAddress),
+            ethers.getContractAt('GenesisTUP', MAGenesisProxyAddress),
+            ethers.getContractAt('GenesisTUP', CHGenesisProxyAddress)
+        ]))
+        await Promise.all([
+            orderBookProxy.init(proxyAdmin.address, getTxOptions()),
+            marginAccountProxy.init(proxyAdmin.address, getTxOptions()),
+            clearingHouseProxy.init(proxyAdmin.address, getTxOptions())
+        ])
+    }
+
+    let initArgs = [ governance, vusd.address ]
+    let deployArgs = [ forwarder.address ]
+    if (options.genesisProxies) {
+        marginAccount = await setupGenesisProxy('MarginAccount', proxyAdmin, initArgs, deployArgs, marginAccountProxy)
+    } else {
+        marginAccount = await setupUpgradeableProxy(
+            `${options.mockMarginAccount ? 'Mock' : ''}MarginAccount`,
+            proxyAdmin.address,
+            initArgs,
+            deployArgs,
+            marginAccountProxy
+        )
+    }
 
     let constructorArguments = [marginAccount.address, vusd.address, options.wavaxAddress || usdc.address /* pass a dummy address that supports safeApprove */]
     marginAccountHelper = await MarginAccountHelper.deploy(...constructorArguments.concat(getTxOptions()))
@@ -90,42 +115,53 @@ async function setupContracts(options = {}) {
 
     const hubbleReferral = await setupUpgradeableProxy('HubbleReferral', proxyAdmin.address)
 
-    constructorArguments = [
-        oracle.address /* random contract address */,
-        proxyAdmin.address,
-        '0x'
-    ]
-    const clearingHouseProxy = await TransparentUpgradeableProxy.deploy(...constructorArguments, getTxOptions())
-    orderBook = await setupUpgradeableProxy(
-        'OrderBook',
-        proxyAdmin.address,
-        [
-            'Hubble',
-            '2.0',
-        ],
-        [ clearingHouseProxy.address ]
-    )
+    if (!clearingHouseProxy) { // a genesis proxy hasnt been setup
+        constructorArguments = [
+            oracle.address /* random contract address */,
+            proxyAdmin.address,
+            '0x'
+        ]
+        clearingHouseProxy = await TransparentUpgradeableProxy.deploy(...constructorArguments, getTxOptions())
+    }
+    initArgs = [ 'Hubble', '2.0' ]
+    deployArgs = [ clearingHouseProxy.address ]
+    if (options.genesisProxies) {
+        orderBook = await setupGenesisProxy('OrderBook', proxyAdmin, initArgs, deployArgs, orderBookProxy)
+    } else {
+        orderBook = await setupUpgradeableProxy(
+            'OrderBook',
+            proxyAdmin.address,
+            initArgs,
+            deployArgs
+        )
+    }
 
-    clearingHouse = await setupUpgradeableProxy(
-        'ClearingHouse',
-        proxyAdmin.address,
-        [
-            governance,
-            insuranceFund.address,
-            marginAccount.address,
-            orderBook.address,
-            vusd.address,
-            hubbleReferral.address,
-            0.1 * 1e6, // 10% maintenance margin, 10x
-            0.2 * 1e6, // 20% minimum allowable margin, 5x
-            options.tradeFee,
-            50, // referralShare = .5bps
-            100, // feeDiscount = 1bps
-            0.05 * 1e6, // liquidationPenalty = 5%
-        ],
-        [ forwarder.address ],
-        clearingHouseProxy
-    )
+    initArgs = [
+        governance,
+        insuranceFund.address,
+        marginAccount.address,
+        orderBook.address,
+        vusd.address,
+        hubbleReferral.address,
+        0.1 * 1e6, // 10% maintenance margin, 10x
+        0.2 * 1e6, // 20% minimum allowable margin, 5x
+        options.tradeFee,
+        50, // referralShare = .5bps
+        100, // feeDiscount = 1bps
+        0.05 * 1e6, // liquidationPenalty = 5%
+    ]
+    deployArgs = [ forwarder.address ]
+    if (options.genesisProxies) {
+        clearingHouse = await setupGenesisProxy('ClearingHouse', proxyAdmin, initArgs, deployArgs, clearingHouseProxy)
+    } else {
+        clearingHouse = await setupUpgradeableProxy(
+            'ClearingHouse',
+            proxyAdmin.address,
+            initArgs,
+            deployArgs,
+            clearingHouseProxy
+        )
+    }
 
     await vusd.grantRole(ethers.utils.id('MINTER_ROLE'), marginAccount.address, getTxOptions())
 
@@ -166,7 +202,8 @@ async function setupContracts(options = {}) {
         ;({ amm } = await setupAmm(
             governance,
             [ 'ETH-PERP', weth.address, oracle.address, 1e8 /* min liquidity req */],
-            options.amm
+            options.amm,
+            options.genesisProxies
         ))
         const maxPriceSpread = await amm.maxOracleSpreadRatio()
         // set maxPriceSpreadPerBlock = 100%
@@ -188,7 +225,31 @@ function getTxOptions() {
     if (txOptions.gasLimit != null) {
         res.gasLimit = txOptions.gasLimit
     }
+    if (txOptions.gasPrice != null) {
+        res.gasPrice = txOptions.gasPrice
+    }
     return res
+}
+
+async function setupGenesisProxy(contract, proxyAdmin, initArgs, deployArgs = [], proxy) {
+    const factory = await ethers.getContractFactory(contract)
+    const impl = await factory.deploy(...deployArgs, getTxOptions())
+
+    const _data = initArgs
+        ? impl.interface.encodeFunctionData('initialize', initArgs)
+        : '0x'
+
+    const proxyContract = await ethers.getContractAt(contract, proxy.address)
+    let _impl = await ethers.provider.getStorageAt(proxy.address, '0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc')
+
+    // even though initializer has been removed from MarginAccount and ClearingHouse, it needs to be retained in OrderBook.sol due to semantics of __EIP712_init call in the constructor
+    // for CH and MA we still need to call upgrade so that newly deployed deps can be updated
+    if (_impl != '0x' + '0'.repeat(64)) {
+        await proxyAdmin.upgrade(proxy.address, impl.address, getTxOptions())
+    } else {
+        await proxyAdmin.upgradeAndCall(proxy.address, impl.address, _data, getTxOptions())
+    }
+    return proxyContract
 }
 
 async function setupUpgradeableProxy(contract, admin, initArgs, deployArgs = [], proxy) {
@@ -199,17 +260,20 @@ async function setupUpgradeableProxy(contract, admin, initArgs, deployArgs = [],
         ? impl.interface.encodeFunctionData('initialize', initArgs)
         : '0x'
     const constructorArguments = [impl.address, admin, _data]
-    if(!proxy) {
+    // if (contract == 'InsuranceFund') { // will keep this for debugging in the future
+    //     console.log('pendingObligation', await impl.pendingObligation())
+    // }
+    if (!proxy) {
         proxy = await TransparentUpgradeableProxy.deploy(...constructorArguments, getTxOptions())
     } else {
-        proxyAdmin.upgradeAndCall(proxy.address, impl.address, _data)
+        await proxyAdmin.upgradeAndCall(proxy.address, impl.address, _data, getTxOptions())
     }
 
     verification.push({ name: 'TransparentUpgradeableProxy', impl: contract, address: proxy.address, constructorArguments })
     return ethers.getContractAt(contract, proxy.address)
 }
 
-async function setupAmm(governance, args, ammOptions) {
+async function setupAmm(governance, args, ammOptions, slowMode) {
     const options = Object.assign(
         {
             index: 0,
@@ -219,7 +283,7 @@ async function setupAmm(governance, args, ammOptions) {
         },
         ammOptions
     )
-    const { initialRate, fee, index, testAmm, unbondPeriod } = options
+    const { initialRate, testAmm } = options
 
     const ammImpl = await AMM.deploy(clearingHouse.address, getTxOptions())
     let constructorArguments = [
@@ -230,6 +294,10 @@ async function setupAmm(governance, args, ammOptions) {
     const ammProxy = await TransparentUpgradeableProxy.deploy(...constructorArguments, getTxOptions())
     verification.push({ name: 'TransparentUpgradeableProxy', impl: 'AMM', address: ammProxy.address, constructorArguments })
     const amm = await ethers.getContractAt(testAmm ? 'TestAmm' : 'AMM', ammProxy.address)
+
+    if (slowMode) {
+        await sleep(5) // if the above txs aren't mined, read calls to amm fail
+    }
 
     if (initialRate) {
         // amm.liftOff() needs the price for the underlying to be set

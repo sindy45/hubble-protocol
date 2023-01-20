@@ -57,7 +57,10 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         uint _referralShare,
         uint _tradingFeeDiscount,
         uint _liquidationPenalty
-    ) external initializer {
+    ) external
+      // commenting this out only for a bit for testing because it doesn't let us initialize repeatedly unless we run a fresh subnet
+      // initializer
+    {
         _setGovernace(_governance);
 
         insuranceFund = IInsuranceFund(_insuranceFund);

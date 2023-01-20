@@ -42,6 +42,15 @@ module.exports = {
         hardhat: {
             chainId: 1337
         },
+        subnet: {
+            url: 'http://127.0.0.1:9650/ext/bc/2QVZLgXSs9ZhcUWgppD543x4iw5oCSrXtasU7Yns21SL2Mgu87/rpc', // changes on every fresh run
+            chainId: 321123,
+            throwOnTransactionFailures: true,
+            gasLimit: 5000000,
+            accounts: {
+                mnemonic: "test test test test test test test test test test test junk"
+            }
+        },
         fuji: {
             url: 'https://api.avax-test.network/ext/bc/C/rpc',
             chainId: 43113,
