@@ -86,7 +86,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     * @notice Open/Modify/Close Position
     * @param order Order to be executed
     */
-    function openPosition(IOrderBook.Order memory order, int256 fillAmount, uint256 fulfillPrice) external whenNotPaused onlyOrderBook {
+    function openPosition(IOrderBook.Order memory order, int256 fillAmount, uint256 fulfillPrice) external onlyOrderBook {
         require(order.baseAssetQuantity != 0 && fillAmount != 0, "CH: baseAssetQuantity == 0");
         updatePositions(order.trader); // adjust funding payments
         uint quoteAsset = abs(fillAmount).toUint256() * fulfillPrice / 1e18;
@@ -121,7 +121,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         marginAccount.realizePnL(trader, -fundingPayment);
     }
 
-    function settleFunding() override external whenNotPaused onlyOrderBook {
+    function settleFunding() override external onlyOrderBook {
         uint numAmms = amms.length;
         for (uint i; i < numAmms; ++i) {
             (int _premiumFraction, int _underlyingPrice, int _cumulativePremiumFraction, uint _nextFundingTime) = amms[i].settleFunding();
@@ -143,24 +143,24 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     /*    Liquidations    */
     /* ****************** */
 
-    function liquidate(address trader, uint ammIndex, uint price, int fillAmount, address liquidator) override external whenNotPaused onlyOrderBook {
+    function liquidate(address trader, uint ammIndex, uint price, int256 toLiquidate, address liquidator) override external onlyOrderBook {
         updatePositions(trader);
-        _liquidateTakerSingleAmm(trader, ammIndex, price, fillAmount, liquidator);
+        _liquidateTakerSingleAmm(trader, ammIndex, price, toLiquidate, liquidator);
     }
 
     /* ********************* */
     /* Liquidations Internal */
     /* ********************* */
 
-    function _liquidateTakerSingleAmm(address trader, uint ammIndex, uint price, int fillAmount, address liquidator) internal {
+    function _liquidateTakerSingleAmm(address trader, uint ammIndex, uint price, int toLiquidate, address liquidator) internal {
         _assertLiquidationRequirement(trader);
         (
             int realizedPnl,
             uint quoteAsset,
             int size,
             uint openNotional
-        ) = amms[ammIndex].liquidatePosition(trader, price, fillAmount);
-        emit PositionLiquidated(trader, ammIndex, fillAmount, quoteAsset, realizedPnl, size, openNotional, _blockTimestamp());
+        ) = amms[ammIndex].liquidatePosition(trader, price, toLiquidate);
+        emit PositionLiquidated(trader, ammIndex, toLiquidate, quoteAsset, realizedPnl, size, openNotional, _blockTimestamp());
 
         _disperseLiquidationFee(
             _chargeFeeAndRealizePnL(trader, realizedPnl, quoteAsset, true /* isLiquidation */),

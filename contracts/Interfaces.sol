@@ -72,8 +72,13 @@ interface IOrderBook {
         Cancelled
     }
 
+    event OrderPlaced(address indexed trader, Order order, bytes signature);
+    event OrderCancelled(address indexed trader, Order order);
+    event OrdersMatched(Order[2] orders, bytes[2] signatures, uint256 fillAmount, address relayer);
+    event LiquidationOrderMatched(address indexed trader, Order order, bytes signature, uint256 fillAmount, address relayer);
+
     function executeMatchedOrders(Order[2] memory orders, bytes[2] memory signatures, int256 fillAmount) external;
-    function executeFundingPayment() external;
+    function settleFunding() external;
     function getLastTradePrices() external view returns(uint[] memory lastTradePrices);
 }
 

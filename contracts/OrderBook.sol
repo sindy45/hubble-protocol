@@ -2,13 +2,15 @@
 
 pragma solidity 0.8.9;
 
-import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
-
-import { IClearingHouse, IOrderBook, IAMM } from "./Interfaces.sol";
 import { ECDSAUpgradeable } from "@openzeppelin/contracts-upgradeable/utils/cryptography/ECDSAUpgradeable.sol";
 import { EIP712Upgradeable } from "@openzeppelin/contracts-upgradeable/utils/cryptography/draft-EIP712Upgradeable.sol";
+import { Pausable } from "@openzeppelin/contracts/security/Pausable.sol";
+import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
-contract OrderBook is IOrderBook, EIP712Upgradeable {
+import { VanillaGovernable } from "./legos/Governable.sol";
+import { IClearingHouse, IOrderBook, IAMM } from "./Interfaces.sol";
+
+contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable {
     using SafeCast for uint256;
     using SafeCast for int256;
 
@@ -23,13 +25,14 @@ contract OrderBook is IOrderBook, EIP712Upgradeable {
         OrderStatus status;
     }
     mapping(bytes32 => OrderInfo) public orderInfo;
-
+    mapping(address => bool) isValidator;
 
     uint256[50] private __gap;
 
-    event OrderPlaced(address indexed trader, Order order, bytes signature);
-    event OrderCancelled(address indexed trader, Order order);
-    event OrdersMatched(Order[2] orders, bytes[2] signatures, uint256 fillAmount, address relayer);
+    modifier onlyValidator {
+        require(isValidator[msg.sender], "OB.only_validator");
+        _;
+    }
 
     constructor(address _clearingHouse) {
         clearingHouse = IClearingHouse(_clearingHouse);
@@ -37,9 +40,12 @@ contract OrderBook is IOrderBook, EIP712Upgradeable {
 
     function initialize(
         string memory _name,
-        string memory _version
+        string memory _version,
+        address _governance
     ) external initializer {
         __EIP712_init(_name, _version);
+        // this is problematic for re-initialization but as long as we are not changing gov address across runs, it wont be a problem
+        _setGovernace(_governance);
     }
 
     /**
@@ -47,20 +53,21 @@ contract OrderBook is IOrderBook, EIP712Upgradeable {
      * @param orders It is required that orders[0] is a LONG and orders[1] is a SHORT
      * @param signatures To verify authenticity of the order
      * @param fillAmount Amount to be filled for each order. This is to support partial fills.
-     *        Should be > 0 and min(unfilled amount in both orders)
+     *        Should be > 0 (validated in _verifyOrder) and min(unfilled amount in both orders)
     */
     function executeMatchedOrders(
         Order[2] memory orders,
         bytes[2] memory signatures,
         int256 fillAmount
     )   external
-        /* onlyValidator */
+        whenNotPaused
+        onlyValidator
     {
         // Checks and Effects
         require(orders[0].baseAssetQuantity > 0, "OB_order_0_is_not_long");
         require(orders[1].baseAssetQuantity < 0, "OB_order_1_is_not_short");
-        require(fillAmount > 0, "OB_fillAmount_is_neg");
         require(orders[0].price /* buy */ >= orders[1].price /* sell */, "OB_orders_do_not_match");
+        require(orders[0].ammIndex == orders[1].ammIndex, "OB_orders_for_different_amms");
         (bytes32 orderHash0, uint blockPlaced0) = _verifyOrder(orders[0], signatures[0], fillAmount);
         (bytes32 orderHash1, uint blockPlaced1) = _verifyOrder(orders[1], signatures[1], -fillAmount);
         // @todo min fillAmount and min order.baseAsset check
@@ -80,7 +87,7 @@ contract OrderBook is IOrderBook, EIP712Upgradeable {
         emit OrdersMatched(orders, signatures, fillAmount.toUint256(), msg.sender);
     }
 
-    function placeOrder(Order memory order, bytes memory signature) external {
+    function placeOrder(Order memory order, bytes memory signature) external whenNotPaused {
         require(msg.sender == order.trader, "OB_sender_is_not_trader");
         // verifying signature here to avoid too many fake placeOrders
         (, bytes32 orderHash) = verifySigner(order, signature);
@@ -104,23 +111,39 @@ contract OrderBook is IOrderBook, EIP712Upgradeable {
     }
 
     // @todo onlyValidator modifier
-    function executeFundingPayment() external {
+    function settleFunding() external whenNotPaused {
         clearingHouse.settleFunding();
     }
 
     /**
-    @dev assuming one order is in liquidation zone and other is out of it
-    @notice liquidate trader
-    @param trader trader to liquidate
-    @param order order to match when liuidating for a particular amm
-    @param signature signature corresponding to order
-    @param toLiquidate baseAsset amount being traded/liquidated. -ve if short position is being liquidated, +ve if long
+     * @dev assuming one order is in liquidation zone and other is out of it
+     * @notice liquidate trader
+     * @param trader trader to liquidate
+     * @param order order to match when liuidating for a particular amm
+     * @param signature signature corresponding to order
+     * @param toLiquidate baseAsset amount being traded/liquidated.
+     *        toLiquidate!=0 is validated in am.liquidatePosition
     */
-    function liquidateAndExecuteOrder(address trader, Order memory order, bytes memory signature, int toLiquidate) external {
-        clearingHouse.liquidate(trader, order.ammIndex, order.price, toLiquidate, msg.sender);
-        (bytes32 orderHash,) = _verifyOrder(order, signature, toLiquidate);
-        _updateOrder(orderHash, toLiquidate, order.baseAssetQuantity);
-        clearingHouse.openPosition(order, toLiquidate, order.price);
+    function liquidateAndExecuteOrder(
+        address trader,
+        Order memory order,
+        bytes memory signature,
+        uint256 toLiquidate
+    )   external
+        whenNotPaused
+        onlyValidator
+    {
+        int256 fillAmount = toLiquidate.toInt256();
+        if (order.baseAssetQuantity < 0) { // order is short, so short position is being liquidated
+            fillAmount *= -1 ;
+        }
+        clearingHouse.liquidate(trader, order.ammIndex, order.price, fillAmount, msg.sender);
+
+        (bytes32 orderHash,) = _verifyOrder(order, signature, fillAmount);
+        _updateOrder(orderHash, fillAmount, order.baseAssetQuantity);
+
+        clearingHouse.openPosition(order, fillAmount, order.price);
+        emit LiquidationOrderMatched(trader, order, signature, toLiquidate, msg.sender);
     }
 
     /* ****************** */
@@ -184,5 +207,21 @@ contract OrderBook is IOrderBook, EIP712Upgradeable {
 
     function abs(int x) internal pure returns (int) {
         return x >= 0 ? x : -x;
+    }
+
+    /* ****************** */
+    /*     Governance     */
+    /* ****************** */
+
+    function pause() external onlyGovernance {
+        _pause();
+    }
+
+    function unpause() external onlyGovernance {
+        _unpause();
+    }
+
+    function setValidatorStatus(address validator, bool status) external onlyGovernance whenNotPaused {
+        isValidator[validator] = status;
     }
 }

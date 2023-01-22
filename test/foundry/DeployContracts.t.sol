@@ -30,6 +30,7 @@ contract DeployContracts is Utils {
 
         // orderBook
         assertEq(address(orderBook.clearingHouse()), address(clearingHouse));
+        assertEq(orderBook.governance(), governance);
 
         // clearingHouse
         assertEq(clearingHouse.isTrustedForwarder(address(forwarder)), true);

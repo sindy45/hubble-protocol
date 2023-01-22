@@ -12,6 +12,8 @@ contract OrderBookTests is Utils {
 
     function setUp() public {
         setupContracts();
+        vm.prank(governance);
+        orderBook.setValidatorStatus(address(this), true);
     }
 
     function testPlaceOrder(uint128 traderKey, int size, uint price) public {
@@ -103,17 +105,17 @@ contract OrderBookTests is Utils {
         addMargin(charlie, stdMath.abs(size) * price / 1e18);
         (IOrderBook.Order memory order, bytes memory signature, bytes32 orderHash) = placeOrder(0, charlieKey, size, price);
 
-        int toLiquidate;
+        uint toLiquidate;
         {
             // liquidate alice
             vm.roll(block.number + 1); // to avoid AMM.liquidation_not_allowed_after_trade
             (,,,uint liquidationThreshold) = amm.positions(alice);
-            toLiquidate = int(Math.min(stdMath.abs(size), liquidationThreshold));
+            toLiquidate = Math.min(stdMath.abs(size), liquidationThreshold);
             orderBook.liquidateAndExecuteOrder(alice, order, signature, toLiquidate);
 
             (,int filledAmount, OrderBook.OrderStatus status) = orderBook.orderInfo(orderHash);
             assertEq(uint(status), 1);
-            assertEq(filledAmount, toLiquidate);
+            assertEq(filledAmount, int(toLiquidate));
         }
 
         {
@@ -124,11 +126,11 @@ contract OrderBookTests is Utils {
             addMargin(peter, stdMath.abs(size) * price / 1e18);
             (order, signature, orderHash) = placeOrder(0, peterKey, -size, price);
 
-            orderBook.liquidateAndExecuteOrder(bob, order, signature, -toLiquidate);
+            orderBook.liquidateAndExecuteOrder(bob, order, signature, toLiquidate);
 
             (,int filledAmount, OrderBook.OrderStatus status) = orderBook.orderInfo(orderHash);
             assertEq(uint(status), 1);
-            assertEq(filledAmount, -toLiquidate);
+            assertEq(filledAmount, -int(toLiquidate));
         }
     }
 }

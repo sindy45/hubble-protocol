@@ -123,7 +123,7 @@ async function setupContracts(options = {}) {
         ]
         clearingHouseProxy = await TransparentUpgradeableProxy.deploy(...constructorArguments, getTxOptions())
     }
-    initArgs = [ 'Hubble', '2.0' ]
+    initArgs = [ 'Hubble', '2.0', governance ]
     deployArgs = [ clearingHouseProxy.address ]
     if (options.genesisProxies) {
         orderBook = await setupGenesisProxy('OrderBook', proxyAdmin, initArgs, deployArgs, orderBookProxy)

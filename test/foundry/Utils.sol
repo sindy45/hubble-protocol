@@ -108,7 +108,7 @@ abstract contract Utils is Test {
         proxy = new TransparentUpgradeableProxy(
             address(obImpl),
             address(proxyAdmin),
-            abi.encodeWithSelector(OrderBook.initialize.selector, "Hubble", "2.0")
+            abi.encodeWithSelector(OrderBook.initialize.selector, "Hubble", "2.0", governance)
         );
         orderBook = OrderBook(address(proxy));
 

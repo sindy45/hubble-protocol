@@ -15,6 +15,7 @@ describe.only('Order Book', function () {
         ;([, alice, bob] = signers)
         ;({ orderBook, usdc, oracle, weth } = await setupContracts())
 
+        await orderBook.setValidatorStatus(signers[0].address, true)
         await addMargin(alice, _1e6.mul(4000))
         await addMargin(bob, _1e6.mul(4000))
     })
@@ -160,14 +161,14 @@ describe.only('Order Book', function () {
 
         // liquidate
         const toLiquidate = size.mul(25e4).div(1e6).add(1) // 1/4th position liquidated
-        await orderBook.liquidateAndExecuteOrder(alice.address, order, signature, toLiquidate)
+        await orderBook.liquidateAndExecuteOrder(alice.address, order, signature, toLiquidate.abs())
         const { size: sizeAfterLiquidation } = await amm.positions(alice.address)
         expect(sizeAfterLiquidation).to.eq(size.sub(toLiquidate))
         let position = await amm.positions(charlie.address)
         expect(position.size).to.eq(size.sub(sizeAfterLiquidation))
 
         const fillAmount = _1e18.div(-10) // 0.1
-        await orderBook.liquidateAndExecuteOrder(alice.address, order, signature, fillAmount)
+        await orderBook.liquidateAndExecuteOrder(alice.address, order, signature, fillAmount.abs())
         const { size: sizeAfter2ndLiquidation } = await amm.positions(alice.address)
         expect(sizeAfter2ndLiquidation).to.eq(sizeAfterLiquidation.sub(fillAmount)) // only fill amount liquidated
         position = await amm.positions(charlie.address)
