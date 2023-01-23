@@ -14,7 +14,6 @@ import "../../contracts/HubbleReferral.sol";
 import "../../contracts/MinimalForwarder.sol";
 import "../../contracts/Registry.sol";
 import "../../contracts/HubbleViewer.sol";
-import "../../contracts/LiquidationPriceViewer.sol";
 import "../../contracts/tests/TestOracle.sol";
 import "../../contracts/tests/ERC20Mintable.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
@@ -34,10 +33,11 @@ abstract contract Utils is Test {
     HubbleReferral public hubbleReferral;
     Registry public registry;
     HubbleViewer public hubbleViewer;
-    LiquidationPriceViewer public liquidationPriceViewer;
     RestrictedErc20 public wavax;
     address public governance = makeAddr("governance");
-    uint public tradeFee = 0.0005 * 1e6; // 0.05%
+    address public feeSink = makeAddr("feeSink");
+    uint public makerFee = 0.0005 * 1e6; // 0.05%
+    uint public takerFee = 0.0005 * 1e6; // 0.05%
 
     uint public aliceKey;
     address public alice;
@@ -116,28 +116,30 @@ abstract contract Utils is Test {
         proxyAdmin.upgradeAndCall(clProxy, address(clImpl), abi.encodeWithSelector(
             ClearingHouse.initialize.selector,
             governance,
-            address(insuranceFund),
+            feeSink,
             address(marginAccount),
             address(orderBook),
             address(husd),
-            address(hubbleReferral),
-            0.1 * 1e6, // 10% maintenance margin, 10x
-            0.2 * 1e6, // 20% minimum allowable margin, 5x
-            tradeFee,
-            50, // referralShare = .5bps
-            100, // feeDiscount = 1bps
-            0.05 * 1e6 // liquidationPenalty = 5%
+            address(hubbleReferral)
         ));
         clearingHouse = ClearingHouse(address(clProxy));
 
         registry = new Registry(address(oracle), address(clearingHouse), address(insuranceFund), address(marginAccount), address(husd));
 
         hubbleViewer = new HubbleViewer(address(clearingHouse), address(marginAccount), address(registry));
-        liquidationPriceViewer = new LiquidationPriceViewer(address(hubbleViewer));
 
         vm.startPrank(governance);
         marginAccount.syncDeps(address(registry), 5e4); // liquidationIncentive = 5% = .05 scaled 6
         insuranceFund.syncDeps(address(registry));
+        clearingHouse.setParams(
+            0.1 * 1e6, // 10% maintenance margin, 10x
+            0.2 * 1e6, // 20% minimum allowable margin, 5x
+            takerFee,
+            makerFee,
+            50, // referralShare = .5bps
+            100, // feeDiscount = 1bps
+            0.05 * 1e6 // liquidationPenalty = 5%
+        );
         vm.stopPrank();
 
         wavax = setupRestrictedTestToken('Hubble Avax', 'hWAVAX', 18);

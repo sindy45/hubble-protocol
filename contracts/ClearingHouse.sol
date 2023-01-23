@@ -5,7 +5,7 @@ pragma solidity 0.8.9;
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 import { HubbleBase } from "./legos/HubbleBase.sol";
-import { IAMM, IInsuranceFund, IMarginAccount, IClearingHouse, IHubbleReferral, IOrderBook } from "./Interfaces.sol";
+import { IAMM, IMarginAccount, IClearingHouse, IHubbleReferral, IOrderBook } from "./Interfaces.sol";
 import { VUSD } from "./VUSD.sol";
 
 contract ClearingHouse is IClearingHouse, HubbleBase {
@@ -20,14 +20,15 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     uint256 constant PRECISION = 1e6;
 
     int256 override public maintenanceMargin;
-    uint override public tradeFee;
+    uint override public takerFee;
+    uint override public makerFee;
     uint override public liquidationPenalty;
     int256 public minAllowableMargin;
     uint public referralShare;
     uint public tradingFeeDiscount;
 
     VUSD public vusd;
-    IInsuranceFund override public insuranceFund;
+    address override public feeSink;
     IMarginAccount public marginAccount;
     IOrderBook public orderBook;
     IAMM[] override public amms;
@@ -46,36 +47,22 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
 
     function initialize(
         address _governance,
-        address _insuranceFund,
+        address _feeSink,
         address _marginAccount,
         address _orderBook,
         address _vusd,
-        address _hubbleReferral,
-        int256 _maintenanceMargin,
-        int256 _minAllowableMargin,
-        uint _tradeFee,
-        uint _referralShare,
-        uint _tradingFeeDiscount,
-        uint _liquidationPenalty
+        address _hubbleReferral
     ) external
       // commenting this out only for a bit for testing because it doesn't let us initialize repeatedly unless we run a fresh subnet
       // initializer
     {
         _setGovernace(_governance);
 
-        insuranceFund = IInsuranceFund(_insuranceFund);
+        feeSink = _feeSink;
         marginAccount = IMarginAccount(_marginAccount);
         orderBook = IOrderBook(_orderBook);
         vusd = VUSD(_vusd);
         hubbleReferral = IHubbleReferral(_hubbleReferral);
-
-        require(_maintenanceMargin > 0, "_maintenanceMargin < 0");
-        maintenanceMargin = _maintenanceMargin;
-        minAllowableMargin = _minAllowableMargin;
-        tradeFee = _tradeFee;
-        referralShare = _referralShare;
-        tradingFeeDiscount = _tradingFeeDiscount;
-        liquidationPenalty = _liquidationPenalty;
     }
 
     /* ****************** */
@@ -86,7 +73,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     * @notice Open/Modify/Close Position
     * @param order Order to be executed
     */
-    function openPosition(IOrderBook.Order memory order, int256 fillAmount, uint256 fulfillPrice) external onlyOrderBook {
+    function openPosition(IOrderBook.Order memory order, int256 fillAmount, uint256 fulfillPrice, bool isMakerOrder) external onlyOrderBook {
         require(order.baseAssetQuantity != 0 && fillAmount != 0, "CH: baseAssetQuantity == 0");
         updatePositions(order.trader); // adjust funding payments
         uint quoteAsset = abs(fillAmount).toUint256() * fulfillPrice / 1e18;
@@ -97,8 +84,8 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
             uint openNotional
         ) = amms[order.ammIndex].openPosition(order, fillAmount, fulfillPrice);
 
-        uint _tradeFee = _chargeFeeAndRealizePnL(order.trader, realizedPnl, quoteAsset, false /* isLiquidation */);
-        marginAccount.transferOutVusd(address(insuranceFund), _tradeFee);
+        uint _fee = _chargeFeeAndRealizePnL(order.trader, realizedPnl, quoteAsset, false /* isLiquidation */, isMakerOrder);
+        marginAccount.transferOutVusd(feeSink, _fee);
 
         if (isPositionIncreased) {
             assertMarginRequirement(order.trader);
@@ -143,16 +130,20 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     /*    Liquidations    */
     /* ****************** */
 
-    function liquidate(address trader, uint ammIndex, uint price, int256 toLiquidate, address liquidator) override external onlyOrderBook {
+    function liquidate(address trader, uint ammIndex, uint price, int256 toLiquidate)
+        override
+        external
+        onlyOrderBook
+    {
         updatePositions(trader);
-        _liquidateTakerSingleAmm(trader, ammIndex, price, toLiquidate, liquidator);
+        _liquidateSingleAmm(trader, ammIndex, price, toLiquidate);
     }
 
     /* ********************* */
     /* Liquidations Internal */
     /* ********************* */
 
-    function _liquidateTakerSingleAmm(address trader, uint ammIndex, uint price, int toLiquidate, address liquidator) internal {
+    function _liquidateSingleAmm(address trader, uint ammIndex, uint price, int toLiquidate) internal {
         _assertLiquidationRequirement(trader);
         (
             int realizedPnl,
@@ -162,25 +153,16 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         ) = amms[ammIndex].liquidatePosition(trader, price, toLiquidate);
         emit PositionLiquidated(trader, ammIndex, toLiquidate, quoteAsset, realizedPnl, size, openNotional, _blockTimestamp());
 
-        _disperseLiquidationFee(
-            _chargeFeeAndRealizePnL(trader, realizedPnl, quoteAsset, true /* isLiquidation */),
-            liquidator
-        );
-    }
-
-    function _disperseLiquidationFee(uint liquidationFee, address liquidator) internal {
-        if (liquidationFee > 0) {
-            uint toInsurance = liquidationFee / 2;
-            marginAccount.transferOutVusd(address(insuranceFund), toInsurance);
-            marginAccount.transferOutVusd(liquidator, liquidationFee - toInsurance);
-        }
+        uint liquidationFee = _chargeFeeAndRealizePnL(trader, realizedPnl, quoteAsset, true /* isLiquidation */, false /* isMakerOrder */);
+        marginAccount.transferOutVusd(feeSink, liquidationFee);
     }
 
     function _chargeFeeAndRealizePnL(
         address trader,
         int realizedPnl,
         uint quoteAsset,
-        bool isLiquidation
+        bool isLiquidation,
+        bool isMakerOrder
     )
         internal
         returns (uint fee)
@@ -190,7 +172,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
             fee = _calculateLiquidationPenalty(quoteAsset);
             marginCharge = realizedPnl - fee.toInt256();
         } else {
-            fee = _calculateTradeFee(quoteAsset);
+            fee = _calculateTradeFee(quoteAsset, isMakerOrder);
 
             address referrer = hubbleReferral.getTraderRefereeInfo(trader);
             uint referralBonus;
@@ -311,8 +293,11 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         require(calcMarginFraction(trader, false, Mode.Maintenance_Margin) < maintenanceMargin, "CH: Above Maintenance Margin");
     }
 
-    function _calculateTradeFee(uint quoteAsset) internal view returns (uint) {
-        return quoteAsset * tradeFee / PRECISION;
+    function _calculateTradeFee(uint quoteAsset, bool isMakerOrder) internal view returns (uint) {
+        if (isMakerOrder) {
+            return quoteAsset * makerFee / PRECISION;
+        }
+        return quoteAsset * takerFee / PRECISION;
     }
 
     function _calculateLiquidationPenalty(uint quoteAsset) internal view returns (uint) {
@@ -350,16 +335,19 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     function setParams(
         int _maintenanceMargin,
         int _minAllowableMargin,
-        uint _tradeFee,
-        uint _liquidationPenalty,
+        uint _takerFee,
+        uint _makerFee,
         uint _referralShare,
-        uint _tradingFeeDiscount
+        uint _tradingFeeDiscount,
+        uint _liquidationPenalty
     ) external onlyGovernance {
+        require(_maintenanceMargin > 0, "_maintenanceMargin < 0");
         maintenanceMargin = _maintenanceMargin;
         minAllowableMargin = _minAllowableMargin;
-        tradeFee = _tradeFee;
-        liquidationPenalty = _liquidationPenalty;
+        takerFee = _takerFee;
+        makerFee = _makerFee;
         referralShare = _referralShare;
         tradingFeeDiscount = _tradingFeeDiscount;
+        liquidationPenalty = _liquidationPenalty;
     }
 }

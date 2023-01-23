@@ -27,6 +27,13 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
     mapping(bytes32 => OrderInfo) public orderInfo;
     mapping(address => bool) isValidator;
 
+    // to avoid stack too deep
+    struct MatchInfo {
+        bytes32 orderHash;
+        uint blockPlaced;
+        bool isMakerOrder;
+    }
+
     uint256[50] private __gap;
 
     modifier onlyValidator {
@@ -68,21 +75,33 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         require(orders[1].baseAssetQuantity < 0, "OB_order_1_is_not_short");
         require(orders[0].price /* buy */ >= orders[1].price /* sell */, "OB_orders_do_not_match");
         require(orders[0].ammIndex == orders[1].ammIndex, "OB_orders_for_different_amms");
-        (bytes32 orderHash0, uint blockPlaced0) = _verifyOrder(orders[0], signatures[0], fillAmount);
-        (bytes32 orderHash1, uint blockPlaced1) = _verifyOrder(orders[1], signatures[1], -fillAmount);
+
+        MatchInfo memory orderInfo_0 = MatchInfo(bytes32(0), 0, false);
+        MatchInfo memory orderInfo_1 = MatchInfo(bytes32(0), 0, false);
+        (orderInfo_0.orderHash, orderInfo_0.blockPlaced) = _verifyOrder(orders[0], signatures[0], fillAmount);
+        (orderInfo_1.orderHash, orderInfo_1.blockPlaced) = _verifyOrder(orders[1], signatures[1], -fillAmount);
         // @todo min fillAmount and min order.baseAsset check
 
         // Effects
-        _updateOrder(orderHash0, fillAmount, orders[0].baseAssetQuantity);
-        _updateOrder(orderHash1, -fillAmount, orders[1].baseAssetQuantity);
+        _updateOrder(orderInfo_0.orderHash, fillAmount, orders[0].baseAssetQuantity);
+        _updateOrder(orderInfo_1.orderHash, -fillAmount, orders[1].baseAssetQuantity);
 
         // Interactions
-        uint fulfillPrice = orders[0].price; // if prices are equal or long blockPlaced <= short blockPlaced
-        if (orders[0].price != orders[1].price && blockPlaced0 > blockPlaced1) {
+        uint fulfillPrice;
+        if (orderInfo_0.blockPlaced < orderInfo_1.blockPlaced) {
+            orderInfo_0.isMakerOrder = true;
+            fulfillPrice = orders[0].price;
+        } else if (orderInfo_0.blockPlaced > orderInfo_1.blockPlaced) {
+            orderInfo_1.isMakerOrder = true;
+            fulfillPrice = orders[1].price;
+        } else { // both orders are placed in the same block, not possible to determine what came first in solidity
+            orderInfo_0.isMakerOrder = true;
+            orderInfo_1.isMakerOrder = true;
+            // Bulls (Longs) are our friends. We give them a favorable price in this corner case
             fulfillPrice = orders[1].price;
         }
-        clearingHouse.openPosition(orders[0], fillAmount, fulfillPrice);
-        clearingHouse.openPosition(orders[1], -fillAmount, fulfillPrice);
+        clearingHouse.openPosition(orders[0], fillAmount, fulfillPrice, orderInfo_0.isMakerOrder);
+        clearingHouse.openPosition(orders[1], -fillAmount, fulfillPrice, orderInfo_1.isMakerOrder);
 
         emit OrdersMatched(orders, signatures, fillAmount.toUint256(), msg.sender);
     }
@@ -137,12 +156,12 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         if (order.baseAssetQuantity < 0) { // order is short, so short position is being liquidated
             fillAmount *= -1 ;
         }
-        clearingHouse.liquidate(trader, order.ammIndex, order.price, fillAmount, msg.sender);
+        clearingHouse.liquidate(trader, order.ammIndex, order.price, fillAmount);
 
         (bytes32 orderHash,) = _verifyOrder(order, signature, fillAmount);
         _updateOrder(orderHash, fillAmount, order.baseAssetQuantity);
 
-        clearingHouse.openPosition(order, fillAmount, order.price);
+        clearingHouse.openPosition(order, fillAmount, order.price, true /* isMakerOrder */);
         emit LiquidationOrderMatched(trader, order, signature, toLiquidate, msg.sender);
     }
 

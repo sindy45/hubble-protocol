@@ -85,7 +85,7 @@ describe.only('Order Book', function () {
 
         order2Hash = await orderBook.getOrderHash(longOrder)
 
-        await expect(tx).to.emit(orderBook, "OrdersMatched")
+        await expect(tx).to.emit(orderBook, 'OrdersMatched')
         const event = await filterEvent(tx, 'OrdersMatched')
         expect(event.args.orders.slice(0)).to.deep.eq([ Object.values(longOrder), Object.values(shortOrder) ])
         expect(event.args.signatures).to.deep.eq([ signature2, signature1])

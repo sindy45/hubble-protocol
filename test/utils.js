@@ -143,12 +143,6 @@ async function setupContracts(options = {}) {
         orderBook.address,
         vusd.address,
         hubbleReferral.address,
-        0.1 * 1e6, // 10% maintenance margin, 10x
-        0.2 * 1e6, // 20% minimum allowable margin, 5x
-        options.tradeFee,
-        50, // referralShare = .5bps
-        100, // feeDiscount = 1bps
-        0.05 * 1e6, // liquidationPenalty = 5%
     ]
     deployArgs = [ forwarder.address ]
     if (options.genesisProxies) {
@@ -162,6 +156,15 @@ async function setupContracts(options = {}) {
             clearingHouseProxy
         )
     }
+    await clearingHouse.setParams(
+        0.1 * 1e6, // 10% maintenance margin, 10x
+        0.2 * 1e6, // 20% minimum allowable margin, 5x
+        options.tradeFee,
+        options.tradeFee,
+        50, // referralShare = .5bps
+        100, // feeDiscount = 1bps
+        0.05 * 1e6, // liquidationPenalty = 5%
+    )
 
     await vusd.grantRole(ethers.utils.id('MINTER_ROLE'), marginAccount.address, getTxOptions())
 
@@ -174,9 +177,6 @@ async function setupContracts(options = {}) {
     const HubbleViewer = await ethers.getContractFactory('HubbleViewer')
     hubbleViewer = await HubbleViewer.deploy(clearingHouse.address, marginAccount.address, registry.address, getTxOptions())
 
-    const LiquidationPriceViewer = await ethers.getContractFactory('LiquidationPriceViewer')
-    liquidationPriceViewer = await LiquidationPriceViewer.deploy(hubbleViewer.address, getTxOptions())
-
     const Leaderboard = await ethers.getContractFactory('Leaderboard')
     leaderboard = await Leaderboard.deploy(hubbleViewer.address, getTxOptions())
 
@@ -187,7 +187,6 @@ async function setupContracts(options = {}) {
         clearingHouse,
         orderBook,
         hubbleViewer,
-        liquidationPriceViewer,
         hubbleReferral,
         vusd,
         usdc,

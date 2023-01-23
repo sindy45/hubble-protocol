@@ -35,14 +35,15 @@ contract DeployContracts is Utils {
         // clearingHouse
         assertEq(clearingHouse.isTrustedForwarder(address(forwarder)), true);
         assertEq(clearingHouse.governance(), governance);
-        assertEq(address(clearingHouse.insuranceFund()), address(insuranceFund));
+        assertEq(clearingHouse.feeSink(), feeSink);
         assertEq(address(clearingHouse.marginAccount()), address(marginAccount));
         assertEq(address(clearingHouse.orderBook()), address(orderBook));
         assertEq(address(clearingHouse.vusd()), address(husd));
         assertEq(address(clearingHouse.hubbleReferral()), address(hubbleReferral));
         assertEq(clearingHouse.maintenanceMargin(), 1e5);
         assertEq(clearingHouse.minAllowableMargin(), 2e5);
-        assertEq(clearingHouse.tradeFee(), 500);
+        assertEq(clearingHouse.takerFee(), 500);
+        assertEq(clearingHouse.makerFee(), 500);
         assertEq(clearingHouse.referralShare(), 50);
         assertEq(clearingHouse.tradingFeeDiscount(), 100);
         assertEq(clearingHouse.liquidationPenalty(), 5e4);
