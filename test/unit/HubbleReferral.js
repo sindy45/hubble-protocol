@@ -5,7 +5,7 @@ const {
     addMargin,
     getTradeDetails
 } = utils
-const { constants: { _1e6, ZERO, _1e18 } } = utils
+const { constants: { _1e6, ZERO, _1e18, feeSink } } = utils
 const TRADE_FEE = 0.000567 * _1e6
 
 describe('HubbleReferral Unit Tests', function() {
@@ -58,13 +58,14 @@ describe('HubbleReferral Unit Tests', function() {
     })
 
     it('referrer and trader referral benefits', async function() {
+        const feeSinkBalance = await vusd.balanceOf(feeSink)
         // add margin
         const margin = _1e6.mul(2000)
         await addMargin(bob, margin)
         const baseAssetQuantity = _1e18.mul(-5)
 
         expect(await marginAccount.getNormalizedMargin(alice)).to.eq(ZERO)
-        const tx = await clearingHouse.connect(bob).openPosition(0, baseAssetQuantity, 0)
+        const tx = await clearingHouse.connect(bob).openPosition2(0, baseAssetQuantity, 0)
         ;({ quoteAsset, fee } = await getTradeDetails(tx, TRADE_FEE))
         // 10% of the the tradeFee is added to the margin of the referrer
         const referralBonus = quoteAsset.mul(50).div(_1e6)
@@ -74,7 +75,6 @@ describe('HubbleReferral Unit Tests', function() {
         const feeAfterDiscount = fee.sub(discount)
         expect(await marginAccount.getNormalizedMargin(bob.address)).to.eq(
             margin.sub(feeAfterDiscount))
-        // insurance fund gets the remaining fee
-        expect(await vusd.balanceOf(insuranceFund.address)).to.eq(feeAfterDiscount.sub(referralBonus))
+        expect(await vusd.balanceOf(feeSink)).to.eq(feeAfterDiscount.sub(referralBonus).add(feeSinkBalance))
     })
 })

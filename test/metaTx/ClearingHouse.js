@@ -31,7 +31,7 @@ describe('Clearing House Meta Txs', async function() {
         const baseAssetQuantity = _1e18.mul(5)
         amount = _1e6.mul(5025) // ~5x leverage
 
-        const data = clearingHouse.interface.encodeFunctionData('openPosition', [ 0, baseAssetQuantity, amount ])
+        const data = clearingHouse.interface.encodeFunctionData('openPosition2', [ 0, baseAssetQuantity, amount ])
         const { sign, req } = await signTransaction(signers[0], clearingHouse, data, forwarder)
         expect(await forwarder.verify(req, sign)).to.equal(true);
 
@@ -40,23 +40,20 @@ describe('Clearing House Meta Txs', async function() {
         const quoteAsset = positionModifiedEvent.args.quoteAsset
         const fee = quoteAsset.mul(tradeFee).div(_1e6)
 
-        const { notionalPosition, unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(alice)
-        expect(notionalPosition).gt(ZERO)
-        expect(notionalPosition).lt(quoteAsset)
-        expect(unrealizedPnl).lt(ZERO)
         await assertions(contracts, alice, {
             size: baseAssetQuantity,
             openNotional: quoteAsset,
+            notionalPosition: quoteAsset,
+            unrealizedPnl: ZERO,
             margin: margin.sub(fee)
         })
         expect(await amm.longOpenInterestNotional()).to.eq(baseAssetQuantity)
         expect(await amm.shortOpenInterestNotional()).to.eq(ZERO)
-        expect((await amm.lastPrice()).gt(_1e6.mul(1000))).to.be.true // rate increases after long
 
         const [ pos ] = await hubbleViewer.userPositions(alice)
         expect(pos.size).to.eq(baseAssetQuantity)
         expect(pos.openNotional).to.eq(quoteAsset)
-        expect(pos.unrealizedPnl).to.lt(ZERO)
+        expect(pos.unrealizedPnl).to.eq(ZERO)
         expect(pos.avgOpen).to.eq(quoteAsset.mul(_1e18).div(baseAssetQuantity))
     })
 
@@ -64,7 +61,7 @@ describe('Clearing House Meta Txs', async function() {
         const baseAssetQuantity = _1e18.mul(-5)
         amount = _1e6.mul(4975)
 
-        const data = clearingHouse.interface.encodeFunctionData('openPosition', [ 0, baseAssetQuantity, amount ])
+        const data = clearingHouse.interface.encodeFunctionData('openPosition2', [ 0, baseAssetQuantity, amount ])
         const { sign, req } = await signTransaction(signers[0], clearingHouse, data, forwarder)
         expect(await forwarder.verify(req, sign)).to.equal(true);
 
@@ -76,22 +73,20 @@ describe('Clearing House Meta Txs', async function() {
         // this asserts that short was executed at a price >= amount
         expect(quoteAsset.gte(amount)).to.be.true
 
-        const { notionalPosition, unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(alice)
-        expect(notionalPosition).gt(quoteAsset)
-        expect(unrealizedPnl).lt(ZERO)
         await assertions(contracts, alice, {
             size: baseAssetQuantity,
             openNotional: quoteAsset,
+            notionalPosition: quoteAsset,
+            unrealizedPnl: ZERO,
             margin: margin.sub(fee)
         })
         expect(await amm.longOpenInterestNotional()).to.eq(ZERO)
         expect(await amm.shortOpenInterestNotional()).to.eq(baseAssetQuantity.abs())
-        expect((await amm.lastPrice()).lt(_1e6.mul(1000))).to.be.true // rate decreases after short
 
         const [ pos ] = await hubbleViewer.userPositions(alice)
         expect(pos.size).to.eq(baseAssetQuantity)
         expect(pos.openNotional).to.eq(quoteAsset)
-        expect(pos.unrealizedPnl).to.lt(ZERO)
+        expect(pos.unrealizedPnl).to.eq(ZERO)
         expect(pos.avgOpen).to.eq(quoteAsset.mul(_1e18).div(baseAssetQuantity.mul(-1)))
     })
 
@@ -99,16 +94,19 @@ describe('Clearing House Meta Txs', async function() {
         const baseAssetQuantity = _1e18.mul(-5)
         amount = _1e6.mul(4975)
 
-        const data = clearingHouse.interface.encodeFunctionData('openPosition', [ 0, baseAssetQuantity, amount ])
+        const data = clearingHouse.interface.encodeFunctionData('openPosition2', [ 0, baseAssetQuantity, amount ])
         const { sign, req } = await signTransaction(signers[0], clearingHouse, data, forwarder)
         expect(await forwarder.verify(req, sign)).to.equal(true);
 
-        await clearingHouse.openPosition(0, baseAssetQuantity, amount)
+        await clearingHouse.openPosition2(0, baseAssetQuantity, amount)
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.true
 
-        const bob = signers[1]
-        await addMargin(bob, _1e6.mul(20000))
-        await clearingHouse.connect(bob).openPosition(0, _1e18.mul(70), ethers.constants.MaxUint256)
+        // bob increases the price
+        bob = signers[1]
+        const base = _1e18.mul(15)
+        const price = _1e6.mul(1130)
+        await addMargin(bob, base.mul(price).div(_1e18))
+        await clearingHouse.connect(bob).openPosition2(0, base, base.mul(price).div(_1e18))
 
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
         try {

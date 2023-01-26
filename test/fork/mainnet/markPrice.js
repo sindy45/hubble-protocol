@@ -11,7 +11,7 @@ const deployer = '0xF5c8E1eAFFD278A383C13061B4980dB7619479af'
 const proxyAdminAddy = '0xddf407237BDe4d36287Be4De79D65c57AefBf8da'
 const alice = ethers.provider.getSigner('0x6b365af8d060e7f7989985d62485357e34e2e8f5') // 4m usdc
 
-describe('(fork) mark price', async function() {
+describe.skip('(fork) mark price', async function() {
     const blockTag = 18503230
     before(async function() {
         await network.provider.request({

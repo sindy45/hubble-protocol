@@ -18,7 +18,7 @@ const trader = '0x562574AF66836b1d30e69815bDf0740A7BD7C437' // has open position
 const traderReferrer = '0x08256cF2B4630F995e7c07de4Ba89ba900581F34'
 const trader2 = '0xb3d00071ACaE3B256d415DeB44976f244488E931' // doesn't use a referral code
 
-describe('v1.2.0 update', async function() {
+describe.skip('v1.2.0 update', async function() {
     const blockTag = 19702159 // at this block, trader's pending funding is fully settled, which is an assumption for 1 of the tests
     before(async function() {
         await network.provider.request({

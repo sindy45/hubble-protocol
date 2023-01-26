@@ -8,6 +8,7 @@ const _1e6 = BigNumber.from(10).pow(6)
 const _1e8 = BigNumber.from(10).pow(8)
 const _1e12 = BigNumber.from(10).pow(12)
 const _1e18 = ethers.constants.WeiPerEther
+const feeSink = new ethers.Wallet.createRandom()
 
 const DEFAULT_TRADE_FEE = 0.0005 * 1e6 /* 0.05% */
 const OBGenesisProxyAddress = '0x0300000000000000000000000000000000000069'
@@ -29,7 +30,8 @@ async function setupContracts(options = {}) {
             governance: signers[0].address,
             setupAMM: true,
             testOracle: true,
-            unbondRoundOff: 86400, // 1 day
+            mockOrderBook: true,
+            testClearingHouse: true
         },
         options
     )
@@ -138,18 +140,23 @@ async function setupContracts(options = {}) {
 
     initArgs = [
         governance,
-        insuranceFund.address,
+        feeSink.address,
         marginAccount.address,
         orderBook.address,
         vusd.address,
         hubbleReferral.address,
     ]
+
+    if (options.mockOrderBook) {
+        initArgs[3] = signers[0].address
+    }
+
     deployArgs = [ forwarder.address ]
     if (options.genesisProxies) {
         clearingHouse = await setupGenesisProxy('ClearingHouse', proxyAdmin, initArgs, deployArgs, clearingHouseProxy)
     } else {
         clearingHouse = await setupUpgradeableProxy(
-            'ClearingHouse',
+            options.testClearingHouse ? 'TestClearingHouse' : 'ClearingHouse',
             proxyAdmin.address,
             initArgs,
             deployArgs,
@@ -277,12 +284,11 @@ async function setupAmm(governance, args, ammOptions, slowMode) {
         {
             index: 0,
             initialRate: 1000, // for ETH perp
-            fee: 10000000, // 0.1%
-            unbondPeriod: 3 * 86400 // 3 days
+            whitelist: true
         },
         ammOptions
     )
-    const { initialRate, testAmm } = options
+    const { initialRate, testAmm, whitelist  } = options
 
     const ammImpl = await AMM.deploy(clearingHouse.address, getTxOptions())
     let constructorArguments = [
@@ -306,7 +312,10 @@ async function setupAmm(governance, args, ammOptions, slowMode) {
         await oracle.setUnderlyingPrice(underlyingAsset, ethers.utils.parseUnits(initialRate.toString(), 6), getTxOptions())
     }
 
-    await clearingHouse.whitelistAmm(amm.address, getTxOptions())
+    if (whitelist) {
+        await clearingHouse.whitelistAmm(amm.address, getTxOptions())
+    }
+
     return { amm }
 }
 
@@ -440,6 +449,8 @@ async function impersonateAccount(address) {
         method: "hardhat_impersonateAccount",
         params: [address],
     });
+
+    return ethers.provider.getSigner(address)
 }
 
 async function stopImpersonateAccount(address) {
@@ -521,8 +532,8 @@ async function signTransaction(signer, to, data, forwarder, value = 0, gas = 100
 }
 
 async function assertBounds(v, lowerBound, upperBound) {
-    if (lowerBound) expect(v).gt(lowerBound)
-    if (upperBound) expect(v).lt(upperBound)
+    if (lowerBound) expect(v).gte(lowerBound)
+    if (upperBound) expect(v).lte(upperBound)
 }
 
 // doesn't print inactive AMMs
@@ -597,10 +608,11 @@ function setDefaultClearingHouseParams(clearingHouse) {
     return clearingHouse.setParams(
         1e5, // maintenance margin
         1e5, // minimum allowable margin
-        5e2, // tradeFee
-        5e4, // liquidationPenalty
+        5e2, // takerFee
+        5e2, // makerFee
         50, // referralShare = .5bps
         100, // feeDiscount = 1bps
+        5e4, // liquidationPenalty
     )
 }
 
@@ -663,7 +675,7 @@ function calcMakerLiquidationPrice(liquidationPriceData) {
 }
 
 module.exports = {
-    constants: { _1e6, _1e8, _1e12, _1e18, ZERO },
+    constants: { _1e6, _1e8, _1e12, _1e18, ZERO, feeSink: feeSink.address },
     BigNumber,
     txOptions,
     verification,

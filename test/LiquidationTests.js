@@ -2,7 +2,7 @@ const { expect } = require('chai');
 const { BigNumber } = require('ethers')
 
 const {
-    constants: { _1e6, _1e18, ZERO },
+    constants: { _1e6, _1e18, ZERO, feeSink },
     getTradeDetails,
     setupContracts,
     setupRestrictedTestToken,
@@ -50,11 +50,11 @@ describe('Liquidation Tests', async function() {
         // being lazy, adding a pausability test here
         await clearingHouse.pause()
         await expect(
-            clearingHouse.openPosition(0, _1e18.mul(-5), 0)
+            clearingHouse.openPosition2(0, _1e18.mul(-5), 0)
         ).to.be.revertedWith('Pausable: paused')
         await clearingHouse.unpause()
 
-        let tx = await clearingHouse.openPosition(0, _1e18.mul(-5), 0)
+        let tx = await clearingHouse.openPosition2(0, _1e18.mul(-5), 0)
         ;({ fee: tradeFee } = await getTradeDetails(tx))
         expect((await marginAccount.isLiquidatable(alice, true))[0]).to.eq(1)
 
@@ -64,8 +64,11 @@ describe('Liquidation Tests', async function() {
     })
 
     it('bob makes a counter-trade', async function() {
-        await addMargin(bob, _1e6.mul(20000))
-        await clearingHouse.connect(bob).openPosition(0, _1e18.mul(70), ethers.constants.MaxUint256)
+        const base = _1e18.mul(15)
+        oraclePrice = _1e6.mul(1100)
+        await oracle.setUnderlyingPrice(weth.address, oraclePrice)
+        await addMargin(bob, base.mul(oraclePrice).div(_1e18))
+        await clearingHouse.connect(bob).openPosition2(0, base, base.mul(oraclePrice).div(_1e18))
     })
 
     it('alice\'s position is liquidated', async function() {
@@ -79,37 +82,33 @@ describe('Liquidation Tests', async function() {
         // being lazy, adding a pausability test here
         await clearingHouse.pause()
         await expect(
-            clearingHouse.connect(liquidator1).liquidateTaker(alice)
+            clearingHouse.connect(liquidator1).liquidate2(alice)
         ).to.be.revertedWith('Pausable: paused')
         await clearingHouse.unpause()
 
-        await clearingHouse.connect(liquidator1).liquidateTaker(alice)
+        const feeSinkBalance = await vusd.balanceOf(feeSink)
+        await clearingHouse.connect(liquidator1).liquidate2(alice)
 
         const liquidationPenalty = notionalPosition.mul(5e4).div(_1e6)
         expect(await marginAccount.margin(0, alice)).to.eq(
             unrealizedPnl.sub(liquidationPenalty).sub(tradeFee)
         )
-
-        const toInsurace = liquidationPenalty.div(2)
-        expect(
-            (await vusd.balanceOf(insuranceFund.address)).sub(ifVusdBal)
-        ).to.eq(toInsurace)
-        expect(
-            await vusd.balanceOf(liquidator1.address)
-        ).to.eq(liquidationPenalty.sub(toInsurace))
+        expect(await vusd.balanceOf(feeSink)).to.eq(liquidationPenalty.add(feeSinkBalance))
     })
 
     it('alice is in liquidation zone B', async function() {
+        oraclePrice = _1e6.mul(900)
+        await oracle.setUnderlyingPrice(weth.address, oraclePrice)
         const { weighted, spot } = await marginAccount.weightedAndSpotCollateral(alice)
         expect(weighted.lt(ZERO)).to.be.true
         expect(spot.gt(ZERO)).to.be.true
         ;({ _isLiquidatable, incentivePerDollar } = await marginAccount.isLiquidatable(alice, true))
-        expect(incentivePerDollar.toNumber() / 1e6).to.eq(1.032325)
+        expect(incentivePerDollar.toNumber() / 1e6).to.eq(1.05)
         expect(_isLiquidatable).to.eq(0) // IS_LIQUIDATABLE
     })
 
     it('liquidateExactSeize (incentivePerDollar = 5%)', async function() {
-        // the alice's debt is ~ -968, whereas 1 eth at weight = 0.7 and price = 1k allows for $700 margin
+        // the alice's debt is ~ -777, whereas 1 eth at weight = 0.7 and price = 1k allows for $700 margin
         const seizeAmount = _1e18.mul(2).div(10) // 0.2 ETH
 
         // .2 * 1000 / (1 + .05) = ~190
@@ -123,7 +122,7 @@ describe('Liquidation Tests', async function() {
     })
 
     it('liquidateFlexible (liquidateExactRepay branch, incentivePerDollar = 5%)', async function() {
-        // the vusd margin is -774.x, whereas .4 eth at weight = 0.7 and price = 2k allows for $560 (= .4*.7*2000) margin
+        // the vusd margin is -606.x, whereas .8 eth at weight = 0.7 and price = 1k allows for $560 (= .8*.7*1000) margin
         const [
             { weighted, spot },
             { _isLiquidatable, repayAmount, incentivePerDollar },
@@ -133,10 +132,10 @@ describe('Liquidation Tests', async function() {
             marginAccount.isLiquidatable(alice, true),
             marginAccount.margin(1, alice)
         ])
-        expect(parseInt(weighted.toNumber() / 1e6)).to.eq(-214) // .4 * 2000 * .7 - 774.x
-        expect(parseInt(spot.toNumber() / 1e6)).to.eq(25) // .4 * 2000 - 774.x
+        expect(parseInt(weighted.toNumber() / 1e6)).to.eq(-102) // .8 * 900 * .7 - 606.x
+        expect(parseInt(spot.toNumber() / 1e6)).to.eq(113) // .8 * 900 - 606.x
         expect(_isLiquidatable).to.eq(0) // IS_LIQUIDATABLE
-        expect(incentivePerDollar.toNumber() / 1e6).to.eq(1.032326) // max incentive was (spot + repayAmount) / repayAmount
+        expect(incentivePerDollar.toNumber() / 1e6).to.eq(1.05) // max incentive was (spot + repayAmount) / repayAmount
 
         await vusd.connect(admin).mint(liquidator3.address, repayAmount)
         await vusd.connect(liquidator3).approve(marginAccount.address, repayAmount)
@@ -203,13 +202,15 @@ describe('Multi-collateral Liquidation Tests', async function() {
         expect((await marginAccount.isLiquidatable(alice, true))[0]).to.eq(2) // NO_DEBT
 
         // alice makes a trade
-        let tx = await clearingHouse.openPosition(0, _1e18.mul(-5), 0)
+        let tx = await clearingHouse.openPosition2(0, _1e18.mul(-5), 0)
         ;({ fee: tradeFee } = await getTradeDetails(tx))
         expect((await marginAccount.isLiquidatable(alice, true))[0]).to.eq(1) // OPEN_POSITIONS
 
-        // bob makes a counter-trade
-        await addMargin(bob, _1e6.mul(20000))
-        await clearingHouse.connect(bob).openPosition(0, _1e18.mul(70), ethers.constants.MaxUint256)
+        // bob increases the price
+        const base = _1e18.mul(15)
+        const price = _1e6.mul(1130)
+        await addMargin(bob, base.mul(price).div(_1e18))
+        await clearingHouse.connect(bob).openPosition2(0, base, base.mul(price).div(_1e18))
     })
 
     it('alice\'s position is liquidated', async function() {
@@ -218,21 +219,14 @@ describe('Multi-collateral Liquidation Tests', async function() {
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
         ;({ unrealizedPnl, notionalPosition } = await amm.getNotionalPositionAndUnrealizedPnl(alice))
 
-        const ifVusdBal = await vusd.balanceOf(insuranceFund.address)
-        await clearingHouse.connect(liquidator1).liquidateTaker(alice)
+        const feeSinkBalance = await vusd.balanceOf(feeSink)
+        await clearingHouse.connect(liquidator1).liquidate2(alice)
 
         const liquidationPenalty = notionalPosition.mul(5e4).div(_1e6)
         expect(await marginAccount.margin(0, alice)).to.eq(
             unrealizedPnl.sub(liquidationPenalty).sub(tradeFee)
         )
-
-        const toInsurace = liquidationPenalty.div(2)
-        expect(
-            (await vusd.balanceOf(insuranceFund.address)).sub(ifVusdBal)
-        ).to.eq(toInsurace)
-        expect(
-            await vusd.balanceOf(liquidator1.address)
-        ).to.eq(liquidationPenalty.sub(toInsurace))
+        expect(await vusd.balanceOf(feeSink)).to.eq(liquidationPenalty.add(feeSinkBalance))
     })
 
     it('alice is in liquidation zone B', async function() {
@@ -244,7 +238,7 @@ describe('Multi-collateral Liquidation Tests', async function() {
     })
 
     it('liquidateFlexible (_liquidateExactSeize branch, incentivePerDollar < 5%)', async function() {
-        // the alice's debt is -968.x, margin = .25*2000*.7 + 10*50*.8 = $750, spot = .25*2000 + 10*50 = $1000
+        // the alice's debt is -935.x, margin = .5*1000*.7 + 10*50*.8 = $750, spot = .5*1000 + 10*50 = $1000
         const [
             { weighted, spot },
             { _isLiquidatable, repayAmount, incentivePerDollar },
@@ -254,10 +248,10 @@ describe('Multi-collateral Liquidation Tests', async function() {
             marginAccount.isLiquidatable(alice, true),
             marginAccount.margin(1, alice)
         ])
-        expect(parseInt(weighted.toNumber() / 1e6)).to.eq(-218) // 750 - 968.x
-        expect(parseInt(spot.toNumber() / 1e6)).to.eq(31) // 1000 - 968.x
+        expect(parseInt(weighted.toNumber() / 1e6)).to.eq(-185) // 750 - 935.x
+        expect(parseInt(spot.toNumber() / 1e6)).to.eq(65) // 1000 - 935.x
         expect(_isLiquidatable).to.eq(0) // IS_LIQUIDATABLE
-        expect(incentivePerDollar.toNumber() / 1e6).to.eq(1.032325) // min(1.05, 1000/968.48)
+        expect(incentivePerDollar.toNumber() / 1e6).to.eq(1.05) // min(1.05, 1000/935)
 
         await vusd.connect(admin).mint(liquidator3.address, repayAmount)
         await vusd.connect(liquidator3).approve(marginAccount.address, repayAmount)
@@ -271,7 +265,7 @@ describe('Multi-collateral Liquidation Tests', async function() {
     })
 
     it('liquidateExactRepay (incentivePerDollar < 5%)', async function() {
-        // the alice's debt is -484.x, margin = 10*50*.8 = $400, spot = 10*50 = $500
+        // the alice's debt is -458.x, margin = 10*50*.8 = $400, spot = 10*50 = $500
         const [
             { weighted, spot },
             { _isLiquidatable, repayAmount, incentivePerDollar },
@@ -281,10 +275,10 @@ describe('Multi-collateral Liquidation Tests', async function() {
             marginAccount.isLiquidatable(alice, true),
             marginAccount.margin(2, alice)
         ])
-        expect(parseInt(weighted.toNumber() / 1e6)).to.eq(-84) // 400 - 484.x
-        expect(parseInt(spot.toNumber() / 1e6)).to.eq(15) // 500 - 484.x
+        expect(parseInt(weighted.toNumber() / 1e6)).to.eq(-58) // 400 - 458.x
+        expect(parseInt(spot.toNumber() / 1e6)).to.eq(41) // 500 - 458.x
         expect(_isLiquidatable).to.eq(0) // IS_LIQUIDATABLE
-        expect(incentivePerDollar.toNumber() / 1e6).to.eq(1.032326) // min(1.05, 500/484.34)
+        expect(incentivePerDollar.toNumber() / 1e6).to.eq(1.05) // min(1.05, 500/458)
 
         const repay = _1e6.mul(200) // < 484
         await vusd.connect(admin).mint(liquidator2.address, repay)
@@ -443,19 +437,22 @@ describe('Partial Liquidation Threshold', async function() {
     it('short -> liquidation -> liquidation', async function() {
         // alice shorts
         const baseAssetQuantity = _1e18.mul(-5)
-        await clearingHouse.openPosition(0, baseAssetQuantity, 0)
+        await clearingHouse.openPosition2(0, baseAssetQuantity, 0)
 
         let position = await amm.positions(alice)
         expect(position.liquidationThreshold).to.eq(baseAssetQuantity.mul(25).div(100).abs().add(1))
 
-        // bob longs
-        await addMargin(bob, _1e6.mul(40000))
-        await oracle.setUnderlyingPrice(weth.address, _1e6.mul(1100))
-        await clearingHouse.connect(bob).openPosition(0, _1e18.mul(130), ethers.constants.MaxUint256)
+        // bob increases price
+        const base = _1e18.mul(15)
+        const price = _1e6.mul(1300)
+        await oracle.setUnderlyingPrice(weth.address, price),
+        await addMargin(bob, base.mul(price).div(_1e18))
+        await clearingHouse.connect(bob).openPosition2(0, base, base.mul(price).div(_1e18))
 
         // alice is in liquidation zone
+        const feeSinkBalance = await vusd.balanceOf(feeSink)
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
-        let tx = await clearingHouse.connect(liquidator1).liquidateTaker(alice)
+        let tx = await clearingHouse.connect(liquidator1).liquidate2(alice)
         let liquidationEvent = (await filterEvent(tx, 'PositionLiquidated')).args
 
         const markPrice = await amm.lastPrice()
@@ -466,18 +463,17 @@ describe('Partial Liquidation Threshold', async function() {
         expect(position.liquidationThreshold).to.eq(baseAssetQuantity.mul(25).div(100).abs().add(1))
 
         const liquidationPenalty = liquidationEvent.quoteAsset.mul(5e4).div(_1e6)
-        const toInsurance = liquidationPenalty.div(2)
-        expect(await vusd.balanceOf(liquidator1.address)).to.eq(liquidationPenalty.sub(toInsurance))
+        expect(await vusd.balanceOf(feeSink)).to.eq(liquidationPenalty.add(feeSinkBalance))
 
         // alice is still in liquidation zone
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
-        await clearingHouse.connect(liquidator1).liquidateTaker(alice)
+        await clearingHouse.connect(liquidator1).liquidate2(alice)
         // alice has 50% position left
         position = await amm.positions(alice)
         expect(position.size).to.eq(baseAssetQuantity.mul(50).div(100).add(2))
         expect(position.liquidationThreshold).to.eq(baseAssetQuantity.mul(25).div(100).abs().add(1))
         // alice is out of liquidation zone
-        await expect(clearingHouse.connect(liquidator1).liquidateTaker(alice)).to.be.revertedWith(
+        await expect(clearingHouse.connect(liquidator1).liquidate2(alice)).to.be.revertedWith(
             'CH: Above Maintenance Margin'
         )
     })
@@ -485,19 +481,22 @@ describe('Partial Liquidation Threshold', async function() {
     it('long -> liquidation -> short', async function() {
         // alice longs
         let baseAssetLong = _1e18.mul(7)
-        await clearingHouse.openPosition(0, baseAssetLong, ethers.constants.MaxUint256)
+        await clearingHouse.openPosition2(0, baseAssetLong, ethers.constants.MaxUint256)
 
         let position = await amm.positions(alice)
         expect(position.liquidationThreshold).to.eq(baseAssetLong.mul(25).div(100).add(1))
 
-        // bob shorts
-        await addMargin(bob, _1e6.mul(40000))
-        await oracle.setUnderlyingPrice(weth.address, _1e6.mul(900))
-        await clearingHouse.connect(bob).openPosition(0, _1e18.mul(-140), 0)
+        // bob decreases price
+        const base = _1e18.mul(15)
+        const price = _1e6.mul(780)
+        await oracle.setUnderlyingPrice(weth.address, price),
+        await addMargin(bob, base.mul(price).div(_1e18))
+        await clearingHouse.connect(bob).openPosition2(0, base, base.mul(price).div(_1e18))
 
         // alice is in liquidation zone
+        const feeSinkBalance = await vusd.balanceOf(feeSink)
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
-        let tx = await clearingHouse.connect(liquidator1).liquidateTaker(alice)
+        let tx = await clearingHouse.connect(liquidator1).liquidate2(alice)
         let liquidationEvent = (await filterEvent(tx, 'PositionLiquidated')).args
 
         // alice has 75% position left
@@ -505,24 +504,22 @@ describe('Partial Liquidation Threshold', async function() {
         expect(position.liquidationThreshold).to.eq(baseAssetLong.mul(25).div(100).add(1))
         baseAssetLong = baseAssetLong.mul(75).div(100).sub(1)
         expect(position.size).to.eq(baseAssetLong)
-
         const liquidationPenalty = liquidationEvent.quoteAsset.mul(5e4).div(_1e6)
-        const toInsurance = liquidationPenalty.div(2)
-        expect(await vusd.balanceOf(liquidator1.address)).to.eq(liquidationPenalty.sub(toInsurance))
+        expect(await vusd.balanceOf(feeSink)).to.eq(liquidationPenalty.add(feeSinkBalance))
 
         // alice is still in liquidation zone
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
         // mine extra block to change block number
         await network.provider.send("evm_mine");
-        await clearingHouse.connect(liquidator1).callStatic.liquidateTaker(alice) // doesn't throw exception
+        await clearingHouse.connect(liquidator1).callStatic.liquidate2(alice) // doesn't throw exception
 
         // alice shorts
         const baseAssetShort = _1e18.mul(-2)
-        await clearingHouse.openPosition(0, baseAssetShort, 0)
+        await clearingHouse.openPosition2(0, baseAssetShort, 0)
 
         // alice is out of liquidation zone
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.true
-        await expect(clearingHouse.connect(liquidator1).liquidateTaker(alice)).to.be.revertedWith(
+        await expect(clearingHouse.connect(liquidator1).liquidate2(alice)).to.be.revertedWith(
             'CH: Above Maintenance Margin'
         )
 
@@ -551,11 +548,11 @@ describe.skip('Liquidation Price Safeguard', async function() {
     it('cannot liquidate short position if markPrice moves >1%', async function() {
         // alice shorts
         const baseAssetQuantity = _1e18.mul(-5)
-        await clearingHouse.openPosition(0, baseAssetQuantity, 0)
+        await clearingHouse.openPosition2(0, baseAssetQuantity, 0)
 
         // bob longs
         await addMargin(bob, _1e6.mul(80000))
-        let tx = await clearingHouse.connect(bob).openPosition(0, _1e18.mul(300), ethers.constants.MaxUint256)
+        let tx = await clearingHouse.connect(bob).openPosition2(0, _1e18.mul(300), ethers.constants.MaxUint256)
         // alice is in liquidation zone
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
         const markPriceOld = await amm.lastPrice()
@@ -563,9 +560,9 @@ describe.skip('Liquidation Price Safeguard', async function() {
         // set auto block mining to false
         await network.provider.send("evm_setAutomine", [false]);
         // liquidator1 longs
-        await clearingHouse.connect(liquidator1).openPosition(0, _1e18.mul(30), ethers.constants.MaxUint256)
+        await clearingHouse.connect(liquidator1).openPosition2(0, _1e18.mul(30), ethers.constants.MaxUint256)
         // liquidator1 liquidates alice
-        await clearingHouse.connect(liquidator1).liquidateTaker(alice)
+        await clearingHouse.connect(liquidator1).liquidate2(alice)
 
         // mine next block
         await network.provider.send("evm_mine");
@@ -583,18 +580,18 @@ describe.skip('Liquidation Price Safeguard', async function() {
         expect((await clearingHouse.queryFilter('PositionLiquidated')).length).to.eq(0)
 
         // liquidation goes through in the next block
-        await clearingHouse.connect(liquidator1).liquidateTaker(alice)
+        await clearingHouse.connect(liquidator1).liquidate2(alice)
         expect((await clearingHouse.queryFilter('PositionLiquidated')).length).to.eq(1)
     })
 
     it('cannot liquidate long position if markPrice moves >1%', async function() {
         // alice longs
         const baseAssetQuantity = _1e18.mul(5)
-        await clearingHouse.openPosition(0, baseAssetQuantity, ethers.constants.MaxUint256)
+        await clearingHouse.openPosition2(0, baseAssetQuantity, ethers.constants.MaxUint256)
 
         // bob shorts
         await addMargin(bob, _1e6.mul(80000))
-        let tx = await clearingHouse.connect(bob).openPosition(0, _1e18.mul(-400), 0)
+        let tx = await clearingHouse.connect(bob).openPosition2(0, _1e18.mul(-400), 0)
         // alice is in liquidation zone
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
         const markPriceOld = await amm.lastPrice()
@@ -602,9 +599,9 @@ describe.skip('Liquidation Price Safeguard', async function() {
         // set auto block mining to false
         await network.provider.send("evm_setAutomine", [false]);
         // liquidator1 shorts
-        await clearingHouse.connect(liquidator1).openPosition(0, _1e18.mul(-30), 0)
+        await clearingHouse.connect(liquidator1).openPosition2(0, _1e18.mul(-30), 0)
         // liquidator1 liquidates alice
-        await clearingHouse.connect(liquidator1).liquidateTaker(alice)
+        await clearingHouse.connect(liquidator1).liquidate2(alice)
 
         // mine next block
         await network.provider.send("evm_mine");
@@ -622,7 +619,7 @@ describe.skip('Liquidation Price Safeguard', async function() {
         expect((await clearingHouse.queryFilter('PositionLiquidated')).length).to.eq(0)
 
         // liquidation goes through in the next block
-        await clearingHouse.connect(liquidator1).liquidateTaker(alice)
+        await clearingHouse.connect(liquidator1).liquidate2(alice)
         expect((await clearingHouse.queryFilter('PositionLiquidated')).length).to.eq(1)
     })
 
@@ -635,15 +632,15 @@ describe.skip('Liquidation Price Safeguard', async function() {
         // alice shorts
         let baseAssetQuantity = _1e18.mul(-105)
         await addMargin(signers[0], _1e6.mul(10000))
-        await clearingHouse.openPosition(0, baseAssetQuantity, 0)
+        await clearingHouse.openPosition2(0, baseAssetQuantity, 0)
         // chalie also shorts
         baseAssetQuantity = _1e18.mul(-10)
         await addMargin(charlie, _1e6.mul(1010))
-        await clearingHouse.connect(charlie).openPosition(0, baseAssetQuantity, 0)
+        await clearingHouse.connect(charlie).openPosition2(0, baseAssetQuantity, 0)
 
         // bob longs
         await addMargin(bob, _1e6.mul(80000))
-        let tx = await clearingHouse.connect(bob).openPosition(0, _1e18.mul(100), ethers.constants.MaxUint256)
+        let tx = await clearingHouse.connect(bob).openPosition2(0, _1e18.mul(100), ethers.constants.MaxUint256)
 
         // alice and charlie are in liquidation zone
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
@@ -654,8 +651,8 @@ describe.skip('Liquidation Price Safeguard', async function() {
         // set auto block mining to false
         await network.provider.send("evm_setAutomine", [false]);
         // liquidate alice and charlie
-        await clearingHouse.connect(liquidator1).liquidateTaker(alice)
-        await clearingHouse.connect(liquidator1).liquidateTaker(charlie.address)
+        await clearingHouse.connect(liquidator1).liquidate2(alice)
+        await clearingHouse.connect(liquidator1).liquidate2(charlie.address)
 
         // mine next block
         await network.provider.send("evm_mine");
@@ -684,11 +681,13 @@ describe('Liquidation Price Safeguard', async function() {
 
         // alice shorts
         baseAssetQuantity = _1e18.mul(-5)
-        await clearingHouse.openPosition(0, baseAssetQuantity, 0)
+        await clearingHouse.openPosition2(0, baseAssetQuantity, 0)
 
-        // bob longs
-        await addMargin(bob, _1e6.mul(80000))
-        await clearingHouse.connect(bob).openPosition(0, _1e18.mul(300), ethers.constants.MaxUint256)
+        // bob increases the price
+        const base = _1e18.mul(15)
+        const price = _1e6.mul(1130)
+        await addMargin(bob, base.mul(price).div(_1e18))
+        await clearingHouse.connect(bob).openPosition2(0, base, base.mul(price).div(_1e18))
         // alice is in liquidation zone
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
     })
@@ -697,9 +696,9 @@ describe('Liquidation Price Safeguard', async function() {
         // set auto block mining to false
         await network.provider.send("evm_setAutomine", [false]);
         // liquidator1 long
-        await clearingHouse.connect(liquidator1).openPosition(0, _1e18.mul(1), ethers.constants.MaxUint256)
+        await clearingHouse.connect(liquidator1).openPosition2(0, _1e18.mul(1), ethers.constants.MaxUint256)
         // liquidator1 liquidates alice
-        await clearingHouse.connect(liquidator1).liquidateTaker(alice)
+        await clearingHouse.connect(liquidator1).liquidate2(alice)
 
         // mine next block
         await network.provider.send("evm_mine");
@@ -713,8 +712,8 @@ describe('Liquidation Price Safeguard', async function() {
         // set auto block mining to false
         await network.provider.send("evm_setAutomine", [false]);
         // liquidator1 liquidates alice
-        await clearingHouse.connect(liquidator1).liquidateTaker(alice)
-        await clearingHouse.connect(liquidator1).liquidateTaker(alice)
+        await clearingHouse.connect(liquidator1).liquidate2(alice)
+        await clearingHouse.connect(liquidator1).liquidate2(alice)
 
         // mine next block
         await network.provider.send("evm_mine");
@@ -731,30 +730,30 @@ describe('Liquidation Price Safeguard', async function() {
 
         expect(await amm.maxLiquidationPriceSpread()).to.eq(_1e6.div(100))
         expect((markPrice.sub(indexPrice)).mul(1e8).div(indexPrice)).to.gt(_1e6)
-        await expect(clearingHouse.connect(liquidator1).liquidateTaker(alice)).to.be.revertedWith(
+        await expect(clearingHouse.connect(liquidator1).liquidate2(alice)).to.be.revertedWith(
             'AMM.spread_limit_exceeded_between_markPrice_and_indexPrice'
         )
     })
 
     it('cannot liquidate if markPrice is <1% of indexPrice', async function() {
         const markPrice = await amm.lastPrice()
-        await oracle.setUnderlyingPrice(weth.address, _1e6.mul(1130))
+        await oracle.setUnderlyingPrice(weth.address, _1e6.mul(1150))
         const indexPrice = await oracle.getUnderlyingPrice(weth.address)
 
         expect((markPrice.sub(indexPrice)).mul(1e8).div(indexPrice)).to.lt(_1e6.mul(-1))
-        await expect(clearingHouse.connect(liquidator1).liquidateTaker(alice)).to.be.revertedWith(
+        await expect(clearingHouse.connect(liquidator1).liquidate2(alice)).to.be.revertedWith(
             'AMM.spread_limit_exceeded_between_markPrice_and_indexPrice'
         )
     })
 
     it('can liquidate if markPrice is within 1% of indexPrice and no trades before', async function() {
-        await oracle.setUnderlyingPrice(weth.address, _1e6.mul(1115))
+        await oracle.setUnderlyingPrice(weth.address, _1e6.mul(1120))
 
         await network.provider.send("evm_setAutomine", [false]);
         // liquidator1 liquidates alice
-        await clearingHouse.connect(liquidator1).liquidateTaker(alice)
+        await clearingHouse.connect(liquidator1).liquidate2(alice)
         // liquidator1 long
-        await clearingHouse.connect(liquidator1).openPosition(0, _1e18.mul(1), ethers.constants.MaxUint256)
+        await clearingHouse.connect(liquidator1).openPosition2(0, _1e18.mul(1), ethers.constants.MaxUint256)
 
         // mine next block
         await network.provider.send("evm_mine");

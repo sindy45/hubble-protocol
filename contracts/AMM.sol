@@ -80,9 +80,6 @@ contract AMM is IAMM, Governable {
     /*       Events       */
     /* ****************** */
 
-    // Generic AMM related events
-    event Swap(uint256 lastPrice, uint256 openInterestNotional);
-
     // Trader related events
     event PositionChanged(address indexed trader, int256 size, uint256 openNotional, int256 realizedPnl);
 
@@ -219,7 +216,7 @@ contract AMM is IAMM, Governable {
         require(abs(positionSize) >= abs(baseAssetQuantity), "AMM.ONLY_REDUCE_POS");
 
         realizedPnl = unrealizedPnl * abs(baseAssetQuantity) / abs(positionSize);
-        remainOpenNotional = uint(openNotional.toInt256() * abs(baseAssetQuantity) / abs(positionSize));
+        remainOpenNotional = openNotional - uint(openNotional.toInt256() * abs(baseAssetQuantity) / abs(positionSize));
     }
 
     /**
@@ -274,6 +271,11 @@ contract AMM is IAMM, Governable {
             : minNextValidFundingTime;
 
         return (premiumFraction, underlyingPrice, cumulativePremiumFraction, nextFundingTime);
+    }
+
+    function startFunding() external onlyClearingHouse returns (uint256) {
+        nextFundingTime = ((_blockTimestamp() + fundingPeriod) / 1 hours) * 1 hours;
+        return nextFundingTime;
     }
 
     // View
@@ -405,6 +407,10 @@ contract AMM is IAMM, Governable {
     }
 
     function lastPrice() public view returns(uint256) {
+        // return oracle price at the start of amm
+        if (reserveSnapshots.length == 0) {
+            return uint(oracle.getUnderlyingPrice(underlyingAsset));
+        }
         return reserveSnapshots[reserveSnapshots.length - 1].lastPrice;
     }
 
@@ -424,15 +430,14 @@ contract AMM is IAMM, Governable {
         require(baseAssetQuantity > 0, "VAMM._long: baseAssetQuantity is <= 0");
 
         _addReserveSnapshot(price);
-        // markPrice should not change more than X% in a single block
-        uint256 lastBlockTradePrice = _getLastBlockTradePrice();
-        require(price < lastBlockTradePrice * (1e6 + maxPriceSpreadPerBlock) / 1e6, "AMM.long_single_block_price_slippage");
+        // @todo think about if this is required, commenting for testnet
+        // _checkMarkPriceSingleBlockSpread(price);
 
         // longs not allowed if market price > (1 + maxOracleSpreadRatio)*index price
         uint256 oraclePrice = uint(oracle.getUnderlyingPrice(underlyingAsset));
         oraclePrice = oraclePrice * (1e6 + maxOracleSpreadRatio) / 1e6;
         if (!isLiquidation && price > oraclePrice) {
-            revert("VAMM._long: longs not allowed");
+            revert("AMM_price_increase_not_allowed");
         }
     }
 
@@ -446,16 +451,23 @@ contract AMM is IAMM, Governable {
         require(baseAssetQuantity < 0, "VAMM._short: baseAssetQuantity is >= 0");
 
         _addReserveSnapshot(price);
-        // markPrice should not change more than X% in a single block
-        uint256 lastBlockTradePrice = _getLastBlockTradePrice();
-        require(price > lastBlockTradePrice * (1e6 - maxPriceSpreadPerBlock) / 1e6, "AMM.short_single_block_price_slippage");
+        // @todo think about if this is required, commenting for testnet
+        // _checkMarkPriceSingleBlockSpread(price);
 
         // shorts not allowed if market price < (1 - maxOracleSpreadRatio)*index price
         uint256 oraclePrice = uint(oracle.getUnderlyingPrice(underlyingAsset));
         oraclePrice = oraclePrice * (1e6 - maxOracleSpreadRatio) / 1e6;
         if (!isLiquidation && price < oraclePrice) {
-            revert("VAMM._short: shorts not allowed");
+            revert("AMM_price_decrease_not_allowed");
         }
+    }
+
+    function _checkMarkPriceSingleBlockSpread(uint price) internal view {
+        // markPrice should not change more than X% in a single block
+        uint256 lastBlockTradePrice = _getLastBlockTradePrice();
+        uint upperBound = lastBlockTradePrice * (1e6 + maxPriceSpreadPerBlock) / 1e6;
+        uint lowerBound = lastBlockTradePrice * (1e6 - maxPriceSpreadPerBlock) / 1e6;
+        require(price < upperBound && price > lowerBound, "AMM.single_block_price_slippage");
     }
 
     function _getLastBlockTradePrice() internal view returns(uint256 lastBlockTradePrice) {
@@ -526,8 +538,7 @@ contract AMM is IAMM, Governable {
         if (abs(position.size) >= abs(baseAssetQuantity)) {
             (realizedPnl) = _reducePosition(trader, baseAssetQuantity, price, false /* isLiqudation */);
         } else {
-            uint closedRatio = (price * abs(position.size).toUint256()) / abs(baseAssetQuantity).toUint256();
-            (realizedPnl) = _reducePosition(trader, -position.size, closedRatio, false /* isLiqudation */);
+            (realizedPnl) = _reducePosition(trader, -position.size, price, false /* isLiqudation */);
             _increasePosition(trader, baseAssetQuantity + position.size, price);
             isPositionIncreased = true;
         }

@@ -74,23 +74,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     * @param order Order to be executed
     */
     function openPosition(IOrderBook.Order memory order, int256 fillAmount, uint256 fulfillPrice, bool isMakerOrder) external onlyOrderBook {
-        require(order.baseAssetQuantity != 0 && fillAmount != 0, "CH: baseAssetQuantity == 0");
-        updatePositions(order.trader); // adjust funding payments
-        uint quoteAsset = abs(fillAmount).toUint256() * fulfillPrice / 1e18;
-        (
-            int realizedPnl,
-            bool isPositionIncreased,
-            int size,
-            uint openNotional
-        ) = amms[order.ammIndex].openPosition(order, fillAmount, fulfillPrice);
-
-        uint _fee = _chargeFeeAndRealizePnL(order.trader, realizedPnl, quoteAsset, false /* isLiquidation */, isMakerOrder);
-        marginAccount.transferOutVusd(feeSink, _fee);
-
-        if (isPositionIncreased) {
-            assertMarginRequirement(order.trader);
-        }
-        emit PositionModified(order.trader, order.ammIndex, fillAmount, quoteAsset, realizedPnl, size, openNotional, _blockTimestamp());
+        _openPosition(order, fillAmount, fulfillPrice, isMakerOrder);
     }
 
     function updatePositions(address trader) override public whenNotPaused {
@@ -140,7 +124,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     }
 
     /* ********************* */
-    /* Liquidations Internal */
+    /* Internal */
     /* ********************* */
 
     function _liquidateSingleAmm(address trader, uint ammIndex, uint price, int toLiquidate) internal {
@@ -191,6 +175,27 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         }
         marginAccount.realizePnL(trader, marginCharge);
     }
+
+    function _openPosition(IOrderBook.Order memory order, int256 fillAmount, uint256 fulfillPrice, bool isMakerOrder) internal {
+        require(order.baseAssetQuantity != 0 && fillAmount != 0, "CH: baseAssetQuantity == 0");
+        updatePositions(order.trader); // adjust funding payments
+        uint quoteAsset = abs(fillAmount).toUint256() * fulfillPrice / 1e18;
+        (
+            int realizedPnl,
+            bool isPositionIncreased,
+            int size,
+            uint openNotional
+        ) = amms[order.ammIndex].openPosition(order, fillAmount, fulfillPrice);
+
+        uint _fee = _chargeFeeAndRealizePnL(order.trader, realizedPnl, quoteAsset, false /* isLiquidation */, isMakerOrder);
+        marginAccount.transferOutVusd(feeSink, _fee);
+
+        if (isPositionIncreased) {
+            assertMarginRequirement(order.trader);
+        }
+        emit PositionModified(order.trader, order.ammIndex, fillAmount, quoteAsset, realizedPnl, size, openNotional, _blockTimestamp());
+    }
+
 
     /* ****************** */
     /*        View        */
@@ -330,6 +335,17 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         }
         emit MarketAdded(l, _amm);
         amms.push(IAMM(_amm));
+        uint nextFundingTime = IAMM(_amm).startFunding();
+        // to start funding in vm
+        emit FundingRateUpdated(
+            l,
+            0,
+            IAMM(_amm).lastPrice(),
+            0,
+            nextFundingTime,
+            _blockTimestamp(),
+            block.number
+        );
     }
 
     function setParams(

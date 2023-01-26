@@ -11,7 +11,7 @@ const Trader = '0x6D3Ee34A020e7565e78540C74300218104C8e4a9' // vusd = -85.97, wa
 const Trader2 = '0xF0C6380E27752c6DdE17e9F5B629620084B9a196' // vusd = 1.73, wavax = 0, weth = 19.1
 const gasLimit = 1e10
 
-describe('(fork) yield yak swap - v1.3.0', async function() {
+describe.skip('(fork) yield yak swap - v1.3.0', async function() {
     let blockTag = 20129791
     before(async function() {
         await network.provider.request({

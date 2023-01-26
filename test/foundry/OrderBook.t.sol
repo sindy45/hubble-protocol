@@ -9,6 +9,7 @@ contract OrderBookTests is Utils {
     event OrderPlaced(address indexed trader, OrderBook.Order order, bytes signature);
     event OrderCancelled(address indexed trader, OrderBook.Order order);
     event OrdersMatched(OrderBook.Order[2] orders, bytes[2] signatures, uint256 fillAmount, address relayer);
+    event LiquidationOrderMatched(address indexed trader, OrderBook.Order order, bytes signature, uint256 fillAmount, address relayer);
 
     function setUp() public {
         setupContracts();
@@ -49,7 +50,6 @@ contract OrderBookTests is Utils {
             uint maxOracleSpreadRatio = amm.maxOracleSpreadRatio();
             uint upperLimit = oraclePrice * (1e6 + maxOracleSpreadRatio) / 1e6 - 2;
             uint lowerLimit = oraclePrice * (1e6 - maxOracleSpreadRatio) / 1e6 + 2;
-            console.log(upperLimit, lowerLimit);
             vm.assume(price < upperLimit && price > lowerLimit);
         }
 
@@ -69,7 +69,7 @@ contract OrderBookTests is Utils {
         addMargin(bob, quote / 2);
 
         vm.expectEmit(false, false, false, true, address(orderBook));
-        emit OrdersMatched(orders, signatures, stdMath.abs(size), address(this));
+        emit OrdersMatched(orders, signatures, uint(size), address(this));
         orderBook.executeMatchedOrders(orders, signatures, size);
 
         (,int filledAmount, OrderBook.OrderStatus status) = orderBook.orderInfo(ordersHash[0]);
@@ -111,6 +111,9 @@ contract OrderBookTests is Utils {
             vm.roll(block.number + 1); // to avoid AMM.liquidation_not_allowed_after_trade
             (,,,uint liquidationThreshold) = amm.positions(alice);
             toLiquidate = Math.min(stdMath.abs(size), liquidationThreshold);
+
+            vm.expectEmit(true, false, false, true, address(orderBook));
+            emit LiquidationOrderMatched(address(alice), order, signature, toLiquidate, address(this));
             orderBook.liquidateAndExecuteOrder(alice, order, signature, toLiquidate);
 
             (,int filledAmount, OrderBook.OrderStatus status) = orderBook.orderInfo(orderHash);
@@ -126,6 +129,8 @@ contract OrderBookTests is Utils {
             addMargin(peter, stdMath.abs(size) * price / 1e18);
             (order, signature, orderHash) = placeOrder(0, peterKey, -size, price);
 
+            vm.expectEmit(true, false, false, true, address(orderBook));
+            emit LiquidationOrderMatched(address(bob), order, signature, toLiquidate, address(this));
             orderBook.liquidateAndExecuteOrder(bob, order, signature, toLiquidate);
 
             (,int filledAmount, OrderBook.OrderStatus status) = orderBook.orderInfo(orderHash);

@@ -202,18 +202,20 @@ describe('Insurance Fund Auction Tests', function() {
         await marginAccount.connect(charlie).addMargin(2, avaxMargin)
 
         // alice and charlie make a trade
-        await clearingHouse.openPosition(0, _1e18.mul(-5), 0)
-        await clearingHouse.connect(charlie).openPosition(0, _1e18.mul(-5), 0)
+        await clearingHouse.openPosition2(0, _1e18.mul(-5), 0)
+        await clearingHouse.connect(charlie).openPosition2(0, _1e18.mul(-5), 0)
 
-        // bob makes a counter-trade
-        await addMargin(bob, _1e6.mul(20000))
-        await clearingHouse.connect(bob).openPosition(0, _1e18.mul(80), ethers.constants.MaxUint256)
+        // bob increases the price
+        const base = _1e18.mul(15)
+        const price = _1e6.mul(1199)
+        await addMargin(bob, base.mul(price).div(_1e18))
+        await clearingHouse.connect(bob).openPosition2(0, base, base.mul(price).div(_1e18))
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
         expect(await clearingHouse.isAboveMaintenanceMargin(charlie.address)).to.be.false
 
         // liquidate alice and charlie
-        await clearingHouse.connect(liquidator1).liquidateTaker(alice)
-        await clearingHouse.connect(liquidator1).liquidateTaker(charlie.address)
+        await clearingHouse.connect(liquidator1).liquidate2(alice)
+        await clearingHouse.connect(liquidator1).liquidate2(charlie.address)
 
         // alice and charlie have bad debt
         let { spot } = await marginAccount.weightedAndSpotCollateral(alice)

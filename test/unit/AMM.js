@@ -1,250 +1,56 @@
 const { expect } = require('chai');
-
 const utils = require('../utils')
+
 const {
     constants: { _1e6, _1e12, _1e18, ZERO },
-    filterEvent,
+    assertions,
     setupContracts,
     addMargin,
-    gotoNextWithdrawEpoch,
     setupRestrictedTestToken,
-    bnToFloat,
-    gotoNextUnbondEpoch
 } = utils
-const { calcMarkPrice } = require('../../dist/VammJS')
 
 const TRADE_FEE = 0.000567 * _1e6
-const gasLimit = 1e6
-
-describe('vAMM unit Tests', function() {
-    beforeEach('contract factories', async function() {
-        signers = await ethers.getSigners()
-        alice = signers[0].address
-        mockAmm = signers[1]
-        ;({ swap, amm, clearingHouse, hubbleViewer } = await setupContracts({ tradeFee: TRADE_FEE }))
-        await swap.setAMM(mockAmm.address)
-    })
-
-    describe('exchange[ExactOut]', function() {
-        it('check initial setup', async () => {
-            expect(await amm.getSnapshotLen()).to.eq(0)
-            await expect(swap.initialize(
-                alice, // owner
-                alice, // math
-                alice, // views
-                54000, // A
-                '3500000000000000', // gamma
-                11000000, 0, 0, 0, // mid_fee = 0.11%, out_fee, allowed_extra_profit, fee_gamma
-                '490000000000000', // adjustment_step
-                0, // admin_fee
-                600, // ma_half_time
-            )).to.be.revertedWith('VAMM: contract is already initialized')
-        })
-
-        it('exchangeExactOut', async () => {
-            const baseAssetQuantity = _1e18.mul(5)
-            const amount = _1e6.mul(5025)
-            const initialUSDTBalance = await swap.balances(0, {gasLimit});
-            const initialETHBalance = await swap.balances(1, {gasLimit});
-
-            await expect(swap.exchangeExactOut(0, 1, baseAssetQuantity, amount, { gasLimit })).to.be.revertedWith('VAMM: OnlyAMM')
-            const tx = await swap.connect(mockAmm).exchangeExactOut(0, 1, baseAssetQuantity, amount, { gasLimit: 2e6 })
-            transactionEvent = await filterEvent(tx, 'TokenExchange')
-            const { tokens_sold: dx1, trade_fee: vammFee } = transactionEvent.args
-
-            const types = new Array(11).fill('uint').concat(['bool', 'uint'])
-            // const [ b0, b1, price_scale, price_oracle, last_prices, ma_half_time, totalSupply, xcp_profit, virtual_price, adjustment_step, allowed_extra_profit, not_adjusted, D ]
-            const params = ethers.utils.defaultAbiCoder.decode(types, transactionEvent.args.vamm)
-            const actual = await Promise.all([
-                swap.price_scale({ gasLimit }),
-                swap.price_oracle({ gasLimit }),
-                swap.last_prices({ gasLimit }),
-                swap.ma_half_time({ gasLimit }),
-                swap.totalSupply({ gasLimit }),
-                swap.xcp_profit({ gasLimit }),
-                swap.virtual_price({ gasLimit }),
-                swap.adjustment_step({ gasLimit }),
-                swap.allowed_extra_profit({ gasLimit }),
-                swap.not_adjusted({ gasLimit }),
-                swap.D({ gasLimit })
-            ])
-            expect(params[0]).to.eq(initialUSDTBalance.add(dx1))
-            expect(params[1]).to.eq(initialETHBalance.sub(baseAssetQuantity))
-            expect(params.slice(2)).to.deep.eq(actual)
-
-            const dx2 = await swap.get_dy(1, 0, baseAssetQuantity, {gasLimit})
-            const fee = await swap.get_dy_fee(1, 0, baseAssetQuantity, {gasLimit})
-            const finalUSDTBalance = await swap.balances(0, {gasLimit})
-
-            expect(dx2).lt(dx1) // amount received less than deposited, loss to trader because of fee, profit to maker
-            expect(dx2.add(fee)).gt(dx1.sub(vammFee)) // little more vUSD in the pool because of fee, hence the received amount without fee be a little more than deposited amount-fee
-            expect((finalUSDTBalance.sub(initialUSDTBalance)).lte(amount)).to.be.true
-            expect(initialETHBalance.sub((await swap.balances(1, {gasLimit})))).to.eq(baseAssetQuantity)
-        })
-
-        it('exchangeExactOut multiple transactions', async () => {
-            const baseAssetQuantity = _1e18.mul(5)
-            const amount = _1e6.mul(5500)
-            const initialUSDTBalance = await swap.balances(0, {gasLimit});
-            const initialETHBalance = await swap.balances(1, {gasLimit});
-
-            const numberOfTransactions = 10
-            let dx1 = ZERO
-            let vammFee = ZERO
-            for (let i = 0; i < numberOfTransactions; i++) {
-                let tx = await swap.connect(mockAmm).exchangeExactOut(0, 1, baseAssetQuantity, amount)
-                let transactionEvent = await filterEvent(tx, 'TokenExchange')
-                dx1 = dx1.add(transactionEvent.args[1]);
-                vammFee = vammFee.add(transactionEvent.args[4]);
-            }
-
-            const dx2 = await swap.get_dy(1, 0, baseAssetQuantity.mul(numberOfTransactions), {gasLimit})
-            const fee = await swap.get_dy_fee(1, 0, baseAssetQuantity.mul(numberOfTransactions), {gasLimit})
-            const finalUSDTBalance = await swap.balances(0, {gasLimit})
-
-            expect(dx2).lt(dx1) // amount received less than deposited, loss to trader because of fee, profit to maker
-            expect(dx2.add(fee)).gt(dx1.sub(vammFee)) // little more vUSD in the pool because of fee, hence the received amount without fee be a little more than deposited amount-fee
-            expect((finalUSDTBalance.sub(initialUSDTBalance)).lte(amount.mul(numberOfTransactions))).to.be.true
-            expect(initialETHBalance.sub((await swap.balances(1, {gasLimit})))).to.eq(baseAssetQuantity.mul(numberOfTransactions))
-        })
-
-        it('exchange', async () => {
-            const baseAssetQuantity = _1e18.mul(5)
-            const amount = _1e6.mul(4950)
-            const initialUSDTBalance = await swap.balances(0, {gasLimit});
-            const initialETHBalance = await swap.balances(1,{gasLimit});
-
-            await expect(swap.exchange(1, 0, baseAssetQuantity, amount)).to.be.revertedWith('VAMM: OnlyAMM')
-            let tx = await swap.connect(mockAmm).exchange(1, 0, baseAssetQuantity, amount)
-            transactionEvent = await filterEvent(tx, 'TokenExchange')
-            const { tokens_bought: dy1, trade_fee: vammFee } = transactionEvent.args
-            // const dy1 = transactionEvent.args[3];
-
-            const types = new Array(11).fill('uint').concat(['bool', 'uint'])
-            // const [ b0, b1, price_scale, price_oracle, last_prices, ma_half_time, totalSupply, xcp_profit, virtual_price, adjustment_step, allowed_extra_profit, not_adjusted, D ]
-            const params = ethers.utils.defaultAbiCoder.decode(types, transactionEvent.args.vamm)
-            const actual = await Promise.all([
-                swap.price_scale({ gasLimit }),
-                swap.price_oracle({ gasLimit }),
-                swap.last_prices({ gasLimit }),
-                swap.ma_half_time({ gasLimit }),
-                swap.totalSupply({ gasLimit }),
-                swap.xcp_profit({ gasLimit }),
-                swap.virtual_price({ gasLimit }),
-                swap.adjustment_step({ gasLimit }),
-                swap.allowed_extra_profit({ gasLimit }),
-                swap.not_adjusted({ gasLimit }),
-                swap.D({ gasLimit })
-            ])
-            expect(params[0]).to.eq(initialUSDTBalance.sub(dy1))
-            expect(params[1]).to.eq(initialETHBalance.add(baseAssetQuantity))
-            expect(params.slice(2)).to.deep.eq(actual)
-
-            const dy2 = await swap.get_dx(0, 1, baseAssetQuantity, {gasLimit})
-            const fee = await swap.get_dx_fee(0, 1, baseAssetQuantity, {gasLimit})
-
-            expect(dy2).gt(dy1) // amount to deposit greater than received, loss to trader, profit to maker
-            expect(dy2.sub(fee)).gt(dy1.add(vammFee)) // higher amount because of fee accumulation
-            expect((initialUSDTBalance.sub((await swap.balances(0, {gasLimit})))).gte(amount)).to.be.true
-            expect((await swap.balances(1, {gasLimit})).sub(initialETHBalance)).to.eq(baseAssetQuantity)
-        })
-
-        it('exchange multiple transactions', async () => {
-            const baseAssetQuantity = _1e18.mul(5)
-            const initialUSDTBalance = await swap.balances(0, {gasLimit});
-            const initialETHBalance = await swap.balances(1, {gasLimit});
-
-            const numberOfTransactions = 10
-            let dy1 = ZERO
-            let vammFee = ZERO
-            let amount
-            for (let i = 0; i < numberOfTransactions; i++) {
-                amount = await hubbleViewer.getQuote(baseAssetQuantity.mul(-1), 0)
-                let tx = await swap.connect(mockAmm).exchange(1, 0, baseAssetQuantity, amount)
-                let transactionEvent = await filterEvent(tx, 'TokenExchange')
-                dy1 = dy1.add(transactionEvent.args[4]);
-                vammFee = vammFee.add(transactionEvent.args[5]);
-            }
-
-            const dy2 = await swap.get_dx(0, 1, baseAssetQuantity.mul(numberOfTransactions), {gasLimit})
-
-            expect(dy2).gt(dy1) // amount to deposit greater than received, loss to trader, profit to maker
-            expect((initialUSDTBalance.sub((await swap.balances(0, {gasLimit})))).gte(amount.mul(numberOfTransactions))).to.be.true
-            expect((await swap.balances(1, {gasLimit})).sub(initialETHBalance)).to.eq(baseAssetQuantity.mul(numberOfTransactions))
-        })
-    })
-
-    describe('Repegging Check', async function() {
-        it('inital setup', async function() {
-            expect(await swap.price_scale({gasLimit})).to.eq(_1e18.mul(1000)) // internal prices
-            expect(await swap.price_oracle({gasLimit})).to.eq(_1e18.mul(1000)) // EMA
-            expect(await swap.balances(0, {gasLimit})).to.eq(_1e6.mul(_1e6))
-            expect(await swap.balances(1, {gasLimit})).to.eq(_1e18.mul(1000))
-        })
-
-        it('move pegged price up', async function() {
-            for (let i = 0; i < 10; i++) {
-                await swap.connect(mockAmm).exchangeExactOut(0, 1, _1e18.mul(15), ethers.constants.MaxUint256)
-            }
-
-            expect(await swap.price_scale({gasLimit})).to.gt(_1e18.mul(1000))
-            expect(await swap.price_oracle({gasLimit})).to.gt(_1e18.mul(1000))
-        })
-
-        it('pegged price should not move much while adding liquidity in the ratio of price', async function() {
-            await swap.setAMM(amm.address)
-            // add a total of 500K usd and ~500 eth to the pool
-            await addMargin(signers[0], _1e6.mul(4e5))
-            for (let i = 0; i < 10; i++) {
-               await clearingHouse.addLiquidity(0, _1e18.mul(50), 0)
-            }
-            expect((await swap.price_scale({gasLimit})).div(_1e6)).to.eq(_1e12.mul(1000)) // little price movement to due fee accumulation
-            expect(await swap.balances(0, {gasLimit})).to.eq(_1e6.mul(1500000))
-            expect(await swap.balances(1, {gasLimit})).to.eq(_1e18.mul(1500))
-        })
-    })
-})
 
 describe('Twap Price Tests', function() {
     /*
         Test data
-        spot price (scaled by 6 demicals) | timestamp
-        1002151330 1645010600
-        1000985181 1645010560739
-        999515051 1645010560767
-        1002487284 1645010560795
-        1001398222 1645010560809
-        999978228 1645010560837
-        1002868390 1645010560865
-        1001725466 1645010560879
-        1000386352 1645010560907
-        1003238539 1645010560935
-        1002057404 1645010560949
-        1000795971 1645010560977
-        1003612087 1645010561005
-        1002394631 1645010561019
-        1001070244 1645010561047
-        1003739258 1645010561075
-        1002399371 1645010561089
-        1001071546 1645010561117
-        1003742288 1645010561145
-        1002404121 1645010561159
-        1001072851 1645010561187
-        1003745325 1645010561215
-        1002408884 1645010561229
-        1001074159 1645010561257
-        1003748370 1645010561285
-        1002413657 1645010561299
-        1001075469 1645010561327
-        1003751421 1645010561355
-        1002418442 1645010561369
-        1001076782 1645010561397
+        spot price (scaled by 6 demicals)
+            1000000000
+            999900000
+            999700000
+            1000000000
+            999600000
+            999100000
+            999700000
+            999000000
+            998200000
+            999100000
+            998100000
+            997000000
+            998200000
+            996900000
+            995500000
+            997000000
+            995400000
+            993700000
+            995500000
+            993600000
+            991600000
+            993700000
+            991500000
+            989200000
+            991600000
+            989100000
+            986500000
+            989200000
+            986400000
+            983500000
     */
 
     before('generate sample snapshots', async function() {
         signers = await ethers.getSigners()
         alice = signers[0].address
-        ;({ swap, amm } = await setupContracts({ tradeFee: TRADE_FEE }))
+        ;({ amm } = await setupContracts({ tradeFee: TRADE_FEE }))
         // add margin
         margin = _1e6.mul(10000)
         await addMargin(signers[0], margin)
@@ -257,11 +63,21 @@ describe('Twap Price Tests', function() {
         let timestamp = Date.now()
         for (let i = 0; i < 30; i++) {
             if (i % 3 == 0) {
-                await clearingHouse.openPosition(0, baseAssetQuantity.mul(2), ethers.constants.MaxUint256)
+                let markPrice = await amm.lastPrice();
+                markPrice = markPrice.add(_1e6.mul(i).div(10))
+                const base = baseAssetQuantity.mul(2)
+                const quote = markPrice.mul(base).div(_1e18).abs()
+
+                await clearingHouse.openPosition2(0, base, quote)
                 timestamp += 14
                 await increaseEvmTime(timestamp)
             } else {
-                await clearingHouse.openPosition(0, baseAssetQuantity.mul(-1), ZERO)
+                let markPrice = await amm.lastPrice();
+                markPrice = markPrice.sub(_1e6.mul(i).div(10))
+                const base = baseAssetQuantity.mul(-1)
+                const quote = markPrice.mul(base).div(_1e18).abs()
+
+                await clearingHouse.openPosition2(0, base, quote)
                 timestamp += 28
                 await increaseEvmTime(timestamp)
             }
@@ -271,22 +87,22 @@ describe('Twap Price Tests', function() {
     it('get TWAP price', async () => {
         // latest spot price is not considered in the calcualtion as delta t is 0
         // total snapshots in 420 seconds = 18
-        // (
-        //  (1003612087+1003739258+1003742288+1003745325+1003748370+1003751421)*14 +
-        //  (1000795971+1002394631+1001070244+1002399371+1001071546+1002404121+1001072851+1002408884+1001074159+1002413657+1001075469+1002418442)*28
-        // )/420 = 1002.13
+        //  (
+        //    (997000000+998200000+995500000+993700000+991600000+989200000)*14 +
+        //    (997000000+996900000+995500000+995400000+993700000+993600000+991600000+991500000+989200000+989100000+986500000+986400000)*28
+        // ) / 420 = 992.60
 
         const twap = await amm.getTwapPrice(420)
-        expect((twap.toNumber() / 1e6).toFixed(2)).to.eq('1002.66')
+        expect((twap.toNumber() / 1e6).toFixed(2)).to.eq('992.60')
     })
 
     it('the timestamp of latest snapshot=now, the latest snapshot wont have any effect', async () => {
-        await clearingHouse.openPosition(0, baseAssetQuantity.mul(-1), ZERO)
+        await clearingHouse.openPosition2(0, baseAssetQuantity.mul(-1), ZERO)
 
         // Shaving off 20 secs from the 420s window would mean dropping the first 1003 snapshot and 6 secs off the 1002 reading.
         // twap = (1003 * 5 snapshots * 14 sec + 1002 * 22 sec + 1002*5*28 + 1001*6*28)/400 = 1002.x
         const twap = await amm.getTwapPrice(400)
-        expect((twap.toNumber() / 1e6).toFixed(2)).to.eq('1002.60')
+        expect((twap.toNumber() / 1e6).toFixed(2)).to.eq('991.39')
     })
 
     it('asking interval more than the snapshots', async () => {
@@ -294,16 +110,16 @@ describe('Twap Price Tests', function() {
         // twap = (1003 * 10 snapshots * 14 sec + 1002*10*28 + 1001*10*28)/700 ~ 1001.x
 
         const twap = await amm.getTwapPrice(900)
-        expect((twap.toNumber() / 1e6).toFixed(2)).to.eq('1002.66')
+        expect((twap.toNumber() / 1e6).toFixed(2)).to.eq('995.82')
     })
 
     it('asking interval less than latest snapshot, return latest price directly', async () => {
         // price is 1000.4
         await increaseEvmTime(Date.now() + 500)
-        await clearingHouse.openPosition(0, baseAssetQuantity.mul(-1), ZERO) // add a delay of 500 seconds
+        await clearingHouse.openPosition2(0, baseAssetQuantity.mul(-1), ZERO) // add a delay of 500 seconds
 
         const twap = await amm.getTwapPrice(420)
-        expect((twap.toNumber() / 1e6).toFixed(2)).to.eq('1000.81')
+        expect((twap.toNumber() / 1e6).toFixed(2)).to.eq('983.50')
     })
 
     it('price with interval 0 should be the same as spot price', async () => {
@@ -315,11 +131,11 @@ describe('AMM unit tests', async function() {
     before(async function() {
         signers = await ethers.getSigners()
         ;([ alice ] = signers.map(s => s.address))
-        maker = signers[9]
         bob = signers[1]
 
-        contracts = await setupContracts({ amm: { initialLiquidity: 0, ammState: 0 }})
-        ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, swap, hubbleViewer, liquidationPriceViewer } = contracts)
+        initialPrice = _1e6.mul(1000)
+        contracts = await setupContracts({ amm: { whitelist: false, initialPrice }})
+        ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, hubbleViewer, liquidationPriceViewer, orderBook } = contracts)
 
         // add margin
         margin = _1e6.mul(2000)
@@ -328,22 +144,14 @@ describe('AMM unit tests', async function() {
         await amm.setMinSizeRequirement(_1e18.div(2))
     })
 
-    it('[commit,unbond]Liquidity/openPosition fails when ammState=InActive', async () => {
-        await expect(
-            clearingHouse.commitLiquidity(0, 1)
-        ).to.be.revertedWith('Array accessed at an out-of-bounds or negative index')
-
+    it('openPosition fails when amm not whitelisted', async () => {
         // CH doesn't know about the AMM yet
         await expect(
-            clearingHouse.openPosition(0, -1, 0)
+            clearingHouse.openPosition2(0, -1, 0)
         ).to.be.revertedWith('Array accessed at an out-of-bounds or negative index')
-
-        await expect(
-            amm.unbondLiquidity(1)
-        ).to.be.revertedWith('amm_not_active')
     })
 
-    it('set ammState to Ignition', async () => {
+    it('whitelist amm', async () => {
         expect(await clearingHouse.getAmmsLength()).to.eq(0)
         let markets = await hubbleViewer.markets()
         expect(markets.length).to.eq(0)
@@ -355,63 +163,18 @@ describe('AMM unit tests', async function() {
         expect(markets.length).to.eq(1)
         expect(markets[0].amm).to.eq(amm.address)
         expect(markets[0].underlying).to.eq(weth.address)
-        expect(await amm.ammState()).to.eq(1)
     })
 
-    it('commitLiquidity works when ammState=Ignition', async () => {
-        const initialLiquidity = 1000 // eth
-        const rate = 1000 // $1k
-        vUSD = _1e6.mul(initialLiquidity * rate)
-        await utils.addMargin(maker, vUSD)
-        const { expectedMarginFraction } = await liquidationPriceViewer.getMakerExpectedMFAndLiquidationPrice(maker.address, 0, vUSD, false)
-        expect(expectedMarginFraction).to.eq('500000')
-        await clearingHouse.connect(maker).commitLiquidity(0, vUSD.mul(2))
-    })
-
-    it('ignition liquidity is honored when ammState=Ignition', async () => {
-        const ml = await hubbleViewer.getMakerLiquidity(maker.address, 0)
-        // console.log(await hubbleViewer.getMakerPositionAndUnrealizedPnl(maker.address, 0))
-        expect(ml.vUSD).to.eq(vUSD.mul(2))
-        expect(ml.totalDeposited).to.eq(vUSD.mul(2))
-    })
-
-    it('openPosition,unbondLiquidity fails when ammState=Ignition', async () => {
-        await expect(
-            clearingHouse.openPosition(0, -1, 0)
-        ).to.be.revertedWith('amm_not_active')
-
-        await expect(
-            amm.unbondLiquidity(1)
-        ).to.be.revertedWith('amm_not_active')
-    })
-
-    it('set ammState=Active', async () => {
-        await amm.liftOff()
-        expect(await amm.ammState()).to.eq(2)
-    })
-
-    it('ignition liquidity is honored when ammState=Active', async () => {
-        expect((await hubbleViewer.getMakerLiquidity(maker.address, 0)).dToken.gt(0)).to.be.true
-        const { notionalPosition, unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(maker.address)
-        expect(notionalPosition).to.eq(vUSD.mul(2))
-        expect(unrealizedPnl).to.eq(ZERO)
-    })
-
-    it('[add,unbond]Liquidity/openPosition work when ammState=Active', async () => {
-        await clearingHouse.connect(maker).addLiquidity(0, _1e18, 0)
-
-        await clearingHouse.openPosition(0, _1e18.mul(-1), 0)
-
-        dToken = (await amm.makers(maker.address)).dToken
-        await expect(
-            amm.unbondLiquidity(0)
-        ).to.be.revertedWith('unbonding_0')
-        await expect(
-            amm.unbondLiquidity(dToken.add(1))
-        ).to.be.revertedWith('unbonding_too_much')
-
-        await amm.connect(maker).unbondLiquidity(dToken)
-        expect((await amm.makers(maker.address)).unbondAmount).to.eq(dToken)
+    it('openPosition work when amm whitelisted', async () => {
+        const baseAssetQuantity = _1e18.mul(-1)
+        await clearingHouse.openPosition2(0, _1e18.mul(-1), 0)
+        const notionalPosition = baseAssetQuantity.mul(initialPrice).div(_1e18).abs()
+        await assertions(contracts, alice, {
+            size: baseAssetQuantity,
+            openNotional: notionalPosition,
+            notionalPosition,
+            unrealizedPnl: ZERO
+        })
     })
 
     it('add 2nd amm', async () => {
@@ -421,15 +184,14 @@ describe('AMM unit tests', async function() {
             [ 'AVAX-PERP', avax.address, oracle.address, 100 /* min size = 100 wei */ ],
             {
                 initialRate: 65,
-                initialLiquidity: 0,
-                ammState: 0 // Inactive
+                whitelist: false
             }
         ))
         // assert that AMM hasn't been whitelisted as yet
         expect(await clearingHouse.getAmmsLength()).to.eq(1)
     })
 
-    it('other amms will work as usual when 1 amm is inactive', async () => {
+    it('other amms will work as usual when 1 amm is not whitelisted', async () => {
         await oracle.setUnderlyingTwapPrice(weth.address, _1e6.mul(900))
         await utils.gotoNextFundingTime(amm)
 
@@ -439,126 +201,45 @@ describe('AMM unit tests', async function() {
         expect(await avaxAmm.cumulativePremiumFraction()).to.eq(0)
     })
 
-    it('other amms will work as usual when 1 amm is in ignition', async () => {
+    it('other amms will work as usual when last amm is whitelisted', async () => {
         await clearingHouse.whitelistAmm(avaxAmm.address)
-
-        expect(await clearingHouse.getAmmsLength()).to.eq(2)
-        const markets = await hubbleViewer.markets()
-        expect(markets.length).to.eq(2)
-        expect(markets[0].amm).to.eq(amm.address)
-        expect(markets[0].underlying).to.eq(weth.address)
-        expect(markets[1].amm).to.eq(avaxAmm.address)
-        expect(markets[1].underlying).to.eq(avax.address)
-
-        await utils.gotoNextFundingTime(amm)
-        await ops()
-    })
-
-    it('other amms will work as usual when last amm is made active', async () => {
-        await avaxAmm.liftOff()
         await utils.gotoNextFundingTime(avaxAmm)
 
         // reverts because reserveSnapshots.length == 0
         await expect(
             clearingHouse.settleFunding()
         ).to.reverted
-        await utils.addLiquidity(1, 1e4, 65)
 
         // opening small positions will fail
         await expect(
-            clearingHouse.connect(bob).openPosition(0, _1e18.div(-10), 0)
+            clearingHouse.connect(bob).openPosition2(0, _1e18.div(-10), 0)
         ).to.be.revertedWith('position_less_than_minSize')
         await expect(
-            clearingHouse.connect(bob).openPosition(0, _1e18.div(10), _1e18)
+            clearingHouse.connect(bob).openPosition2(0, _1e18.div(10), 0)
         ).to.be.revertedWith('position_less_than_minSize')
-        await expect(
-            clearingHouse.connect(bob).addLiquidity(1, 99, 0)
-        ).to.be.revertedWith('adding_too_less')
-        await clearingHouse.openPosition(1, -10000, 0)
+        await clearingHouse.openPosition2(1, -10000, 0)
 
         await ops()
     })
 
-    // this test has been deliberately placed at the end because it moves the times forward by quite a lot
-    // which messes with other time sensitive tests
-    it('can only removeLiquidity after unbond and during withdrawal', async () => {
-        await expect(
-            clearingHouse.connect(maker).removeLiquidity(0, dToken, 0, 0)
-        ).to.be.revertedWith('still_unbonding')
-
-        await gotoNextUnbondEpoch(amm, maker.address)
-
-        // assert the fail scenarios
-        await expect(
-            clearingHouse.connect(maker).removeLiquidity(0, dToken.add(1), 0, 0)
-        ).to.be.revertedWith('withdrawing_more_than_unbonded')
-        await expect(
-            clearingHouse.connect(maker).removeLiquidity(0, 0, 0, 0)
-        ).to.be.revertedWith('liquidity_being_removed_should_be_non_0')
-        await expect(
-            clearingHouse.connect(maker).removeLiquidity(0, dToken.sub(1), 0, 0)
-        ).to.be.revertedWith('leftover_liquidity_is_too_less')
-        await expect(
-            clearingHouse.connect(maker).removeLiquidity(0, dToken.div(10), 0, 0)
-        ).to.be.revertedWith('removing_very_small_liquidity')
-
-        const remove = dToken.div(2) // removing 1/2 to avoid leftover_liquidity_is_too_less
-        leftOver = dToken.sub(remove)
-        await clearingHouse.connect(maker).removeLiquidity(0, remove, 0, 0)
-        expect((await amm.makers(maker.address)).dToken).to.eq(leftOver)
-
-        await gotoNextWithdrawEpoch(amm, maker.address)
-        await expect(
-            clearingHouse.connect(maker).removeLiquidity(0, 1, 0, 0)
-        ).to.be.revertedWith('withdraw_period_over')
-    })
-
-    it('can unbond again and then withdraw', async () => {
-        await amm.connect(maker).unbondLiquidity(leftOver)
-        await gotoNextUnbondEpoch(amm, maker.address)
-        await clearingHouse.connect(maker).removeLiquidity(0, leftOver, 0, 0)
-        expect((await amm.makers(maker.address)).dToken).to.eq(0)
-    })
-
     it('min size requirement', async () => {
-        await clearingHouse.connect(maker).addLiquidity(0, _1e18.mul(2000), 0)
-        await clearingHouse.closePosition(0, _1e18)
+        await clearingHouse.closePosition(0)
 
         let posSize = _1e18.mul(-5)
-        await clearingHouse.openPosition(0, posSize, 0)
+        await clearingHouse.openPosition2(0, posSize, 0)
         // net position = -0.4
         posSize = _1e18.mul(46).div(10)
-        await expect(clearingHouse.openPosition(0, posSize, _1e18)).to.be.revertedWith('position_less_than_minSize')
+        await expect(clearingHouse.openPosition2(0, posSize, 0)).to.be.revertedWith('position_less_than_minSize')
         // net position = 0.3
         posSize = _1e18.mul(53).div(10)
-        await expect(clearingHouse.openPosition(0, posSize, _1e18)).to.be.revertedWith('position_less_than_minSize')
-    })
-
-    it('should not revert when size is too small', async () => {
-        const maker2 = signers[8]
-        await addMargin(maker2, _1e6.mul(2000))
-        // create a small position
-        await clearingHouse.connect(maker2).addLiquidity(1, _1e18.mul(50), 0)
-        await clearingHouse.openPosition(1, _1e18.div(-10).sub(_1e12.mul(2)), 0)
-
-        // remove maker2 liquidity
-        const _dToken = (await avaxAmm.makers(maker2.address)).dToken
-        await avaxAmm.connect(maker2).unbondLiquidity(_dToken)
-        await gotoNextUnbondEpoch(avaxAmm, maker2.address)
-        await clearingHouse.connect(maker2).removeLiquidity(1, _dToken, 0, 0)
-
-        const { size } = await avaxAmm.positions(maker2.address)
-        expect(size.abs()).lt(_1e12.div(100))
-        expect(await avaxAmm.getCloseQuote(size)).to.eq(ZERO)
-        const marginFractions = await hubbleViewer.getMarginFractionAndMakerStatus([maker2.address]) // doesn't revert
-        expect(marginFractions.fractions[0]).to.eq(ethers.constants.MaxInt256)
+        await expect(clearingHouse.openPosition2(0, posSize, 0)).to.be.revertedWith('position_less_than_minSize')
     })
 
     async function ops() {
         return Promise.all([
             clearingHouse.settleFunding(),
             clearingHouse.updatePositions(alice),
-            clearingHouse.openPosition(0, _1e18.mul(-1), 0)
+            clearingHouse.openPosition2(0, _1e18.mul(-1), 0)
         ])
     }
 })
@@ -587,36 +268,39 @@ describe('Oracle Price Spread Check', async function() {
             avax.approve(marginAccount.address, avaxMargin),
         ])
         await marginAccount.addMargin(1, avaxMargin)
+
+        // set markPrice
+        await clearingHouse.openPosition2(0, _1e18.mul(-1), 0)
     })
 
-    it('only longs allowed when markPrice is below price spread', async function() {
+    it('price decrease not allowed when markPrice is below price spread', async function() {
         // markPrice = 1000, indexPrice = 1000/0.8 = 1250
         await oracle.setUnderlyingPrice(weth.address, _1e6.mul(1250))
         expect(await amm.isOverSpreadLimit()).to.be.true
         await expect(
-            clearingHouse.openPosition(0, _1e18.mul(-5), 0)
-        ).to.be.revertedWith('VAMM._short: shorts not allowed')
+            clearingHouse.openPosition2(0, _1e18.mul(-5), _1e6.mul(4999)) // price = 4999 / 5 = 999.8
+        ).to.be.revertedWith('AMM_price_decrease_not_allowed')
 
         // longs allowed
-        await clearingHouse.openPosition(0, _1e18.mul(5), ethers.constants.MaxUint256)
+        await clearingHouse.openPosition2(0, _1e18.mul(5), _1e6.mul(5000))
     })
 
-    it('only shorts allowed when markPrice is above price spread', async function() {
+    it('price increase not allowed when markPrice is above price spread', async function() {
         // markPrice = 1000, indexPrice = 1000/1.2 = 833
         await oracle.setUnderlyingPrice(weth.address, _1e6.mul(833))
         expect(await amm.isOverSpreadLimit()).to.be.true
         await expect(
-            clearingHouse.openPosition(0, _1e18.mul(5), ethers.constants.MaxUint256)
-        ).to.be.revertedWith('VAMM._long: longs not allowed')
+            clearingHouse.openPosition2(0, _1e18.mul(5), ethers.constants.MaxUint256)
+        ).to.be.revertedWith('AMM_price_increase_not_allowed')
 
         // shorts allowed
-        await clearingHouse.openPosition(0, _1e18.mul(-5), 0)
+        await clearingHouse.openPosition2(0, _1e18.mul(-5), 0)
     })
 
     // marginFraction < maintenanceMargin < minAllowableMargin < oracleBasedMF
     it('amm isOverSpreadLimit on long side', async function() {
         expect(await amm.isOverSpreadLimit()).to.be.false
-        await clearingHouse.openPosition(0, _1e18.mul(-5), 0)
+        await clearingHouse.openPosition2(0, _1e18.mul(-5), 0)
 
         // bob makes counter-trade to drastically reduce amm based marginFraction
         avaxMargin = _1e6.mul(2000)
@@ -626,7 +310,7 @@ describe('Oracle Price Spread Check', async function() {
         ])
         await marginAccount.connect(bob).addMargin(1, avaxMargin)
         await oracle.setUnderlyingPrice(weth.address, _1e6.mul(1100))
-        await clearingHouse.connect(bob).openPosition(0, _1e18.mul(120), ethers.constants.MaxUint256)
+        await clearingHouse.connect(bob).openPosition2(0, _1e18.mul(120), _1e6.mul(144000)) // price = 1200
 
         // Get amm over spread limit
         await oracle.setUnderlyingPrice(weth.address, _1e6.mul(700))
@@ -668,21 +352,21 @@ describe('Oracle Price Spread Check', async function() {
         // However, when it comes to liquidation, oracle based pricing will kick in again
         expect(await clearingHouse.calcMarginFraction(alice, false, 0 /* Maintenance_Margin */)).to.eq(oracleBasedMF)
         await expect(
-            clearingHouse.liquidate(alice)
+            clearingHouse.liquidate2(alice)
         ).to.be.revertedWith('CH: Above Maintenance Margin')
 
         // Finally, trader will be liquidable once both MFs are < maintenanceMargin
         await oracle.setUnderlyingPrice(weth.address, _1e6.mul(1500))
         ;({ marginFraction: oracleBasedMF } = await amm.getOracleBasedMarginFraction(alice, margin))
         expect(oracleBasedMF.lt(maintenanceMargin)).to.be.true
-        await clearingHouse.liquidate(alice)
+        await clearingHouse.liquidate2(alice)
     })
 
     // we will assert that oracle based pricing kicks in when lastPrice = ~998, indexPrice = 1300
     // oracleBasedMF < maintenanceMargin < minAllowableMargin < marginFraction
     it('amm isOverSpreadLimit on short side', async function() {
         expect(await amm.isOverSpreadLimit()).to.be.false
-        await clearingHouse.openPosition(0, _1e18.mul(-5), 0)
+        await clearingHouse.openPosition2(0, _1e18.mul(-5), 0)
 
         await oracle.setUnderlyingPrice(weth.address, _1e6.mul(1300))
         expect(await amm.isOverSpreadLimit()).to.be.true
@@ -721,12 +405,12 @@ describe('Oracle Price Spread Check', async function() {
         ).to.be.revertedWith('CH: Below Minimum Allowable Margin')
 
         // can reduce position however (doesn't revert)
-        await clearingHouse.callStatic.closePosition(0, ethers.constants.MaxUint256)
+        await clearingHouse.callStatic.closePosition(0)
 
         // However, when it comes to liquidation, amm based marginFraction will kick in again
         expect(await clearingHouse.calcMarginFraction(alice, false, 0 /* Maintenance_Margin */)).to.eq(marginFraction)
         await expect(
-            clearingHouse.liquidate(alice)
+            clearingHouse.liquidate2(alice)
         ).to.be.revertedWith('CH: Above Maintenance Margin')
 
         // Finally, trader will be liquidable once both MFs are < maintenanceMargin
@@ -745,7 +429,7 @@ describe('Oracle Price Spread Check', async function() {
         expect(oracleBasedMF.lt(marginFraction)).to.be.true
         expect(marginFraction.lt(maintenanceMargin)).to.be.true
 
-        await clearingHouse.liquidate(alice)
+        await clearingHouse.liquidate2(alice)
     })
 })
 
@@ -758,138 +442,23 @@ describe('Mark price spread check in single block', async function() {
         ;({ marginAccount, oracle, clearingHouse, amm, vusd, weth } = contracts)
         // addMargin
         await addMargin(signers[0], _1e12)
-        await clearingHouse.openPosition(0, _1e18.mul(-5), 0)
+        await clearingHouse.openPosition2(0, _1e18.mul(-5), 0)
 
         // set maxPriceSpreadPerBlock = 1%
         await amm.setPriceSpreadParams(5 * 1e4, 1e4)
     })
 
-    it('does not allow trade if mark price move more than 1%', async function() {
-        await expect(clearingHouse.openPosition(0, _1e18.mul(20), _1e18)).to.be.revertedWith('AMM.long_single_block_price_slippage')
-        await expect(clearingHouse.openPosition(0, _1e18.mul(-20), 0)).to.be.revertedWith('AMM.short_single_block_price_slippage')
+    it.skip('does not allow trade if mark price move more than 1%', async function() {
+        await expect(clearingHouse.openPosition2(0, _1e18.mul(20), _1e6.mul(20200))).to.be.revertedWith('AMM.single_block_price_slippage') // price 1010
+        await expect(clearingHouse.openPosition2(0, _1e18.mul(-20), _1e6.mul(19800))).to.be.revertedWith('AMM.single_block_price_slippage') // price 990
     })
 
     it('allow trade if mark price movement is within 1%', async function() {
-        await clearingHouse.openPosition(0, _1e18.mul(18), _1e18)
-        await clearingHouse.openPosition(0, _1e18.mul(-10), 0)
-    })
-})
-
-describe('Vamm MarkPrice tests', async function() {
-    before('contract factories', async function() {
-        signers = await ethers.getSigners()
-        mockAmm = signers[0]
-        ;({ swap, amm, clearingHouse, hubbleViewer } = await setupContracts({ amm: { initialLiquidity: 10000 } }))
-        await swap.setAMM(mockAmm.address)
-    })
-
-    // K0 = 4 * x * y / D**2
-    describe('K0 < gamma + 1', async function() {
-        it('long - markPrice increases, avg price decreases', async function() {
-            const initialPrice = await swap.mark_price({gasLimit})
-            // big short - 2000
-            await swap.exchange(1, 0, _1e18.mul(2000), 0, {gasLimit})
-            const shortLastPrice = await swap.last_prices({gasLimit})
-            const shortMarkPrice = await swap.mark_price({gasLimit})
-            // avg price should be between mark price price before and after the trade
-            expect(shortLastPrice).gt(shortMarkPrice)
-            expect(shortLastPrice).lt(initialPrice)
-
-            // small long - 100
-            await swap.exchangeExactOut(0, 1, _1e18.mul(100), _1e18, {gasLimit})
-            const longLastPrice = await swap.last_prices({gasLimit})
-            const longMarkPrice = await swap.mark_price({gasLimit})
-
-            // avg price should be between mark price price before and after the trade
-            expect(longLastPrice).lt(longMarkPrice)
-            expect(longLastPrice).gt(shortMarkPrice)
-
-            expect(shortLastPrice).to.gt(longLastPrice)
-            expect(shortMarkPrice).to.lt(longMarkPrice)
-
-            const params = await getVammParams()
-            const { markPrice, K0 } = calcMarkPrice(
-                params.x, params.y, params.A, params.gamma, params.D, params.priceScale)
-
-            expect(K0).to.lt(params.gamma + 1)
-            // expect(bnToFloat(longMarkPrice, 18).toFixed(10)).to.eq(markPrice.toFixed(10))
-        })
-
-        it('short - markPrice decreases, avg price increases', async function() {
-            const initialPrice = await swap.mark_price({gasLimit})
-            // big long - 2000
-            await swap.exchangeExactOut(0, 1, _1e18.mul(2000), ethers.constants.MaxUint256, {gasLimit})
-            const longLastPrice = await swap.last_prices({gasLimit})
-            const longMarkPrice = await swap.mark_price({gasLimit})
-
-            // avg price is between mark price price before and after the trade
-            expect(longLastPrice).lt(longMarkPrice)
-            expect(longLastPrice).gt(initialPrice)
-
-            // small short - 100
-            await swap.exchange(1, 0, _1e18.mul(100), 0, {gasLimit})
-            const shortLastPrice = await swap.last_prices({gasLimit})
-            const shortMarkPrice = await swap.mark_price({gasLimit})
-
-            // avg price is between mark price price before and after the trade
-            expect(shortLastPrice).gt(shortMarkPrice)
-            expect(shortLastPrice).lt(longMarkPrice)
-
-            expect(shortLastPrice).to.gt(longLastPrice)
-            expect(shortMarkPrice).to.lt(longMarkPrice)
-
-            const params = await getVammParams()
-            const { markPrice, K0 } = calcMarkPrice(
-                params.x, params.y, params.A, params.gamma, params.D, params.priceScale)
-
-            expect(K0).to.lt(params.gamma + 1)
-            // expect(bnToFloat(shortMarkPrice, 18).toFixed(10)).to.eq(markPrice.toFixed(10))
-
-            // small trade avg price
-            const baseAsset = _1e18.div(1e2)
-            let dx = await swap.get_dx(0, 1, baseAsset, {gasLimit})
-            const dxFee = await swap.get_dx_fee(0, 1, baseAsset, {gasLimit})
-            dx = dx.sub(dxFee)
-            expect(bnToFloat(dx.mul(_1e18).div(baseAsset))).to.be.approximately(markPrice, 0.1)
-        })
-    })
-
-    // invalid for calc_mark_price2, get_dx/get_dy will revert if balances changed from outside
-    describe.skip('K0 > gamma + 1', async function() {
-        it('verify markPrice', async function() {
-            const params = await getVammParams()
-            const balances = [params.balance0, params.balance1]
-            // increase balance1 to increase K0
-            balances[1] = balances[1].add(_1e18.mul(50))
-
-            // calculate contract markPrice
-            const markPriceContract = await swap.calc_mark_price(balances)
-
-            // calculate new y for js markPrice
-            const y = bnToFloat(balances[1], 18) * params.priceScale
-            const { markPrice, K0 } = calcMarkPrice(
-                params.x, y, params.A, params.gamma, params.D, params.priceScale)
-
-            expect(K0).to.gt(params.gamma + 1)
-            expect(bnToFloat(markPriceContract, 18).toFixed(10)).to.eq(markPrice.toFixed(10))
-        })
+        await clearingHouse.openPosition2(0, _1e18.mul(20), _1e6.mul(20199))
+        await clearingHouse.openPosition2(0, _1e18.mul(-20), _1e6.mul(20000))
     })
 })
 
 async function increaseEvmTime(timeInSeconds) {
     await network.provider.send('evm_setNextBlockTimestamp', [timeInSeconds]);
-}
-
-async function getVammParams() {
-    const gasLimit = 1e6
-    const A = await swap.A({gasLimit})
-    const gamma = bnToFloat(await swap.gamma({gasLimit}), 18)
-    const D = bnToFloat(await swap.D({gasLimit}), 18)
-    const priceScale = bnToFloat(await swap.price_scale({gasLimit}), 18)
-    const balance0 = await swap.balances(0, {gasLimit})
-    const x = bnToFloat(balance0)
-    const balance1 = await swap.balances(1, {gasLimit})
-    const y = bnToFloat(balance1, 18) * priceScale
-
-    return {A, gamma, D, priceScale, x, y, balance0, balance1}
 }

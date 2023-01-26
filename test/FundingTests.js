@@ -8,7 +8,7 @@ const {
     getTwapPrice,
     parseRawEvent,
     addMargin,
-    constants: { _1e6, _1e18, ZERO }
+    constants: { _1e6, _1e18, ZERO, feeSink }
 } = require('./utils')
 
 describe('Funding Tests', function() {
@@ -34,7 +34,7 @@ describe('Funding Tests', function() {
 
         it('alice shorts and receives +ve funding', async () => {
             const baseAssetQuantity = _1e18.mul(-5)
-            let tx = await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity, _1e6.mul(4975))
+            let tx = await clearingHouse.openPosition2(0 /* amm index */, baseAssetQuantity, _1e6.mul(4975))
             ;({ quoteAsset, fee } = await getTradeDetails(tx))
 
             // underlying
@@ -52,29 +52,27 @@ describe('Funding Tests', function() {
             await clearingHouse.updatePositions(alice)
 
             let fundingReceived = premiumFraction.mul(baseAssetQuantity.mul(-1)).div(_1e18)
-            fundingReceived = fundingReceived.sub(fundingReceived.div(1e3))
             const remainingMargin = margin.add(fundingReceived).sub(fee)
             expect(await marginAccount.margin(0, alice)).to.eq(remainingMargin)
             expect(await marginAccount.getNormalizedMargin(alice)).to.eq(remainingMargin)
             expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.true
-            const { notionalPosition, unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(alice)
-            expect(notionalPosition).gt(quoteAsset)
-            expect(unrealizedPnl).lt(ZERO)
             await assertions(contracts, alice, {
                 size: baseAssetQuantity,
                 openNotional: quoteAsset,
+                notionalPosition: quoteAsset,
+                unrealizedPnl: ZERO,
                 margin: remainingMargin
             })
 
             const { totalCollateral, freeMargin } = await hubbleViewer.getAccountInfo(alice)
             const minAllowableMargin = await clearingHouse.minAllowableMargin()
             expect(totalCollateral).to.eq(remainingMargin)
-            expect(freeMargin).to.eq(remainingMargin.add(unrealizedPnl).sub(notionalPosition.mul(minAllowableMargin).div(_1e6)))
+            expect(freeMargin).to.eq(remainingMargin.sub(quoteAsset.mul(minAllowableMargin).div(_1e6)))
         })
 
         it('alice shorts and pays -ve funding', async () => {
             const baseAssetQuantity = _1e18.mul(-5)
-            let tx = await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity, _1e6.mul(4975))
+            let tx = await clearingHouse.openPosition2(0 /* amm index */, baseAssetQuantity, _1e6.mul(4975))
             ;({ quoteAsset, fee } = await getTradeDetails(tx))
 
             const oracleTwap = _1e6.mul(1100)
@@ -94,19 +92,18 @@ describe('Funding Tests', function() {
             expect(await marginAccount.margin(0, alice)).to.eq(remainingMargin)
             expect(await marginAccount.getNormalizedMargin(alice)).to.eq(remainingMargin)
             expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.true
-            const { notionalPosition, unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(alice)
-            expect(notionalPosition).gt(quoteAsset)
-            expect(unrealizedPnl).lt(ZERO)
             await assertions(contracts, alice, {
                 size: baseAssetQuantity,
                 openNotional: quoteAsset,
+                notionalPosition: quoteAsset,
+                unrealizedPnl: ZERO,
                 margin: remainingMargin
             })
         })
 
         it('alice longs and pays +ve funding', async () => {
             const baseAssetQuantity = _1e18.mul(5)
-            let tx = await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity, _1e6.mul(5100))
+            let tx = await clearingHouse.openPosition2(0 /* amm index */, baseAssetQuantity, _1e6.mul(5100))
             ;({ quoteAsset, fee } = await getTradeDetails(tx))
 
             const oracleTwap = _1e6.mul(900)
@@ -125,25 +122,23 @@ describe('Funding Tests', function() {
             expect(await marginAccount.margin(0, alice)).to.eq(remainingMargin)
             expect(await marginAccount.getNormalizedMargin(alice)).to.eq(remainingMargin)
             expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.true
-            const { notionalPosition, unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(alice)
-            expect(notionalPosition).gt(ZERO)
-            expect(notionalPosition).lt(quoteAsset)
-            expect(unrealizedPnl).lt(ZERO)
             await assertions(contracts, alice, {
                 size: baseAssetQuantity,
                 openNotional: quoteAsset,
+                notionalPosition: quoteAsset,
+                unrealizedPnl: ZERO,
                 margin: remainingMargin
             })
 
             const { totalCollateral, freeMargin } = await hubbleViewer.getAccountInfo(alice)
             const minAllowableMargin = await clearingHouse.minAllowableMargin()
             expect(totalCollateral).to.eq(remainingMargin)
-            expect(freeMargin).to.eq(remainingMargin.add(unrealizedPnl).sub(notionalPosition.mul(minAllowableMargin).div(_1e6)))
+            expect(freeMargin).to.eq(remainingMargin.sub(quoteAsset.mul(minAllowableMargin).div(_1e6)))
         })
 
         it('alice longs and receives -ve funding', async () => {
             const baseAssetQuantity = _1e18.mul(5)
-            let tx = await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity, _1e6.mul(5100))
+            let tx = await clearingHouse.openPosition2(0 /* amm index */, baseAssetQuantity, _1e6.mul(5100))
             ;({ quoteAsset, fee } = await getTradeDetails(tx))
 
             const oracleTwap = _1e6.mul(1100)
@@ -158,18 +153,15 @@ describe('Funding Tests', function() {
             await clearingHouse.updatePositions(alice)
 
             let fundingReceived = premiumFraction.mul(baseAssetQuantity).div(_1e18).mul(-1) // premiumFraction is -ve
-            fundingReceived = fundingReceived.sub(fundingReceived.div(1e3))
             const remainingMargin = margin.add(fundingReceived).sub(fee)
             expect(await marginAccount.margin(0, alice)).to.eq(remainingMargin)
             expect(await marginAccount.getNormalizedMargin(alice)).to.eq(remainingMargin)
             expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.true
-            const { notionalPosition, unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(alice)
-            expect(notionalPosition).gt(ZERO)
-            expect(notionalPosition).lt(quoteAsset)
-            expect(unrealizedPnl).lt(ZERO)
             await assertions(contracts, alice, {
                 size: baseAssetQuantity,
                 openNotional: quoteAsset,
+                notionalPosition: quoteAsset,
+                unrealizedPnl: ZERO,
                 margin: remainingMargin
             })
         })
@@ -178,7 +170,7 @@ describe('Funding Tests', function() {
             await amm.setLiquidationParams(1e6, 1e4)
 
             const baseAssetQuantity = _1e18.mul(-5)
-            let tx = await clearingHouse.openPosition(0 /* amm index */, baseAssetQuantity, _1e6.mul(4900))
+            let tx = await clearingHouse.openPosition2(0 /* amm index */, baseAssetQuantity, _1e6.mul(5000))
             ;({ quoteAsset, fee } = await getTradeDetails(tx))
 
             // $2k margin, ~$5k in notional position, < $500 margin will put them underwater => $300 funding/unit
@@ -197,30 +189,30 @@ describe('Funding Tests', function() {
             let remainingMargin = margin.sub(fundingPaid).sub(fee)
             expect(await marginAccount.margin(0, alice)).to.eq(remainingMargin)
             expect(await marginAccount.getNormalizedMargin(alice)).to.eq(remainingMargin)
-            let { notionalPosition, unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(alice)
-            expect(notionalPosition).gt(quoteAsset)
-            expect(unrealizedPnl).lt(ZERO)
             await assertions(contracts, alice, {
                 size: baseAssetQuantity,
                 openNotional: quoteAsset,
+                notionalPosition: quoteAsset,
+                unrealizedPnl: ZERO,
                 margin: remainingMargin
             })
 
             // can\'t open new positions below maintenance margin
             expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
             await expect(
-                clearingHouse.openPosition(0, _1e18.mul(-1), 0)
+                clearingHouse.openPosition2(0, _1e18.mul(-1), 0)
             ).to.be.revertedWith('CH: Below Minimum Allowable Margin')
 
             // Liquidate
+            const feeSinkBalance = await vusd.balanceOf(feeSink)
             ;({ unrealizedPnl, notionalPosition } = await amm.getNotionalPositionAndUnrealizedPnl(alice))
-            await clearingHouse.connect(liquidator1).liquidateTaker(alice)
+            await clearingHouse.connect(liquidator1).liquidate2(alice)
 
             const liquidationPenalty = notionalPosition.mul(5e4).div(_1e6)
             remainingMargin = remainingMargin.sub(liquidationPenalty).add(unrealizedPnl)
 
             expect(await marginAccount.margin(0, alice)).to.eq(remainingMargin) // entire margin is in vusd
-            expect(await vusd.balanceOf(liquidator1.address)).to.eq(liquidationPenalty.sub(liquidationPenalty.div(2)))
+            expect(await vusd.balanceOf(feeSink)).to.eq(liquidationPenalty.add(feeSinkBalance))
             await assertions(contracts, alice, {
                 size: 0,
                 openNotional: 0,
@@ -242,17 +234,20 @@ describe('Funding Tests', function() {
         await marginAccount.addMargin(1, wethAmount);
 
         const baseAssetQuantity = _1e18.mul(-5)
-        await clearingHouse.openPosition(0 , baseAssetQuantity, 0)
+        await clearingHouse.openPosition2(0 , baseAssetQuantity, 0)
         await gotoNextFundingTime(amm)
 
         // alice margin falls below maintenance margin
-        await addMargin(bob, _1e6.mul(30000))
-        await clearingHouse.connect(bob).openPosition(0, _1e18.mul(84), ethers.constants.MaxUint256)
+        const base = _1e18.mul(15)
+        const price = _1e6.mul(1220)
+        await oracle.setUnderlyingPrice(weth.address, price)
+        await addMargin(bob, base.mul(price).div(_1e18))
+        await clearingHouse.connect(bob).openPosition2(0, base, base.mul(price).div(_1e18))
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
 
         // mine extra block to change block number
         await network.provider.send("evm_mine");
-        await clearingHouse.connect(liquidator1).callStatic.liquidateTaker(alice) // doesn't throw exception
+        await clearingHouse.connect(liquidator1).callStatic.liquidate2(alice) // doesn't throw exception
 
         // funding settled
         const oracleTwap = _1e6.mul(700)
@@ -260,7 +255,7 @@ describe('Funding Tests', function() {
         await clearingHouse.settleFunding()
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.true
         await expect(
-            clearingHouse.connect(liquidator1).liquidateTaker(alice)
+            clearingHouse.connect(liquidator1).liquidate2(alice)
         ).to.be.revertedWith('Above Maintenance Margin')
     })
 
@@ -280,14 +275,14 @@ describe('Funding Tests', function() {
         it('fundingRate positive and greater than maxFundingRate', async () => {
             // alice shorts
             baseAssetQuantity = _1e18.mul(-5)
-            await clearingHouse.openPosition(0, baseAssetQuantity, 0)
+            await clearingHouse.openPosition2(0, baseAssetQuantity, 0)
             await gotoNextFundingTime(amm)
             const oracleTwap = _1e6.mul(990)
             await oracle.setUnderlyingTwapPrice(weth.address, oracleTwap)
             const ammTwap = await amm.getTwapPrice(3600) // 999
 
             const tx = await clearingHouse.settleFunding()
-            const premiumFraction = (await parseRawEvent(tx, amm, 'FundingRateUpdated')).args.premiumFraction
+            const premiumFraction = (await parseRawEvent(tx, clearingHouse, 'FundingRateUpdated')).args.premiumFraction
 
             expect(ammTwap.sub(oracleTwap).div(24)).to.gt(oracleTwap.mul(maxFundingRate).div(1e6))
             expect(premiumFraction).to.eq(oracleTwap.mul(maxFundingRate).div(1e6))
@@ -296,7 +291,6 @@ describe('Funding Tests', function() {
             await clearingHouse.updatePositions(alice)
 
             let fundingReceived = premiumFraction.mul(baseAssetQuantity.abs()).div(_1e18)
-            fundingReceived = fundingReceived.sub(fundingReceived.div(1e3))
             expect(await marginAccount.margin(0, alice)).to.eq(margin.add(fundingReceived))
         })
 
@@ -307,7 +301,7 @@ describe('Funding Tests', function() {
             const ammTwap = await amm.getTwapPrice(3600) // 999
 
             const tx = await clearingHouse.settleFunding()
-            const premiumFraction = (await parseRawEvent(tx, amm, 'FundingRateUpdated')).args.premiumFraction
+            const premiumFraction = (await parseRawEvent(tx, clearingHouse, 'FundingRateUpdated')).args.premiumFraction
 
             expect(ammTwap.sub(oracleTwap).div(24)).to.lt(oracleTwap.mul(-maxFundingRate).div(1e6))
             expect(premiumFraction).to.eq(oracleTwap.mul(-maxFundingRate).div(1e6))
@@ -321,12 +315,12 @@ describe('Funding Tests', function() {
 
         it('fundingRate positive and less than maxFundingRate', async () => {
             await gotoNextFundingTime(amm)
-            const oracleTwap = _1e6.mul(998)
+            const oracleTwap = _1e6.mul(999)
             await oracle.setUnderlyingTwapPrice(weth.address, oracleTwap)
             const ammTwap = await amm.getTwapPrice(3600) // 999
 
             const tx = await clearingHouse.settleFunding()
-            const premiumFraction = (await parseRawEvent(tx, amm, 'FundingRateUpdated')).args.premiumFraction
+            const premiumFraction = (await parseRawEvent(tx, clearingHouse, 'FundingRateUpdated')).args.premiumFraction
 
             expect(ammTwap.sub(oracleTwap).div(24)).to.lt(oracleTwap.mul(maxFundingRate).div(1e6))
             expect(premiumFraction).to.eq(ammTwap.sub(oracleTwap).div(24))
@@ -335,7 +329,6 @@ describe('Funding Tests', function() {
             await clearingHouse.updatePositions(alice)
 
             let fundingReceived = premiumFraction.mul(baseAssetQuantity.abs()).div(_1e18)
-            fundingReceived = fundingReceived.sub(fundingReceived.div(1e3))
             expect(await marginAccount.margin(0, alice)).to.eq(margin.add(fundingReceived))
         })
 
@@ -346,7 +339,7 @@ describe('Funding Tests', function() {
             const ammTwap = await amm.getTwapPrice(3600) // 999
 
             const tx = await clearingHouse.settleFunding()
-            const premiumFraction = (await parseRawEvent(tx, amm, 'FundingRateUpdated')).args.premiumFraction
+            const premiumFraction = (await parseRawEvent(tx, clearingHouse, 'FundingRateUpdated')).args.premiumFraction
 
             expect(ammTwap.sub(oracleTwap).div(24)).to.gt(oracleTwap.mul(-maxFundingRate).div(1e6))
             expect(premiumFraction).to.eq(ammTwap.sub(oracleTwap).div(24))

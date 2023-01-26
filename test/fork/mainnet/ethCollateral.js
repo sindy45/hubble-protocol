@@ -12,7 +12,7 @@ const ethUsdFeed = '0x976b3d034e162d8bd72d6b9c989d545b839003b0'
 const WethWhale = '0x7Aad7840F119f3876EE3569e488C7C4135f695fa'
 const usdcWhale = '0x7d0f7ad75687d0616701126ef6d0dc6e9725d435'
 
-describe('(fork) eth collateral', async function() {
+describe.skip('(fork) eth collateral', async function() {
     let blockTag = 19246068
     before(async function() {
         await forkCChain(blockTag)

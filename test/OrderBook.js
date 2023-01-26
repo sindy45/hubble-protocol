@@ -9,11 +9,11 @@ const {
     filterEvent
 } = utils
 
-describe.only('Order Book', function () {
+describe('Order Book', function () {
     before(async function () {
         signers = await ethers.getSigners()
         ;([, alice, bob] = signers)
-        ;({ orderBook, usdc, oracle, weth } = await setupContracts())
+        ;({ orderBook, usdc, oracle, weth } = await setupContracts({mockOrderBook: false}))
 
         await orderBook.setValidatorStatus(signers[0].address, true)
         await addMargin(alice, _1e6.mul(4000))

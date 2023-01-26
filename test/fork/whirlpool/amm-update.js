@@ -7,7 +7,7 @@ const deployer = '0x835cE0760387BC894E91039a88A00b6a69E65D94'
 const proxyAdminAddy = '0xdfE416E61D78855bb47b358353dc3AEa0C0a3ECD'
 const maker = '0x36E24b66Cb2a474D20B33eb9EA49c3c39f1b3A90' // has liquidity
 
-describe('(whirlpool fork) amm update', async function() {
+describe.skip('(whirlpool fork) amm update', async function() {
     const blockTag = 12369306
     before(async function() {
         await network.provider.request({

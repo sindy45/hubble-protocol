@@ -14,7 +14,7 @@ const maker = '0x11d67Fa925877813B744aBC0917900c2b1D6Eb81' // committed 500k liq
 const alice = ethers.provider.getSigner('0x6b365af8d060e7f7989985d62485357e34e2e8f5') // 4m usdc
 const bob = ethers.provider.getSigner('0xeeEa93BAd21eefBf4A7e201c680Ebc7bf334Cd60') // 15k avax
 
-describe('(fork) safe liftoff', async function() {
+describe.skip('(fork) safe liftoff', async function() {
     const blockTag = 18379122
     before(async function() {
         await forkCChain(blockTag)

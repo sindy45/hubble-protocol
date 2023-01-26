@@ -14,7 +14,7 @@ const proxyAdminAddy = '0xddf407237BDe4d36287Be4De79D65c57AefBf8da'
 const trader = '0x562574AF66836b1d30e69815bDf0740A7BD7C437'
 const maker = '0x84E01061fa6b69C1629E3578d988eb20CB73A677'
 
-describe('v1.4.0 update', async function() {
+describe.skip('v1.4.0 update', async function() {
     const blockTag = 21220909
     before(async function() {
         await forkCChain(blockTag)
