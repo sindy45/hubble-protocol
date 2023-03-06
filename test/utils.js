@@ -37,6 +37,12 @@ async function setupContracts(options = {}) {
     )
     ;({ governance } = options)
 
+    // uncomment to check when a particular nonce is being processed in the chain
+    // ethers.provider.on('pending', (args) => {
+    //     ;({nonce, hash} = args)
+    //     console.log('in pending', {nonce, hash});
+    // })
+
     ;([
         MarginAccountHelper,
         Registry,
@@ -172,6 +178,7 @@ async function setupContracts(options = {}) {
         50, // referralShare = .5bps
         100, // feeDiscount = 1bps
         0.05 * 1e6, // liquidationPenalty = 5%
+        getTxOptions()
     )
 
     await vusd.grantRole(ethers.utils.id('MINTER_ROLE'), marginAccount.address, getTxOptions())
@@ -302,6 +309,8 @@ async function setupAmm(governance, args, ammOptions, slowMode) {
         ammImpl.interface.encodeFunctionData('initialize', args.concat([ governance ]))
     ]
     const ammProxy = await TransparentUpgradeableProxy.deploy(...constructorArguments, getTxOptions())
+    await ammProxy.deployTransaction.wait()
+
     verification.push({ name: 'TransparentUpgradeableProxy', impl: 'AMM', address: ammProxy.address, constructorArguments })
     const amm = await ethers.getContractAt(testAmm ? 'TestAmm' : 'AMM', ammProxy.address)
 
@@ -339,12 +348,12 @@ async function setupRestrictedTestToken(name, symbol, decimals) {
     return tok
 }
 
-async function addMargin(trader, margin, token = usdc, index = 0) {
+async function addMargin(trader, margin, token = usdc, index = 0, marginAccountHelper_ = marginAccountHelper) {
     // omitting the nonce calculation here because this is only used in local
-    await token.mint(trader.address, margin, getTxOptions())
+    await token.mint(trader.address, margin)
     if (index == 0) {
-        await token.connect(trader).approve(marginAccountHelper.address, margin)
-        await marginAccountHelper.connect(trader).addVUSDMarginWithReserve(margin)
+        await token.connect(trader).approve(marginAccountHelper_.address, margin, getTxOptions())
+        await marginAccountHelper_.connect(trader).addVUSDMarginWithReserve(margin, getTxOptions())
     } else {
         await token.connect(trader).approve(marginAccount.address, margin)
         await marginAccount.addMargin(index, margin)
@@ -600,7 +609,8 @@ async function generateConfig(leaderboardAddress, marginAccountHelperAddress, ex
         systemParams: {
             maintenanceMargin: (await clearingHouse.maintenanceMargin()).toString(),
             numCollateral: collateral.length,
-            insuranceFundFee: (await clearingHouse.tradeFee()).toString(),
+            takerFee: (await clearingHouse.takerFee()).toString(),
+            makerFee: (await clearingHouse.makerFee()).toString(),
             liquidationFee: (await clearingHouse.liquidationPenalty()).toString(),
         }
     }
