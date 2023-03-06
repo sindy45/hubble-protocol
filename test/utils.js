@@ -113,7 +113,8 @@ async function setupContracts(options = {}) {
     }
 
     oracle = await setupUpgradeableProxy(options.testOracle ? 'TestOracle' : 'Oracle', proxyAdmin.address, [ governance ])
-    await oracle.setStablePrice(vusd.address, 1e6, getTxOptions()) // $1
+    tx = await oracle.setStablePrice(vusd.address, 1e6, getTxOptions()) // $1
+    await tx.wait()
 
     const hubbleReferral = await setupUpgradeableProxy('HubbleReferral', proxyAdmin.address)
 
@@ -252,6 +253,10 @@ async function setupGenesisProxy(contract, proxyAdmin, initArgs, deployArgs = []
     // for CH and MA we still need to call upgrade so that newly deployed deps can be updated
     if (_impl != '0x' + '0'.repeat(64)) {
         await proxyAdmin.upgrade(proxy.address, impl.address, getTxOptions())
+        // re-intializing CH and MA so that all related contract addresses(like vusd, amms) and state variables are updated on re-deploy
+        if (["ClearingHouse", "MarginAccount"].includes(contract)) {
+            await proxyContract.initialize(...initArgs, getTxOptions())
+        }
     } else {
         await proxyAdmin.upgradeAndCall(proxy.address, impl.address, _data, getTxOptions())
     }
@@ -577,6 +582,7 @@ async function generateConfig(leaderboardAddress, marginAccountHelperAddress, ex
         genesisBlock,
         timestamp: (await ethers.provider.getBlock(genesisBlock)).timestamp,
         contracts: {
+            OrderBook: orderBook.address,
             ClearingHouse: clearingHouse.address,
             HubbleViewer: hubbleViewer.address,
             MarginAccount: marginAccount.address,

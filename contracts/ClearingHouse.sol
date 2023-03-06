@@ -63,6 +63,9 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         orderBook = IOrderBook(_orderBook);
         vusd = VUSD(_vusd);
         hubbleReferral = IHubbleReferral(_hubbleReferral);
+
+        // resetting to handle re-deployments using proxy contracts
+        delete amms;
     }
 
     /* ****************** */
