@@ -600,6 +600,9 @@ contract AMM is IAMM, Governable {
         view
         returns (uint256)
     {
+        if (reserveSnapshots.length == 0) {
+            return getUnderlyingTwapPrice(_intervalInSeconds).toUint256();
+        }
         uint256 snapshotIndex = reserveSnapshots.length - 1;
         uint256 currentPrice = reserveSnapshots[snapshotIndex].lastPrice;
         if (_intervalInSeconds == 0) {
