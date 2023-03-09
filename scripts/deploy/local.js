@@ -2,10 +2,10 @@ const utils = require('../../test/utils')
 
 const {
     constants: { _1e6 },
-    BigNumber,
     setupContracts,
+    addMargin,
     generateConfig,
-    getTxOptions,
+    sleep,
     txOptions
 } = utils
 const gasLimit = 5e6 // subnet genesis file only allows for this much
@@ -19,6 +19,7 @@ const gasLimit = 5e6 // subnet genesis file only allows for this much
 async function main() {
     signers = await ethers.getSigners()
     governance = signers[0].address
+    ;([, alice, bob] = signers)
 
     // 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 0x70997970C51812dc3A010C7d01b50e0d17dc79C8 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC
     // console.log(signers[0].address, signers[1].address, signers[2].address)
@@ -29,16 +30,23 @@ async function main() {
     // however, if we pass the gasLimit here, the estimation is skipped and nonce makes sure that tx1 and then tx2 is mined
     txOptions.gasLimit = gasLimit
 
-    const { marginAccountHelper } =  await setupContracts({
+    const { marginAccountHelper, usdc } =  await setupContracts({
         governance,
         restrictedVUSD: false,
-        genesisProxies: true
+        genesisProxies: true,
+        mockOrderBook: false,
+        amm: {
+            initialRate: 10
+        }
     })
 
     // provide some vusd to signers[1], signers[2]
     const initialVusdAmount = _1e6.mul(1000)
     await addVUSDWithReserve(signers[1], initialVusdAmount)
     await addVUSDWithReserve(signers[2], initialVusdAmount)
+
+    await addMargin(alice, _1e6.mul(40000), usdc)
+    await addMargin(bob, _1e6.mul(40000), usdc)
 
     // setup another market
     // const btc = await setupRestrictedTestToken('Bitcoin', 'BTC', 8)
@@ -55,7 +63,8 @@ async function main() {
     //     }
     // )
 
-    console.log(JSON.stringify(await generateConfig(leaderboard.address, marginAccountHelper.address), null, 2))
+    await sleep(5)
+    console.log(JSON.stringify(await generateConfig(leaderboard.address, marginAccountHelper.address), null, 0))
 
     async function addVUSDWithReserve(trader, amount) {
         await usdc.mint(trader.address, amount)

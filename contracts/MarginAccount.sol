@@ -134,6 +134,9 @@ contract MarginAccount is IMarginAccount, HubbleBase, ReentrancyGuard {
       // commenting this out only for a bit for testing because it doesn't let us initialize repeatedly unless we run a fresh subnet
       // initializer
     {
+        // resetting to handle re-deployments using proxy contracts
+        delete supportedCollateral;
+
         _setGovernace(_governance);
         _addCollateral(_vusd, PRECISION); // weight = 1 * PRECISION
         vusd = IERC20FlexibleSupply(_vusd);

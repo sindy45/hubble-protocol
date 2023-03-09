@@ -205,10 +205,10 @@ describe('AMM unit tests', async function() {
         await clearingHouse.whitelistAmm(avaxAmm.address)
         await utils.gotoNextFundingTime(avaxAmm)
 
-        // reverts because reserveSnapshots.length == 0
-        await expect(
-            clearingHouse.settleFunding()
-        ).to.reverted
+        // settleFunding will succeed even when there's no trade; premiumFraction will be ZERO
+        await clearingHouse.settleFunding()
+
+        expect(await avaxAmm.cumulativePremiumFraction()).to.eq(ZERO)
 
         // opening small positions will fail
         await expect(
