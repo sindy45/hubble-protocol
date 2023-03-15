@@ -103,7 +103,7 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         clearingHouse.openPosition(orders[0], fillAmount, fulfillPrice, orderInfo_0.isMakerOrder);
         clearingHouse.openPosition(orders[1], -fillAmount, fulfillPrice, orderInfo_1.isMakerOrder);
 
-        emit OrdersMatched(orders, signatures, fillAmount.toUint256(), msg.sender);
+        emit OrdersMatched(orders, signatures, fillAmount.toUint256(), fulfillPrice, msg.sender);
     }
 
     function placeOrder(Order memory order, bytes memory signature) external whenNotPaused {

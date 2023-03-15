@@ -57,5 +57,14 @@ contract DeployContracts is Utils {
         // oracle
         assertEq(oracle.getUnderlyingPrice(address(wavax)), 20 * 1e6);
         assertEq(oracle.getUnderlyingTwapPrice(address(wavax), 0), 20 * 1e6);
+
+        // layer0 mock
+        assertEq(lzEndpointBase.getChainId(), baseChainId);
+        assertEq(lzEndpointOther.getChainId(), otherChainId);
+
+        // HGT
+        assertEq(address(hgt.lzEndpoint()), address(lzEndpointBase));
+        assertEq(address(hgtRemote.lzEndpoint()), address(lzEndpointOther));
+        assertEq(address(hgtRemote.usdc()), address(usdc));
     }
 }

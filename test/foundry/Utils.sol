@@ -4,6 +4,7 @@ pragma solidity 0.8.9;
 import "forge-std/Test.sol";
 import "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
+import "@layerzerolabs/solidity-examples/contracts/mocks/LZEndpointMock.sol";
 import "../../contracts/OrderBook.sol";
 import "../../contracts/ClearingHouse.sol";
 import "../../contracts/AMM.sol";
@@ -14,6 +15,8 @@ import "../../contracts/HubbleReferral.sol";
 import "../../contracts/MinimalForwarder.sol";
 import "../../contracts/Registry.sol";
 import "../../contracts/HubbleViewer.sol";
+import "../../contracts/HGT.sol";
+import "../../contracts/HGTRemote.sol";
 import "../../contracts/tests/TestOracle.sol";
 import "../../contracts/tests/ERC20Mintable.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
@@ -38,6 +41,13 @@ abstract contract Utils is Test {
     address public feeSink = makeAddr("feeSink");
     uint public makerFee = 0.0005 * 1e6; // 0.05%
     uint public takerFee = 0.0005 * 1e6; // 0.05%
+    // for layer0 bridge test
+    uint16 public baseChainId = 1;
+    uint16 public otherChainId = 2;
+    LZEndpointMock public lzEndpointBase;
+    LZEndpointMock public lzEndpointOther;
+    HGT public hgt;
+    HGTRemote public hgtRemote;
 
     uint public aliceKey;
     address public alice;
@@ -153,6 +163,25 @@ abstract contract Utils is Test {
             address(proxyAdmin),
             20 * 1e6 // $20 initial price
         );
+
+        lzEndpointBase = new LZEndpointMock(baseChainId);
+        lzEndpointOther = new LZEndpointMock(otherChainId);
+
+        HGT hgtImpl = new HGT(address(lzEndpointBase));
+        proxy = new TransparentUpgradeableProxy(
+            address(hgtImpl),
+            address(proxyAdmin),
+            abi.encodeWithSelector(InsuranceFund.initialize.selector, governance)
+        );
+        hgt = HGT(address(proxy));
+
+        HGTRemote hgtRemoteImpl = new HGTRemote(address(lzEndpointOther), address(usdc));
+        proxy = new TransparentUpgradeableProxy(
+            address(hgtRemoteImpl),
+            address(proxyAdmin),
+            abi.encodeWithSelector(InsuranceFund.initialize.selector, governance)
+        );
+        hgtRemote = HGTRemote(address(proxy));
     }
 
     function setupRestrictedTestToken(string memory name_, string memory symbol, uint8 decimals) internal returns (RestrictedErc20 token) {

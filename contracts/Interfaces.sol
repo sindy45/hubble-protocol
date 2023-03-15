@@ -75,7 +75,7 @@ interface IOrderBook {
 
     event OrderPlaced(address indexed trader, Order order, bytes signature);
     event OrderCancelled(address indexed trader, Order order);
-    event OrdersMatched(Order[2] orders, bytes[2] signatures, uint256 fillAmount, address relayer);
+    event OrdersMatched(Order[2] orders, bytes[2] signatures, uint256 fillAmount, uint price, address relayer);
     event LiquidationOrderMatched(address indexed trader, Order order, bytes signature, uint256 fillAmount, address relayer);
 
     function executeMatchedOrders(Order[2] memory orders, bytes[2] memory signatures, int256 fillAmount) external;
@@ -287,4 +287,18 @@ interface IYakRouter {
         address _tokenOut,
         uint _maxSteps
     ) external view returns(FormattedOffer memory);
+}
+
+interface IHGTCore {
+    /**
+     * @dev Emitted when `_amount` tokens are moved from the `_sender` to (`_dstChainId`, `_toAddress`)
+     * `_nonce` is the outbound nonce.
+     */
+    event SendToChain(uint16 indexed _dstChainId, address indexed _from, bytes _toAddress, uint _amount, uint64 _nonce);
+
+    /**
+     * @dev Emitted when `_amount` tokens are received from `_srcChainId` into the `_toAddress` on the local chain.
+     * `_nonce` is the inbound nonce.
+     */
+    event ReceiveFromChain(uint16 indexed _srcChainId, address indexed _to, uint _amount, uint64 _nonce);
 }

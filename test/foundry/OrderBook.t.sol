@@ -8,7 +8,7 @@ contract OrderBookTests is Utils {
 
     event OrderPlaced(address indexed trader, OrderBook.Order order, bytes signature);
     event OrderCancelled(address indexed trader, OrderBook.Order order);
-    event OrdersMatched(OrderBook.Order[2] orders, bytes[2] signatures, uint256 fillAmount, address relayer);
+    event OrdersMatched(OrderBook.Order[2] orders, bytes[2] signatures, uint256 fillAmount, uint price, address relayer);
     event LiquidationOrderMatched(address indexed trader, OrderBook.Order order, bytes signature, uint256 fillAmount, address relayer);
 
     function setUp() public {
@@ -40,6 +40,11 @@ contract OrderBookTests is Utils {
         order.salt += 1;
         vm.expectRevert("OB_SINT"); // Signature and order doesn't match
         orderBook.placeOrder(order, signature);
+
+        order.salt -= 1;
+        orderBook.cancelOrder(order);
+        (,filledAmount, status) = orderBook.orderInfo(orderHash);
+        assertEq(uint(status), 3); // cancelled
         vm.stopPrank();
     }
 
@@ -69,7 +74,7 @@ contract OrderBookTests is Utils {
         addMargin(bob, quote / 2);
 
         vm.expectEmit(false, false, false, true, address(orderBook));
-        emit OrdersMatched(orders, signatures, uint(size), address(this));
+        emit OrdersMatched(orders, signatures, uint(size), uint(price), address(this));
         orderBook.executeMatchedOrders(orders, signatures, size);
 
         (,int filledAmount, OrderBook.OrderStatus status) = orderBook.orderInfo(ordersHash[0]);
