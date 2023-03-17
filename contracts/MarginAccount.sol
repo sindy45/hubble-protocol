@@ -81,40 +81,6 @@ contract MarginAccount is IMarginAccount, HubbleBase, ReentrancyGuard {
 
     uint256[49] private __gap;
 
-    /* ****************** */
-    /*       Events       */
-    /* ****************** */
-
-    /// @notice Emitted when user adds margin for any of the supported collaterals
-    event MarginAdded(address indexed trader, uint256 indexed idx, uint amount, uint256 timestamp);
-
-    /// @notice Emitted when user removes margin for any of the supported collaterals
-    event MarginRemoved(address indexed trader, uint256 indexed idx, uint256 amount, uint256 timestamp);
-
-    /**
-    * @notice Mutates trader's vUSD balance
-    * @param trader Account who is realizing PnL
-    * @param realizedPnl Increase or decrease trader's vUSD balace by. +ve/-ve value means vUSD is added/removed respectively from trader's margin
-    */
-    event PnLRealized(address indexed trader, int256 realizedPnl, uint256 timestamp);
-
-    /**
-    * @notice Emitted when a trader's margin account is liquidated i.e. their vUSD debt is repayed in exchange for their collateral
-    * @param trader Trader whose margin account was liquidated
-    * @param idx Index of the collateral that was seized during the liquidation
-    * @param seizeAmount Amount of the collateral that was seized during the liquidation
-    * @param repayAmount The debt that was repayed
-    */
-    event MarginAccountLiquidated(address indexed trader, uint indexed idx, uint seizeAmount, uint repayAmount, uint256 timestamp);
-
-    /**
-    * @notice Emitted when funds from insurance fund are tasked to settle system's bad debt
-    * @param trader Account for which the bad debt was settled
-    * @param seized Collateral amounts that were seized
-    * @param repayAmount Debt that was settled. it's exactly equal to -vUSD when vUSD < 0
-    */
-    event SettledBadDebt(address indexed trader, uint[] seized, uint repayAmount, uint256 timestamp);
-
     modifier onlyClearingHouse() {
         require(_msgSender() == address(clearingHouse), "Only clearingHouse");
         _;

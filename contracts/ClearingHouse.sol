@@ -36,13 +36,6 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
 
     uint256[50] private __gap;
 
-    event PositionModified(address indexed trader, uint indexed idx, int256 baseAsset, uint quoteAsset, int256 realizedPnl, int256 size, uint256 openNotional, uint256 timestamp);
-    event PositionLiquidated(address indexed trader, uint indexed idx, int256 baseAsset, uint256 quoteAsset, int256 realizedPnl, int256 size, uint256 openNotional, uint256 timestamp);
-    event MarketAdded(uint indexed idx, address indexed amm);
-    event ReferralBonusAdded(address indexed referrer, uint referralBonus);
-    event FundingPaid(address indexed trader, uint indexed idx, int256 takerFundingPayment, int256 cumulativePremiumFraction);
-    event FundingRateUpdated(uint indexed idx, int256 premiumFraction, uint256 underlyingPrice, int256 cumulativePremiumFraction, uint256 nextFundingTime, uint256 timestamp, uint256 blockNumber);
-
     constructor(address _trustedForwarder) HubbleBase(_trustedForwarder) {}
 
     function initialize(

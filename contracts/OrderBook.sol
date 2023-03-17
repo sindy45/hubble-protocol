@@ -66,7 +66,8 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         Order[2] memory orders,
         bytes[2] memory signatures,
         int256 fillAmount
-    )   external
+    )   override
+        external
         whenNotPaused
         onlyValidator
     {
@@ -148,7 +149,8 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         Order memory order,
         bytes memory signature,
         uint256 toLiquidate
-    )   external
+    )   override
+        external
         whenNotPaused
         onlyValidator
     {
