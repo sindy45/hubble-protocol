@@ -14,6 +14,7 @@ import {
 } from "./Interfaces.sol";
 
 /**
+* @dev obsolete for v2
 * @title This contract is used for creating stratageies with deposited collateral
 */
 contract PortfolioManager {
@@ -33,9 +34,9 @@ contract PortfolioManager {
         clearingHouse = IClearingHouse(registry.clearingHouse());
         vusd = IVUSD(registry.vusd());
         yakRouter = IYakRouter(_yakRouter);
-        reserveToken = IERC20(vusd.reserveToken());
+        // reserveToken = IERC20(vusd.reserveToken());
         // infinite approvals
-        reserveToken.safeApprove(address(vusd), type(uint).max);
+        // reserveToken.safeApprove(address(vusd), type(uint).max);
     }
 
     /**

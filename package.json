@@ -5,12 +5,8 @@
   "main": "index.js",
   "scripts": {
     "compile": "npx hardhat compile && tsc",
-    "compile:swap": "vyper -f abi,bytecode contracts/curve-v2/Swap.vy > contracts/curve-v2/Swap.txt",
-    "compile:CurveMath": "vyper -f abi,bytecode contracts/curve-v2/CurveMath.vy > contracts/curve-v2/CurveMath.txt",
-    "compile:views": "vyper -f abi,bytecode contracts/curve-v2/Views.vy > contracts/curve-v2/Views.txt",
-    "vyper-compile": "npm run compile:swap && npm run compile:CurveMath && npm run compile:views",
-    "compile:all": "npm run vyper-compile && npm run compile",
-    "test": "npx hardhat test",
+    "test": "npx hardhat test && forge test -vvv",
+    "foundry-test": "forge test -vvv",
     "coverage": "hardhat coverage",
     "gas-reporter": "REPORT_GAS=true npx hardhat test"
   },

@@ -8,6 +8,7 @@ const {
     parseRawEvent,
     signTransaction,
     setupContracts,
+    addMargin,
     setDefaultClearingHouseParams
 } = utils
 
@@ -115,10 +116,4 @@ describe('Clearing House Meta Txs', async function() {
             expect(error.message).to.contain('META_EXEC_FAILED:').and.contain('CH: Below Minimum Allowable Margin')
         }
     })
-
-    async function addMargin(trader, margin) {
-        await usdc.mint(trader.address, margin)
-        await usdc.connect(trader).approve(marginAccountHelper.address, margin)
-        await marginAccountHelper.connect(trader).addVUSDMarginWithReserve(margin)
-    }
 })

@@ -120,7 +120,7 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         emit OrderPlaced(order.trader, order, signature);
     }
 
-    function cancelOrder(Order memory order) external {
+    function cancelOrder(Order memory order) public {
         require(msg.sender == order.trader, "OB_sender_is_not_trader");
         bytes32 orderHash = getOrderHash(order);
         // order status should be placed
@@ -192,6 +192,16 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
 
     function getOrderHash(Order memory order) public view returns (bytes32) {
         return _hashTypedDataV4(keccak256(abi.encode(ORDER_TYPEHASH, order)));
+    }
+
+    /* ****************** */
+    /*   Test/UI Helpers  */
+    /* ****************** */
+
+    function cancelMultipleOrders(Order[] memory orders) external {
+        for (uint i; i < orders.length; i++) {
+            cancelOrder(orders[i]);
+        }
     }
 
     /* ****************** */

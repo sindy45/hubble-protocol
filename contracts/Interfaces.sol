@@ -229,9 +229,10 @@ interface IERC20FlexibleSupply is IERC20 {
     function burn(uint256 amount) external;
 }
 
-interface IVUSD is IERC20 {
-    function mintWithReserve(address to, uint amount) external;
-    function reserveToken() external view returns(address);
+interface IVUSD {
+    event WithdrawalFailed(address indexed trader, uint amount, bytes data);
+    
+    function mintWithReserve(address to, uint amount) external payable;
     function withdraw(uint amount) external;
     function processWithdrawals() external;
 }

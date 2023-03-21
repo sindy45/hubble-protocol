@@ -62,7 +62,7 @@ abstract contract Utils is Test {
         forwarder = new MinimalForwarder();
         usdc = new ERC20Mintable('USD Coin', 'USDC', 6);
 
-        VUSD vusdImpl = new VUSD(address(usdc));
+        VUSD vusdImpl = new VUSD();
         TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(
             address(vusdImpl),
             address(proxyAdmin),
@@ -220,11 +220,11 @@ abstract contract Utils is Test {
     @dev only supports usdc collateral for now
     */
     function addMargin(address trader, uint margin) internal {
-        usdc.mint(trader, margin);
+        uint hgtRequired = margin * 1e12;
+        vm.deal(trader, hgtRequired);
 
         vm.startPrank(trader);
-        usdc.approve(address(marginAccountHelper), margin);
-        marginAccountHelper.addVUSDMarginWithReserve(margin);
+        marginAccountHelper.addVUSDMarginWithReserve{value: hgtRequired}(margin);
         vm.stopPrank();
     }
 
@@ -275,5 +275,14 @@ abstract contract Utils is Test {
         assertEq(positions[0].openNotional, openNotional);
         assertEq(positions[0].unrealizedPnl, unrealizedPnl);
         assertApproxEqAbs(positions[0].avgOpen, avgOpen, 1);
+    }
+
+    function mintVusd(address trader, uint amount) internal {
+        vm.prank(trader);
+        uint scaledAmount = amount * 1e12;
+        if (trader.balance < scaledAmount) {
+            vm.deal(trader, scaledAmount);
+        }
+        husd.mintWithReserve{value: scaledAmount}(address(trader), amount);
     }
 }

@@ -7,7 +7,7 @@ const {
     constants: { _1e6, _1e18, ZERO }
 } = require('./utils')
 
-describe('Swap Collateral Tests', function() {
+describe.skip('Swap Collateral Tests', function() {
     before('contract factories', async function() {
         signers = await ethers.getSigners()
         alice = signers[0].address

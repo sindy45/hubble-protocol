@@ -3,6 +3,7 @@ const { expect } = require('chai');
 const {
     setupContracts,
     setupRestrictedTestToken,
+    addMargin,
     constants: { _1e6, _1e18 }
 } = require('./utils')
 
@@ -15,9 +16,7 @@ describe('Margin Account Tests', function() {
 
     it('addVUSDMarginWithReserve', async () => {
         margin = _1e6.mul(2000)
-        await usdc.mint(alice, margin)
-        await usdc.approve(marginAccountHelper.address, margin)
-        await marginAccountHelper.addVUSDMarginWithReserve(margin);
+        await addMargin(signers[0] /** alice */, margin)
 
         expect(await marginAccount.margin(0, alice)).to.eq(margin)
         expect(await marginAccount.getNormalizedMargin(alice)).to.eq(margin)

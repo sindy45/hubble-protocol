@@ -13,7 +13,6 @@ contract DeployContracts is Utils {
         // husd
         assertEq(husd.name(), 'Hubble USD');
         assertEq(husd.symbol(), 'hUSD');
-        assertEq(address(husd.reserveToken()), address(usdc));
 
         // marginAccount
         assertEq(marginAccount.isTrustedForwarder(address(forwarder)), true);

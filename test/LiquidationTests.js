@@ -156,12 +156,6 @@ describe('Liquidation Tests', async function() {
         expect(spot.gt(ZERO)).to.be.true
         expect((await marginAccount.isLiquidatable(alice, true))[0]).to.eq(2) // NO_DEBT
     })
-
-    async function addMargin(trader, margin) {
-        await usdc.mint(trader.address, margin)
-        await usdc.connect(trader).approve(marginAccountHelper.address, margin)
-        await marginAccountHelper.connect(trader).addVUSDMarginWithReserve(margin)
-    }
 })
 
 describe('Multi-collateral Liquidation Tests', async function() {
@@ -412,12 +406,6 @@ describe('Multi-collateral Liquidation Tests', async function() {
         expect(await vusd.balanceOf(insuranceFund.address)).to.eq(ifVusdBal)
         expect(await insuranceFund.isAuctionOngoing(avax.address)).to.eq(false)
     })
-
-    async function addMargin(trader, margin) {
-        await usdc.mint(trader.address, margin)
-        await usdc.connect(trader).approve(marginAccountHelper.address, margin)
-        await marginAccountHelper.connect(trader).addVUSDMarginWithReserve(margin)
-    }
 })
 
 describe('Partial Liquidation Threshold', async function() {

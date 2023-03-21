@@ -1,10 +1,11 @@
 const utils = require('../../test/utils')
+const { addVUSDWithReserve, addMargin } = require('./deployUtils')
 
 const {
     constants: { _1e6 },
     setupContracts,
-    addMargin,
     generateConfig,
+    getTxOptions,
     sleep,
     txOptions
 } = utils
@@ -30,7 +31,7 @@ async function main() {
     // however, if we pass the gasLimit here, the estimation is skipped and nonce makes sure that tx1 and then tx2 is mined
     txOptions.gasLimit = gasLimit
 
-    const { marginAccountHelper, usdc } =  await setupContracts({
+    const { marginAccountHelper, orderBook } =  await setupContracts({
         governance,
         restrictedVUSD: false,
         genesisProxies: true,
@@ -40,13 +41,11 @@ async function main() {
         }
     })
 
-    // provide some vusd to signers[1], signers[2]
-    const initialVusdAmount = _1e6.mul(1000)
-    await addVUSDWithReserve(signers[1], initialVusdAmount)
-    await addVUSDWithReserve(signers[2], initialVusdAmount)
+    await addMargin(alice, _1e6.mul(40000), gasLimit)
+    await addMargin(bob, _1e6.mul(40000), gasLimit)
 
-    await addMargin(alice, _1e6.mul(40000), usdc)
-    await addMargin(bob, _1e6.mul(40000), usdc)
+    // whitelist evm address for order execution transactions
+    await orderBook.setValidatorStatus(ethers.utils.getAddress('0x8db97C7cEcE249c2b98bDC0226Cc4C2A57BF52FC'), true)
 
     // setup another market
     // const btc = await setupRestrictedTestToken('Bitcoin', 'BTC', 8)
@@ -65,12 +64,6 @@ async function main() {
 
     await sleep(5)
     console.log(JSON.stringify(await generateConfig(leaderboard.address, marginAccountHelper.address), null, 0))
-
-    async function addVUSDWithReserve(trader, amount) {
-        await usdc.mint(trader.address, amount)
-        await usdc.connect(trader).approve(vusd.address, amount)
-        await vusd.connect(trader).mintWithReserve(trader.address, amount, { gasLimit })
-    }
 }
 
 main()

@@ -70,8 +70,7 @@ async function setupContracts(options = {}) {
     vusd = await setupUpgradeableProxy(
         options.restrictedVUSD ? 'RestrictedVusd' : 'VUSD',
         proxyAdmin.address,
-        ['Hubble USD', 'hUSD'],
-        [ usdc.address ]
+        ['Hubble USD', 'hUSD']
     )
 
     // setup genesis proxies on the hubblenet if requested
@@ -333,13 +332,6 @@ async function setupAmm(governance, args, ammOptions, slowMode) {
     return { amm }
 }
 
-async function addLiquidity(index, liquidity, rate, minDtoken = 0) {
-    maker = (await ethers.getSigners())[9]
-    const netUSD = _1e6.mul(liquidity * rate * 2)
-    await addMargin(maker, netUSD)
-    await clearingHouse.connect(maker).addLiquidity(index, _1e18.mul(liquidity), minDtoken)
-}
-
 async function setupRestrictedTestToken(name, symbol, decimals) {
     const RestrictedErc20 = await ethers.getContractFactory('RestrictedErc20')
     const tok = await RestrictedErc20.deploy(name, symbol, decimals, getTxOptions())
@@ -348,12 +340,19 @@ async function setupRestrictedTestToken(name, symbol, decimals) {
     return tok
 }
 
+/**
+* @dev to be used only for hardhat tests, do not use with subnet
+ */
 async function addMargin(trader, margin, token = usdc, index = 0, marginAccountHelper_ = marginAccountHelper) {
-    // omitting the nonce calculation here because this is only used in local
-    await token.mint(trader.address, margin)
     if (index == 0) {
-        await token.connect(trader).approve(marginAccountHelper_.address, margin, getTxOptions())
-        await marginAccountHelper_.connect(trader).addVUSDMarginWithReserve(margin, getTxOptions())
+        const hgtAmount = _1e12.mul(margin)
+        const balance = await ethers.provider.getBalance(trader.address)
+        if (balance.lt(hgtAmount)) {
+            // adding extra gas token to pay for gas
+            // leading 0s throw error in next step, hence truncating leading 0s
+            await setBalance(trader.address, hgtAmount.mul(2).toHexString().replace(/0x0+/, "0x"))
+        }
+        await marginAccountHelper_.connect(trader).addVUSDMarginWithReserve(margin, {value: hgtAmount})
     } else {
         await token.connect(trader).approve(marginAccount.address, margin)
         await marginAccount.addMargin(index, margin)
@@ -557,7 +556,6 @@ async function generateConfig(leaderboardAddress, marginAccountHelperAddress, ex
     const clearingHouse = await ethers.getContractAt('ClearingHouse', await hubbleViewer.clearingHouse())
     const marginAccount = await ethers.getContractAt('MarginAccount', await hubbleViewer.marginAccount())
     const vusd = await ethers.getContractAt('VUSD', await clearingHouse.vusd())
-    const usdc = await vusd.reserveToken()
     const hubbleReferral = await clearingHouse.hubbleReferral()
 
     const _amms = await clearingHouse.getAMMs()
@@ -601,7 +599,6 @@ async function generateConfig(leaderboardAddress, marginAccountHelperAddress, ex
             Leaderboard: leaderboardAddress,
             MarginAccountHelper: marginAccountHelperAddress,
             HubbleReferral: hubbleReferral,
-            usdc,
             vusd: vusd.address,
             amms,
             collateral,
@@ -715,7 +712,6 @@ module.exports = {
     assertBounds,
     generateConfig,
     sleep,
-    addLiquidity,
     bnToFloat,
     unbondAndRemoveLiquidity,
     gotoNextWithdrawEpoch,

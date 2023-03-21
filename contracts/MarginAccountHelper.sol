@@ -16,23 +16,19 @@ contract MarginAccountHelper {
 
     IMarginAccount marginAccount;
     VUSD vusd;
-    IERC20 public reserveToken;
     IWAVAX public wavax;
 
     constructor(address _marginAccount, address _vusd, address _wavax) {
         marginAccount = IMarginAccount(_marginAccount);
         vusd = VUSD(_vusd);
-        reserveToken = vusd.reserveToken();
         wavax = IWAVAX(_wavax);
 
-        reserveToken.safeApprove(_vusd, type(uint).max);
         IERC20(_vusd).safeApprove(_marginAccount, type(uint).max);
         wavax.safeApprove(_marginAccount, type(uint).max);
     }
 
-    function addVUSDMarginWithReserve(uint256 amount) external {
-        reserveToken.safeTransferFrom(msg.sender, address(this), amount);
-        vusd.mintWithReserve(address(this), amount);
+    function addVUSDMarginWithReserve(uint256 amount) external payable {
+        vusd.mintWithReserve{value: msg.value}(address(this), amount);
         marginAccount.addMarginFor(VUSD_IDX, amount, msg.sender);
     }
 

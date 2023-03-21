@@ -43,7 +43,7 @@ module.exports = {
             chainId: 1337
         },
         subnet: {
-            url: 'http://127.0.0.1:9650/ext/bc/2QVZLgXSs9ZhcUWgppD543x4iw5oCSrXtasU7Yns21SL2Mgu87/rpc', // changes on every fresh run
+            url: 'http://127.0.0.1:9650/ext/bc/ApqPLzkwctjXTxsFAfcUoVyxCmReQ9vTARdnBunuMna3DzLaF/rpc', // changes on every fresh run
             chainId: 321123,
             throwOnTransactionFailures: true,
             gasLimit: 5000000,

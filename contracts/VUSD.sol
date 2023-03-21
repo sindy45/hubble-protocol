@@ -2,18 +2,14 @@
 
 pragma solidity 0.8.9;
 
-import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { ReentrancyGuard } from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
-import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import { ERC20PresetMinterPauserUpgradeable } from "@openzeppelin/contracts-upgradeable/token/ERC20/presets/ERC20PresetMinterPauserUpgradeable.sol";
+import { IVUSD } from './Interfaces.sol';
 
-contract VUSD is ERC20PresetMinterPauserUpgradeable, ReentrancyGuard {
-    using SafeERC20 for IERC20;
+contract VUSD is ERC20PresetMinterPauserUpgradeable, ReentrancyGuard, IVUSD {
 
     uint8 private constant PRECISION = 6;
-
-    /// @notice vUSD is backed 1:1 with reserveToken (USDC)
-    IERC20 public immutable reserveToken;
+    uint256 private constant SCALING_FACTOR = 1e12;
 
     struct Withdrawal {
         address usr;
@@ -29,30 +25,31 @@ contract VUSD is ERC20PresetMinterPauserUpgradeable, ReentrancyGuard {
 
     uint256[50] private __gap;
 
-    constructor(address _reserveToken) {
-        require(_reserveToken != address(0), "vUSD: null _reserveToken");
-        reserveToken = IERC20(_reserveToken);
-    }
-
     function initialize(string memory name, string memory symbol) public override virtual {
         super.initialize(name, symbol); // has initializer modifier
         _revokeRole(MINTER_ROLE, _msgSender()); // __ERC20PresetMinterPauser_init_unchained grants this but is not required
         maxWithdrawalProcesses = 100;
     }
 
-    function mintWithReserve(address to, uint amount) external whenNotPaused {
-        reserveToken.safeTransferFrom(msg.sender, address(this), amount);
+    /**
+    * @notice mint hUSD by depositing hubble gas token
+    * @param to address to mint for
+    * @param amount amount to mint - precision 1e6
+    */
+    /// @dev keeping the function name same as v1 for compatibility
+    function mintWithReserve(address to, uint amount) external override payable whenNotPaused {
+        require(msg.value == amount * SCALING_FACTOR, "vUSD: Insufficient amount transferred");
         _mint(to, amount);
     }
 
-    function withdraw(uint amount) external whenNotPaused {
+    function withdraw(uint amount) external override whenNotPaused {
         require(amount >= 5 * (10 ** PRECISION), "min withdraw is 5 vusd");
         burn(amount);
-        withdrawals.push(Withdrawal(msg.sender, amount));
+        withdrawals.push(Withdrawal(msg.sender, amount * SCALING_FACTOR));
     }
 
-    function processWithdrawals() external whenNotPaused nonReentrant {
-        uint reserve = reserveToken.balanceOf(address(this));
+    function processWithdrawals() external override whenNotPaused nonReentrant {
+        uint reserve = address(this).balance;
         require(reserve >= withdrawals[start].amount, 'Cannot process withdrawals at this time: Not enough balance');
         uint i = start;
         while (i < withdrawals.length && (i - start) < maxWithdrawalProcesses) {
@@ -60,10 +57,16 @@ contract VUSD is ERC20PresetMinterPauserUpgradeable, ReentrancyGuard {
             if (reserve < withdrawal.amount) {
                 break;
             }
-            reserve -= withdrawal.amount;
-            reserveToken.safeTransfer(withdrawal.usr, withdrawal.amount);
+
+            (bool success, bytes memory data) = withdrawal.usr.call{value: withdrawal.amount}("");
+            if (success) {
+                reserve -= withdrawal.amount;
+            } else {
+                emit WithdrawalFailed(withdrawal.usr, withdrawal.amount, data);
+            }
             i += 1;
         }
+        // re-entracy not possible, hence can update `start` at the end
         start = i;
     }
 
@@ -74,6 +77,10 @@ contract VUSD is ERC20PresetMinterPauserUpgradeable, ReentrancyGuard {
         for (uint i = 0; i < l; i++) {
             queue[i] = withdrawals[start+i];
         }
+    }
+
+    function withdrawalQLength() external view returns (uint) {
+        return withdrawals.length;
     }
 
     function decimals() public pure override returns (uint8) {

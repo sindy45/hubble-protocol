@@ -44,4 +44,4 @@ jobs:
       run: forge --version
 
     - name: Run Foundry tests
-      run: forge test -vvv
+      run: npm run foundry-test

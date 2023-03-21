@@ -19,3 +19,4 @@ dist
 out
 forge-cache
 lib/forge-std
+scripts/deploy/test-deploy/config.json
