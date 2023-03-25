@@ -7,6 +7,7 @@
     "compile": "npx hardhat compile && tsc",
     "test": "npx hardhat test && forge test -vvv",
     "foundry-test": "forge test -vvv",
+    "hardhat-test": "npx hardhat test",
     "coverage": "hardhat coverage",
     "gas-reporter": "REPORT_GAS=true npx hardhat test"
   },

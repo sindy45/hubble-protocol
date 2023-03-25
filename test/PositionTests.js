@@ -287,7 +287,7 @@ describe('Position Tests', async function() {
         })
 
         it("open an empty position", async () => {
-            await expect(clearingHouse.openPosition2(0, 0, 0)).to.be.revertedWith('CH: baseAssetQuantity == 0')
+            await expect(clearingHouse.openPosition2(0, 0, 0)).to.be.revertedWith('AMM._short: baseAssetQuantity is >= 0')
             expect(await amm.longOpenInterestNotional()).to.eq(ZERO)
             expect(await amm.shortOpenInterestNotional()).to.eq(ZERO)
         })

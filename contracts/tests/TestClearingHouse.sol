@@ -49,4 +49,8 @@ contract TestClearingHouse is ClearingHouse {
         updatePositions(trader);
         _liquidateSingleAmm(trader, 0, price, fillAmount);
     }
+
+    function setAMM(uint idx, address amm) external {
+        amms[idx] = IAMM(amm);
+    }
 }

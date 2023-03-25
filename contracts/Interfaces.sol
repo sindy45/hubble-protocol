@@ -27,7 +27,14 @@ interface IClearingHouse {
     event FundingPaid(address indexed trader, uint indexed idx, int256 takerFundingPayment, int256 cumulativePremiumFraction);
     event FundingRateUpdated(uint indexed idx, int256 premiumFraction, uint256 underlyingPrice, int256 cumulativePremiumFraction, uint256 nextFundingTime, uint256 timestamp, uint256 blockNumber);
 
-    function openPosition(IOrderBook.Order memory order, int256 fillAmount, uint256 fulfillPrice, bool isMakerOrder) external;
+    function openComplementaryPositions(
+        IOrderBook.Order[2] memory orders,
+        IOrderBook.MatchInfo[2] memory matchInfo,
+        int256 fillAmount,
+        uint fulfillPrice
+    )  external;
+
+    // function openPosition(IOrderBook.Order memory order, int256 fillAmount, uint256 fulfillPrice, bool isMakerOrder) external;
     function settleFunding() external;
     function getTotalNotionalPositionAndUnrealizedPnl(address trader, int256 margin, Mode mode)
         external
@@ -49,7 +56,13 @@ interface IClearingHouse {
         external
         view
         returns(uint256 notionalPosition, int256 margin);
-    function liquidate(address trader, uint ammIdx, uint price, int toLiquidate) external;
+    function liquidate(
+        IOrderBook.Order calldata order,
+        IOrderBook.MatchInfo calldata matchInfo,
+        int256 liquidationAmount,
+        uint price,
+        address trader
+    ) external;
     function feeSink() external view returns(address);
     function calcMarginFraction(address trader, bool includeFundingPayments, Mode mode) external view returns(int256);
 }
@@ -66,6 +79,13 @@ interface IInsuranceFund {
 }
 
 interface IOrderBook {
+    enum OrderStatus {
+        Invalid,
+        Placed,
+        Filled,
+        Cancelled
+    }
+
     struct Order {
         uint256 ammIndex;
         address trader;
@@ -74,17 +94,18 @@ interface IOrderBook {
         uint256 salt;
     }
 
-    enum OrderStatus {
-        Invalid,
-        Placed,
-        Filled,
-        Cancelled
+    struct MatchInfo {
+        bytes32 orderHash;
+        uint blockPlaced;
+        bool isMakerOrder;
     }
 
-    event OrderPlaced(address indexed trader, Order order, bytes signature);
-    event OrderCancelled(address indexed trader, Order order);
-    event OrdersMatched(Order[2] orders, bytes[2] signatures, uint256 fillAmount, uint price, address relayer);
-    event LiquidationOrderMatched(address indexed trader, Order order, bytes signature, uint256 fillAmount, address relayer);
+    event OrderPlaced(address indexed trader, Order order, bytes signature, bytes32 orderHash);
+    event OrderCancelled(address indexed trader, bytes32 orderHash);
+    event OrdersMatched(bytes32[2] orderHash, uint256 fillAmount, uint price, address relayer);
+    event LiquidationOrderMatched(address indexed trader, bytes32 orderHash, bytes signature, uint256 fillAmount, address relayer);
+    event OrderMatchingError(bytes32 indexed orderHash, string err);
+    event LiquidationError(address indexed trader, bytes32 orderHash, string err, uint256 toLiquidate);
 
     function executeMatchedOrders(Order[2] memory orders, bytes[2] memory signatures, int256 fillAmount) external;
     function settleFunding() external;
@@ -231,7 +252,7 @@ interface IERC20FlexibleSupply is IERC20 {
 
 interface IVUSD {
     event WithdrawalFailed(address indexed trader, uint amount, bytes data);
-    
+
     function mintWithReserve(address to, uint amount) external payable;
     function withdraw(uint amount) external;
     function processWithdrawals() external;

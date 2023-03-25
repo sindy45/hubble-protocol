@@ -21,7 +21,6 @@ describe('Order Book', function () {
     })
 
     it('verify signer', async function() {
-
         domain = {
             name: 'Hubble',
             version: '2.0',
@@ -60,6 +59,7 @@ describe('Order Book', function () {
             shortOrder.trader,
             Object.values(shortOrder),
             signature1,
+            order1Hash
         )
         await expect(orderBook.connect(alice).placeOrder(shortOrder, signature1)).to.revertedWith('OB_Order_already_exists')
         expect((await orderBook.orderInfo(order1Hash)).status).to.eq(1) // placed
@@ -85,12 +85,12 @@ describe('Order Book', function () {
 
         order2Hash = await orderBook.getOrderHash(longOrder)
 
-        await expect(tx).to.emit(orderBook, 'OrdersMatched')
-        const event = await filterEvent(tx, 'OrdersMatched')
-        expect(event.args.orders.slice(0)).to.deep.eq([ Object.values(longOrder), Object.values(shortOrder) ])
-        expect(event.args.signatures).to.deep.eq([ signature2, signature1])
-        expect(event.args.relayer).to.eq(governance)
-        expect(event.args.fillAmount).to.eq(longOrder.baseAssetQuantity)
+        await expect(tx).to.emit(orderBook, 'OrdersMatched').withArgs(
+            [ order2Hash, order1Hash ],
+            longOrder.baseAssetQuantity,
+            longOrder.price,
+            governance
+        )
 
         expect((await orderBook.orderInfo(order1Hash)).status).to.eq(2) // filled
         expect((await orderBook.orderInfo(order2Hash)).status).to.eq(2) // filled
@@ -175,6 +175,253 @@ describe('Order Book', function () {
         expect(position.size).to.eq(size.sub(sizeAfter2ndLiquidation))
     })
 })
+
+describe('Order Book - Error Handling', function () {
+    before(async function () {
+        signers = await ethers.getSigners()
+        ;([, alice, bob] = signers)
+        ;({ orderBook, usdc, oracle, weth, amm } = await setupContracts({mockOrderBook: false}))
+
+        await orderBook.setValidatorStatus(signers[0].address, true)
+
+        // we will deliberately not add any margin so that openPosition fails
+    })
+
+    it('alice places order', async function() {
+        orderType = {
+            Order: [
+                // field ordering must be the same as LIMIT_ORDER_TYPEHASH
+                { name: "ammIndex", type: "uint256" },
+                { name: "trader", type: "address" },
+                { name: "baseAssetQuantity", type: "int256" },
+                { name: "price", type: "uint256" },
+                { name: "salt", type: "uint256" },
+            ]
+        }
+
+        domain = {
+            name: 'Hubble',
+            version: '2.0',
+            chainId: (await ethers.provider.getNetwork()).chainId,
+            verifyingContract: orderBook.address
+        }
+
+        shortOrder = {
+            ammIndex: ZERO,
+            trader: alice.address,
+            baseAssetQuantity: ethers.utils.parseEther('-5'),
+            price: ethers.utils.parseUnits('1000', 6),
+            salt: BigNumber.from(Date.now())
+        }
+        order1Hash = await orderBook.getOrderHash(shortOrder)
+        signature1 = await alice._signTypedData(domain, orderType, shortOrder)
+
+        await expect(orderBook.placeOrder(shortOrder, signature1)).to.revertedWith('OB_sender_is_not_trader')
+        const tx = await orderBook.connect(alice).placeOrder(shortOrder, signature1)
+        await expect(tx).to.emit(orderBook, "OrderPlaced").withArgs(
+            shortOrder.trader,
+            Object.values(shortOrder),
+            signature1,
+            order1Hash
+        )
+        await expect(orderBook.connect(alice).placeOrder(shortOrder, signature1)).to.revertedWith('OB_Order_already_exists')
+        expect((await orderBook.orderInfo(order1Hash)).status).to.eq(1) // placed
+    })
+
+    it('ch.openPosition fails for long order', async function() {
+      // long order with same price and baseAssetQuantity
+        longOrder = {
+            ammIndex: ZERO,
+            trader: bob.address,
+            baseAssetQuantity: ethers.utils.parseEther('5'),
+            price: ethers.utils.parseUnits('1000', 6),
+            salt: BigNumber.from(Date.now())
+        }
+        order2Hash = await orderBook.getOrderHash(longOrder)
+        signature2 = await bob._signTypedData(domain, orderType, longOrder)
+        await orderBook.connect(bob).placeOrder(longOrder, signature2)
+
+        const tx = await orderBook.executeMatchedOrders(
+            [ longOrder, shortOrder ],
+            [ signature2, signature1 ],
+            longOrder.baseAssetQuantity
+        )
+
+        await expect(tx).to.emit(orderBook, 'OrderMatchingError')
+        const event = await filterEvent(tx, 'OrderMatchingError')
+        expect(event.args.orderHash).to.eq(order2Hash)
+        expect(event.args.err).to.eq('CH: Below Minimum Allowable Margin')
+        await assertPosSize(0, 0)
+    })
+
+    it('ch.openPosition fails for short order', async function() {
+        // now bob deposits enough margin so that open position for them doesn't fail
+        await addMargin(bob, _1e6.mul(4000))
+        const tx = await orderBook.executeMatchedOrders(
+            [ longOrder, shortOrder ],
+            [ signature2, signature1 ],
+            longOrder.baseAssetQuantity
+        )
+
+        await expect(tx).to.emit(orderBook, 'OrderMatchingError')
+        const event = await filterEvent(tx, 'OrderMatchingError')
+        expect(event.args.orderHash).to.eq(order1Hash)
+        expect(event.args.err).to.eq('CH: Below Minimum Allowable Margin')
+        await assertPosSize(0, 0)
+    })
+
+    it('try with another err msg', async function() {
+        const badShortOrder = JSON.parse(JSON.stringify(shortOrder))
+        badShortOrder.price = ethers.utils.parseUnits('2000', 6)
+        // signature1, order2Hash, signature2 are declared locally so they don't affect the vars in global scope
+        const signature1 = await alice._signTypedData(domain, orderType, badShortOrder)
+        await orderBook.connect(alice).placeOrder(badShortOrder, signature1)
+
+        const badLongOrder = JSON.parse(JSON.stringify(longOrder))
+        badLongOrder.price = ethers.utils.parseUnits('2000', 6)
+        const order2Hash = await orderBook.getOrderHash(badLongOrder)
+        const signature2 = await bob._signTypedData(domain, orderType, badLongOrder)
+        await orderBook.connect(bob).placeOrder(badLongOrder, signature2)
+
+        const tx = await orderBook.executeMatchedOrders(
+            [ badLongOrder, badShortOrder ],
+            [ signature2, signature1 ],
+            longOrder.baseAssetQuantity
+        )
+
+        await expect(tx).to.emit(orderBook, 'OrderMatchingError')
+        const event = await filterEvent(tx, 'OrderMatchingError')
+        expect(event.args.orderHash).to.eq(order2Hash)
+        expect(event.args.err).to.eq('AMM_price_increase_not_allowed')
+        await assertPosSize(0, 0)
+    })
+
+    it('generic errors are not caught and bubbled up', async function() {
+        await clearingHouse.setAMM(0, '0x0000000000000000000000000000000000000000')
+        await expect(orderBook.executeMatchedOrders(
+            [ longOrder, shortOrder ],
+            [ signature2, signature1 ],
+            longOrder.baseAssetQuantity
+        // )).to.be.reverted
+        )).to.be.revertedWith('without a reason string')
+
+        await clearingHouse.setAMM(0, amm.address) // reset
+        await assertPosSize(0, 0)
+    })
+
+    it('orders match when conditions are met', async function() {
+        await addMargin(alice, _1e6.mul(1010)) // alice deposits margin so that is not the error scenario anymore
+
+        const tx = await orderBook.executeMatchedOrders(
+            [ longOrder, shortOrder ],
+            [ signature2, signature1 ],
+            longOrder.baseAssetQuantity
+        )
+
+        await expect(tx).to.emit(orderBook, 'OrdersMatched').withArgs(
+            [ order2Hash, order1Hash ],
+            longOrder.baseAssetQuantity,
+            longOrder.price,
+            governance
+        )
+
+        expect((await orderBook.orderInfo(order1Hash)).status).to.eq(2) // filled
+        expect((await orderBook.orderInfo(order2Hash)).status).to.eq(2) // filled
+
+        const { alicePos, bobPos } = await assertPosSize(shortOrder.baseAssetQuantity, longOrder.baseAssetQuantity)
+
+        const netQuote = longOrder.baseAssetQuantity.mul(longOrder.price).div(_1e18)
+        expect(alicePos.openNotional).to.eq(netQuote)
+        expect(bobPos.openNotional).to.eq(netQuote)
+    })
+
+    it('ch.liquidateSingleAmm fails', async function() {
+        const { size } = await amm.positions(alice.address)
+        charlie = signers[7]
+        markPrice = _1e6.mul(1180)
+        ;({ order, signature } = await placeOrder(size, markPrice, charlie))
+        // liquidate
+        toLiquidate = size.mul(25e4).div(1e6).add(1) // 1/4th position liquidated
+        let tx = await orderBook.liquidateAndExecuteOrder(alice.address, order, signature, toLiquidate.abs())
+
+        await expect(tx).to.emit(orderBook, 'LiquidationError').withArgs(
+            alice.address,
+            ethers.utils.solidityKeccak256(['string'], ['LIQUIDATION_FAILED']),
+            'CH: Above Maintenance Margin',
+            toLiquidate.abs()
+        )
+        await assertPosSize(shortOrder.baseAssetQuantity, longOrder.baseAssetQuantity)
+    })
+
+    it('ch.liquidateSingleAmm fails - revert from amm', async function() {
+        // force alice in liquidation zone
+        await placeAndExecuteTrade(_1e18.mul(5), markPrice)
+        expect(await clearingHouse.isAboveMaintenanceMargin(alice.address)).to.eq(false)
+
+        let tx = await orderBook.liquidateAndExecuteOrder(alice.address, order, signature, toLiquidate.mul(2).abs())
+        await expect(tx).to.emit(orderBook, 'LiquidationError').withArgs(
+            alice.address,
+            ethers.utils.solidityKeccak256(['string'], ['LIQUIDATION_FAILED']),
+            'AMM_liquidating_too_much_at_once',
+            toLiquidate.mul(2).abs()
+        )
+        await assertPosSize(shortOrder.baseAssetQuantity, longOrder.baseAssetQuantity)
+    })
+
+    it('ch.openPosition fails in liquidation', async function() {
+        let tx = await orderBook.liquidateAndExecuteOrder(alice.address, order, signature, toLiquidate.abs())
+        orderHash = await orderBook.getOrderHash(order)
+        await expect(tx).to.emit(orderBook, 'LiquidationError').withArgs(
+            alice.address,
+            orderHash,
+            'OrderMatchingError',
+            toLiquidate.abs()
+        )
+
+        await expect(tx).to.emit(orderBook, 'OrderMatchingError').withArgs(
+            orderHash,
+            'CH: Below Minimum Allowable Margin'
+        )
+        await assertPosSize(shortOrder.baseAssetQuantity, longOrder.baseAssetQuantity)
+    })
+
+    it('generic errors are not caught and bubbled up', async function() {
+        await clearingHouse.setAMM(0, '0x0000000000000000000000000000000000000000')
+        await expect(orderBook.liquidateAndExecuteOrder(
+            alice.address, order, signature, toLiquidate.abs())
+        ).to.be.revertedWith('without a reason string')
+
+        await clearingHouse.setAMM(0, amm.address) // reset
+        await assertPosSize(shortOrder.baseAssetQuantity, longOrder.baseAssetQuantity)
+        const charliePos = await hubbleViewer.userPositions(charlie.address)
+        expect(charliePos[0].size).to.eq(0)
+    })
+
+    it('liquidations when all conditions met', async function() {
+        await addMargin(charlie, _1e6.mul(2000))
+        let tx = await orderBook.liquidateAndExecuteOrder(alice.address, order, signature, toLiquidate.abs())
+        await expect(tx).to.emit(orderBook, 'LiquidationOrderMatched').withArgs(
+            alice.address,
+            orderHash,
+            signature,
+            toLiquidate.abs(),
+            governance
+        )
+        await assertPosSize(shortOrder.baseAssetQuantity.sub(toLiquidate), longOrder.baseAssetQuantity)
+        const charliePos = await hubbleViewer.userPositions(charlie.address)
+        expect(charliePos[0].size).to.eq(toLiquidate)
+    })
+})
+
+async function assertPosSize(s1, s2) {
+    const [ [alicePos], [bobPos] ] = await Promise.all([
+        hubbleViewer.userPositions(alice.address),
+        hubbleViewer.userPositions(bob.address)
+    ])
+    expect(alicePos.size).to.eq(s1)
+    expect(bobPos.size).to.eq(s2)
+    return { alicePos, bobPos }
+}
 
 async function placeAndExecuteTrade(size, price) {
         const signer1 = signers[9]

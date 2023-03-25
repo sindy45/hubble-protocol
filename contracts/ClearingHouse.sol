@@ -17,7 +17,13 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         _;
     }
 
+    modifier onlyMySelf() {
+        require(msg.sender == address(this), "Only myself");
+        _;
+    }
+
     uint256 constant PRECISION = 1e6;
+    bytes32 constant public LIQUIDATION_FAILED = keccak256("LIQUIDATION_FAILED");
 
     int256 override public maintenanceMargin;
     uint override public takerFee;
@@ -65,11 +71,32 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     /*     Positions      */
     /* ****************** */
 
-    /**
+    function openComplementaryPositions(
+        IOrderBook.Order[2] calldata orders,
+        IOrderBook.MatchInfo[2] calldata matchInfo,
+        int256 fillAmount,
+        uint fulfillPrice
+    )   external
+        onlyOrderBook
+    {
+        try this.openPosition(orders[0], fillAmount, fulfillPrice, matchInfo[0].isMakerOrder) {
+            // only executed if the above doesn't revert
+            try this.openPosition(orders[1], -fillAmount, fulfillPrice, matchInfo[1].isMakerOrder) {
+            } catch Error(string memory reason) {
+                // will revert all state changes including those made in this.openPosition(orders[0])
+                revert(string(abi.encode(matchInfo[1].orderHash, reason)));
+            }
+        } catch Error(string memory reason) {
+            // surface up the error to the calling contract
+            revert(string(abi.encode(matchInfo[0].orderHash, reason)));
+        }
+    }
+
+   /**
     * @notice Open/Modify/Close Position
     * @param order Order to be executed
     */
-    function openPosition(IOrderBook.Order memory order, int256 fillAmount, uint256 fulfillPrice, bool isMakerOrder) external onlyOrderBook {
+    function openPosition(IOrderBook.Order memory order, int256 fillAmount, uint256 fulfillPrice, bool isMakerOrder) public onlyMySelf {
         _openPosition(order, fillAmount, fulfillPrice, isMakerOrder);
     }
 
@@ -110,17 +137,37 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     /*    Liquidations    */
     /* ****************** */
 
-    function liquidate(address trader, uint ammIndex, uint price, int256 toLiquidate)
+    function liquidate(
+        IOrderBook.Order calldata order,
+        IOrderBook.MatchInfo calldata matchInfo,
+        int256 liquidationAmount,
+        uint price,
+        address trader
+    )
         override
         external
         onlyOrderBook
     {
         updatePositions(trader);
+        try this.liquidateSingleAmm(trader, order.ammIndex, price, liquidationAmount) {
+            // only executed if the above doesn't revert
+            try this.openPosition(order, liquidationAmount, price, true /* isMakerOrder */) {
+            } catch Error(string memory reason) {
+                // will revert all state changes including those made in this.liquidateSingleAmm
+                revert(string(abi.encode(matchInfo.orderHash, reason)));
+            }
+        } catch Error(string memory reason) {
+            // surface up the error to the calling contract
+            revert(string(abi.encode(LIQUIDATION_FAILED, reason)));
+        }
+    }
+
+    function liquidateSingleAmm(address trader, uint ammIndex, uint price, int toLiquidate) external onlyMySelf {
         _liquidateSingleAmm(trader, ammIndex, price, toLiquidate);
     }
 
     /* ********************* */
-    /* Internal */
+    /*        Internal       */
     /* ********************* */
 
     function _liquidateSingleAmm(address trader, uint ammIndex, uint price, int toLiquidate) internal {
@@ -173,7 +220,6 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     }
 
     function _openPosition(IOrderBook.Order memory order, int256 fillAmount, uint256 fulfillPrice, bool isMakerOrder) internal {
-        require(order.baseAssetQuantity != 0 && fillAmount != 0, "CH: baseAssetQuantity == 0");
         updatePositions(order.trader); // adjust funding payments
         uint quoteAsset = abs(fillAmount).toUint256() * fulfillPrice / 1e18;
         (
@@ -191,7 +237,6 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         }
         emit PositionModified(order.trader, order.ammIndex, fillAmount, quoteAsset, realizedPnl, size, openNotional, _blockTimestamp());
     }
-
 
     /* ****************** */
     /*        View        */

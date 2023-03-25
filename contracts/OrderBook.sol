@@ -27,13 +27,6 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
     mapping(bytes32 => OrderInfo) public orderInfo;
     mapping(address => bool) isValidator;
 
-    // to avoid stack too deep
-    struct MatchInfo {
-        bytes32 orderHash;
-        uint blockPlaced;
-        bool isMakerOrder;
-    }
-
     uint256[50] private __gap;
 
     modifier onlyValidator {
@@ -76,35 +69,48 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         require(orders[1].baseAssetQuantity < 0, "OB_order_1_is_not_short");
         require(orders[0].price /* buy */ >= orders[1].price /* sell */, "OB_orders_do_not_match");
         require(orders[0].ammIndex == orders[1].ammIndex, "OB_orders_for_different_amms");
+        require(fillAmount != 0, "OB_fill_amount_0");
 
-        MatchInfo memory orderInfo_0 = MatchInfo(bytes32(0), 0, false);
-        MatchInfo memory orderInfo_1 = MatchInfo(bytes32(0), 0, false);
-        (orderInfo_0.orderHash, orderInfo_0.blockPlaced) = _verifyOrder(orders[0], signatures[0], fillAmount);
-        (orderInfo_1.orderHash, orderInfo_1.blockPlaced) = _verifyOrder(orders[1], signatures[1], -fillAmount);
+        MatchInfo[2] memory matchInfo;
+        (matchInfo[0].orderHash, matchInfo[0].blockPlaced) = _verifyOrder(orders[0], signatures[0], fillAmount);
+        (matchInfo[1].orderHash, matchInfo[1].blockPlaced) = _verifyOrder(orders[1], signatures[1], -fillAmount);
         // @todo min fillAmount and min order.baseAsset check
-
-        // Effects
-        _updateOrder(orderInfo_0.orderHash, fillAmount, orders[0].baseAssetQuantity);
-        _updateOrder(orderInfo_1.orderHash, -fillAmount, orders[1].baseAssetQuantity);
 
         // Interactions
         uint fulfillPrice;
-        if (orderInfo_0.blockPlaced < orderInfo_1.blockPlaced) {
-            orderInfo_0.isMakerOrder = true;
+        if (matchInfo[0].blockPlaced < matchInfo[1].blockPlaced) {
+            matchInfo[0].isMakerOrder = true;
             fulfillPrice = orders[0].price;
-        } else if (orderInfo_0.blockPlaced > orderInfo_1.blockPlaced) {
-            orderInfo_1.isMakerOrder = true;
+        } else if (matchInfo[0].blockPlaced > matchInfo[1].blockPlaced) {
+            matchInfo[1].isMakerOrder = true;
             fulfillPrice = orders[1].price;
         } else { // both orders are placed in the same block, not possible to determine what came first in solidity
-            orderInfo_0.isMakerOrder = true;
-            orderInfo_1.isMakerOrder = true;
+            matchInfo[0].isMakerOrder = true;
+            matchInfo[1].isMakerOrder = true;
             // Bulls (Longs) are our friends. We give them a favorable price in this corner case
             fulfillPrice = orders[1].price;
         }
-        clearingHouse.openPosition(orders[0], fillAmount, fulfillPrice, orderInfo_0.isMakerOrder);
-        clearingHouse.openPosition(orders[1], -fillAmount, fulfillPrice, orderInfo_1.isMakerOrder);
 
-        emit OrdersMatched(orders, signatures, fillAmount.toUint256(), fulfillPrice, msg.sender);
+        try clearingHouse.openComplementaryPositions(orders, matchInfo, fillAmount, fulfillPrice) {
+            _updateOrder(matchInfo[0].orderHash, fillAmount, orders[0].baseAssetQuantity);
+            _updateOrder(matchInfo[1].orderHash, -fillAmount, orders[1].baseAssetQuantity);
+            emit OrdersMatched([matchInfo[0].orderHash, matchInfo[1].orderHash], fillAmount.toUint256(), fulfillPrice, msg.sender);
+        } catch Error(string memory err) { // catches errors emitted from "revert/require"
+            try this.parseMatchingError(err) returns(bytes32 orderHash, string memory reason) {
+                emit OrderMatchingError(orderHash, reason);
+            } catch (bytes memory) {
+                // abi.decode failed; we bubble up the original err
+                revert(err);
+            }
+            return;
+        } /* catch (bytes memory err) {
+            // we do not any special handling for other generic type errors
+            // they can revert the entire tx as usual
+        } */
+    }
+
+    function parseMatchingError(string memory err) pure public returns(bytes32 orderHash, string memory reason) {
+        (orderHash, reason) = abi.decode(bytes(err), (bytes32, string));
     }
 
     function placeOrder(Order memory order, bytes memory signature) external whenNotPaused {
@@ -117,7 +123,7 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         // @todo assert margin requirements for placing the order
         // @todo min size requirement while placing order
 
-        emit OrderPlaced(order.trader, order, signature);
+        emit OrderPlaced(order.trader, order, signature, orderHash);
     }
 
     function cancelOrder(Order memory order) public {
@@ -127,7 +133,7 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         require(orderInfo[orderHash].status == OrderStatus.Placed, "OB_Order_does_not_exist");
         orderInfo[orderHash].status = OrderStatus.Cancelled;
 
-        emit OrderCancelled(order.trader, order);
+        emit OrderCancelled(order.trader, orderHash);
     }
 
     // @todo onlyValidator modifier
@@ -141,30 +147,45 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
      * @param trader trader to liquidate
      * @param order order to match when liuidating for a particular amm
      * @param signature signature corresponding to order
-     * @param toLiquidate baseAsset amount being traded/liquidated.
-     *        toLiquidate!=0 is validated in am.liquidatePosition
+     * @param liquidationAmount baseAsset amount being traded/liquidated.
+     *        liquidationAmount!=0 is validated in amm.liquidatePosition
     */
     function liquidateAndExecuteOrder(
         address trader,
         Order memory order,
         bytes memory signature,
-        uint256 toLiquidate
+        uint256 liquidationAmount
     )   override
         external
         whenNotPaused
         onlyValidator
     {
-        int256 fillAmount = toLiquidate.toInt256();
+        int256 fillAmount = liquidationAmount.toInt256();
         if (order.baseAssetQuantity < 0) { // order is short, so short position is being liquidated
-            fillAmount *= -1 ;
+            fillAmount *= -1;
         }
-        clearingHouse.liquidate(trader, order.ammIndex, order.price, fillAmount);
+        MatchInfo memory matchInfo;
+        (matchInfo.orderHash, matchInfo.blockPlaced) = _verifyOrder(order, signature, fillAmount);
 
-        (bytes32 orderHash,) = _verifyOrder(order, signature, fillAmount);
-        _updateOrder(orderHash, fillAmount, order.baseAssetQuantity);
-
-        clearingHouse.openPosition(order, fillAmount, order.price, true /* isMakerOrder */);
-        emit LiquidationOrderMatched(trader, order, signature, toLiquidate, msg.sender);
+        try clearingHouse.liquidate(order, matchInfo, fillAmount, order.price, trader) {
+            _updateOrder(matchInfo.orderHash, fillAmount, order.baseAssetQuantity);
+            emit LiquidationOrderMatched(trader, matchInfo.orderHash, signature, liquidationAmount, msg.sender);
+        } catch Error(string memory err) { // catches errors emitted from "revert/require"
+            try this.parseMatchingError(err) returns(bytes32 _orderHash, string memory reason) {
+                if (matchInfo.orderHash == _orderHash) { // err in openPosition for the order
+                    emit OrderMatchingError(_orderHash, reason);
+                    reason = "OrderMatchingError";
+                } // else err in liquidating the trader; but we emit this either ways so that we can track liquidation didnt succeed for whatever reason
+                emit LiquidationError(trader, _orderHash, reason, liquidationAmount);
+            } catch (bytes memory) {
+                // abi.decode failed; we bubble up the original err
+                revert(err);
+            }
+            return;
+        } /* catch (bytes memory err) {
+            // we do not any special handling for other generic type errors
+            // they can revert the entire tx as usual
+        } */
     }
 
     /* ****************** */

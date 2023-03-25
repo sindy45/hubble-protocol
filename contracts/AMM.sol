@@ -427,7 +427,7 @@ contract AMM is IAMM, Governable {
     * @param isLiquidation true if liquidaiton else false
     */
     function _long(int256 baseAssetQuantity, uint price, bool isLiquidation) internal {
-        require(baseAssetQuantity > 0, "VAMM._long: baseAssetQuantity is <= 0");
+        require(baseAssetQuantity > 0, "AMM._long: baseAssetQuantity is <= 0");
 
         _addReserveSnapshot(price);
         // @todo think about if this is required, commenting for testnet
@@ -448,7 +448,7 @@ contract AMM is IAMM, Governable {
     * @param isLiquidation true if liquidaiton else false
     */
     function _short(int256 baseAssetQuantity, uint price, bool isLiquidation) internal {
-        require(baseAssetQuantity < 0, "VAMM._short: baseAssetQuantity is >= 0");
+        require(baseAssetQuantity < 0, "AMM._short: baseAssetQuantity is >= 0");
 
         _addReserveSnapshot(price);
         // @todo think about if this is required, commenting for testnet

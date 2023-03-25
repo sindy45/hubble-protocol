@@ -6,10 +6,12 @@ import "./Utils.sol";
 contract OrderBookTests is Utils {
     uint constant public margin = 2000 * 1e6;
 
-    event OrderPlaced(address indexed trader, OrderBook.Order order, bytes signature);
-    event OrderCancelled(address indexed trader, OrderBook.Order order);
-    event OrdersMatched(OrderBook.Order[2] orders, bytes[2] signatures, uint256 fillAmount, uint price, address relayer);
-    event LiquidationOrderMatched(address indexed trader, OrderBook.Order order, bytes signature, uint256 fillAmount, address relayer);
+    event OrderPlaced(address indexed trader, OrderBook.Order order, bytes signature, bytes32 orderHash);
+    event OrderCancelled(address indexed trader, bytes32 orderHash);
+    event OrdersMatched(bytes32[2] orderHash, uint256 fillAmount, uint price, address relayer);
+    event LiquidationOrderMatched(address indexed trader, bytes32 orderHash, bytes signature, uint256 fillAmount, address relayer);
+    event OrderMatchingError(bytes32 indexed orderHash, string err);
+    event LiquidationError(address indexed trader, bytes32 orderHash, string err, uint256 toLiquidate);
 
     function setUp() public {
         setupContracts();
@@ -26,7 +28,7 @@ contract OrderBookTests is Utils {
 
         vm.startPrank(trader);
         vm.expectEmit(true, false, false, true, address(orderBook));
-        emit OrderPlaced(trader, order, signature);
+        emit OrderPlaced(trader, order, signature, orderHash);
         orderBook.placeOrder(order, signature);
 
         vm.expectRevert("OB_Order_already_exists");
@@ -66,7 +68,8 @@ contract OrderBookTests is Utils {
         (orders[0], signatures[0], ordersHash[0]) = placeOrder(0, aliceKey, size, price);
         (orders[1], signatures[1], ordersHash[1]) = placeOrder(0, bobKey, -size, price);
 
-        vm.expectRevert("CH: Below Minimum Allowable Margin");
+        vm.expectEmit(true, false, false, true, address(orderBook));
+        emit OrderMatchingError(ordersHash[0], "CH: Below Minimum Allowable Margin");
         orderBook.executeMatchedOrders(orders, signatures, size);
 
         uint quote = stdMath.abs(size) * price / 1e18;
@@ -74,7 +77,7 @@ contract OrderBookTests is Utils {
         addMargin(bob, quote / 2);
 
         vm.expectEmit(false, false, false, true, address(orderBook));
-        emit OrdersMatched(orders, signatures, uint(size), uint(price), address(this));
+        emit OrdersMatched(ordersHash, uint(size), uint(price), address(this));
         orderBook.executeMatchedOrders(orders, signatures, size);
 
         (,int filledAmount, OrderBook.OrderStatus status) = orderBook.orderInfo(ordersHash[0]);
@@ -118,7 +121,7 @@ contract OrderBookTests is Utils {
             toLiquidate = Math.min(stdMath.abs(size), liquidationThreshold);
 
             vm.expectEmit(true, false, false, true, address(orderBook));
-            emit LiquidationOrderMatched(address(alice), order, signature, toLiquidate, address(this));
+            emit LiquidationOrderMatched(address(alice), orderHash, signature, toLiquidate, address(this));
             orderBook.liquidateAndExecuteOrder(alice, order, signature, toLiquidate);
 
             (,int filledAmount, OrderBook.OrderStatus status) = orderBook.orderInfo(orderHash);
@@ -135,7 +138,7 @@ contract OrderBookTests is Utils {
             (order, signature, orderHash) = placeOrder(0, peterKey, -size, price);
 
             vm.expectEmit(true, false, false, true, address(orderBook));
-            emit LiquidationOrderMatched(address(bob), order, signature, toLiquidate, address(this));
+            emit LiquidationOrderMatched(address(bob), orderHash, signature, toLiquidate, address(this));
             orderBook.liquidateAndExecuteOrder(bob, order, signature, toLiquidate);
 
             (,int filledAmount, OrderBook.OrderStatus status) = orderBook.orderInfo(orderHash);
