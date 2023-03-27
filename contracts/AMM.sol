@@ -414,7 +414,7 @@ contract AMM is IAMM, Governable {
         return reserveSnapshots[reserveSnapshots.length - 1].lastPrice;
     }
 
-    function openInterestNotional() public view returns (uint256) {
+    function openInterestNotional() override public view returns (uint256) {
         return longOpenInterestNotional + shortOpenInterestNotional;
     }
 

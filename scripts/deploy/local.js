@@ -45,22 +45,12 @@ async function main() {
     await addMargin(bob, _1e6.mul(40000), gasLimit)
 
     // whitelist evm address for order execution transactions
-    await orderBook.setValidatorStatus(ethers.utils.getAddress('0x8db97C7cEcE249c2b98bDC0226Cc4C2A57BF52FC'), true)
+    await orderBook.setValidatorStatus(ethers.utils.getAddress('0x4Cf2eD3665F6bFA95cE6A11CFDb7A2EF5FC1C7E4'), true)
+    // set spread limit to higher value
+    const maxOracleSpreadRatio = 500 * 1e4 // 500%
+    const maxPriceSpreadPerBlock = 1 * 1e4 // 1% - not used for testnet as of now
+    await amm.setPriceSpreadParams(maxOracleSpreadRatio, maxPriceSpreadPerBlock)
 
-    // setup another market
-    // const btc = await setupRestrictedTestToken('Bitcoin', 'BTC', 8)
-    // await utils.setupAmm(
-    //     governance,
-    //     [ 'BTC-PERP', btc.address, oracle.address, 0 ],
-    //     {
-    //         index: 1,
-    //         initialRate: 35000,
-    //         initialLiquidity: 30, // maker1 will commit this 2 * liquidity in USD
-    //         fee: 10000000, // 0.1%
-    //         ammState: 1, // Ignition
-    //         unbondPeriod: 300, // 5 mins
-    //     }
-    // )
 
     await sleep(5)
     console.log(JSON.stringify(await generateConfig(leaderboard.address, marginAccountHelper.address), null, 0))

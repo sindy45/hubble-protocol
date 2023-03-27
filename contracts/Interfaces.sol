@@ -102,8 +102,8 @@ interface IOrderBook {
 
     event OrderPlaced(address indexed trader, Order order, bytes signature, bytes32 orderHash);
     event OrderCancelled(address indexed trader, bytes32 orderHash);
-    event OrdersMatched(bytes32[2] orderHash, uint256 fillAmount, uint price, address relayer);
-    event LiquidationOrderMatched(address indexed trader, bytes32 orderHash, bytes signature, uint256 fillAmount, address relayer);
+    event OrdersMatched(bytes32[2] orderHash, uint256 fillAmount, uint price, uint openInterestNotional, address relayer);
+    event LiquidationOrderMatched(address indexed trader, bytes32 orderHash, bytes signature, uint256 fillAmount, uint openInterestNotional, address relayer);
     event OrderMatchingError(bytes32 indexed orderHash, string err);
     event LiquidationError(address indexed trader, bytes32 orderHash, string err, uint256 toLiquidate);
 
@@ -142,6 +142,7 @@ interface IAMM {
     function getOracleBasedPnl(address trader, int256 margin, IClearingHouse.Mode mode) external view returns (uint, int256);
     function lastPrice() external view returns(uint256);
     function startFunding() external returns(uint256);
+    function openInterestNotional() external returns(uint256);
 }
 
 // for backward compatibility in forked tests

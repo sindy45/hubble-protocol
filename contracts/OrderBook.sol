@@ -94,7 +94,10 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         try clearingHouse.openComplementaryPositions(orders, matchInfo, fillAmount, fulfillPrice) {
             _updateOrder(matchInfo[0].orderHash, fillAmount, orders[0].baseAssetQuantity);
             _updateOrder(matchInfo[1].orderHash, -fillAmount, orders[1].baseAssetQuantity);
-            emit OrdersMatched([matchInfo[0].orderHash, matchInfo[1].orderHash], fillAmount.toUint256(), fulfillPrice, msg.sender);
+            // get openInterestNotional for indexing
+            IAMM amm = clearingHouse.amms(orders[0].ammIndex);
+            uint openInterestNotional = amm.openInterestNotional();
+            emit OrdersMatched([matchInfo[0].orderHash, matchInfo[1].orderHash], fillAmount.toUint256(), fulfillPrice, openInterestNotional, msg.sender);
         } catch Error(string memory err) { // catches errors emitted from "revert/require"
             try this.parseMatchingError(err) returns(bytes32 orderHash, string memory reason) {
                 emit OrderMatchingError(orderHash, reason);
@@ -169,7 +172,10 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
 
         try clearingHouse.liquidate(order, matchInfo, fillAmount, order.price, trader) {
             _updateOrder(matchInfo.orderHash, fillAmount, order.baseAssetQuantity);
-            emit LiquidationOrderMatched(trader, matchInfo.orderHash, signature, liquidationAmount, msg.sender);
+            // get openInterestNotional for indexing
+            IAMM amm = clearingHouse.amms(order.ammIndex);
+            uint openInterestNotional = amm.openInterestNotional();
+            emit LiquidationOrderMatched(trader, matchInfo.orderHash, signature, liquidationAmount, openInterestNotional, msg.sender);
         } catch Error(string memory err) { // catches errors emitted from "revert/require"
             try this.parseMatchingError(err) returns(bytes32 _orderHash, string memory reason) {
                 if (matchInfo.orderHash == _orderHash) { // err in openPosition for the order

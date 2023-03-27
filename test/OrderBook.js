@@ -89,6 +89,7 @@ describe('Order Book', function () {
             [ order2Hash, order1Hash ],
             longOrder.baseAssetQuantity,
             longOrder.price,
+            longOrder.baseAssetQuantity.mul(2),
             governance
         )
 
@@ -322,6 +323,7 @@ describe('Order Book - Error Handling', function () {
             [ order2Hash, order1Hash ],
             longOrder.baseAssetQuantity,
             longOrder.price,
+            longOrder.baseAssetQuantity.mul(2),
             governance
         )
 
@@ -355,7 +357,7 @@ describe('Order Book - Error Handling', function () {
 
     it('ch.liquidateSingleAmm fails - revert from amm', async function() {
         // force alice in liquidation zone
-        await placeAndExecuteTrade(_1e18.mul(5), markPrice)
+        await placeAndExecuteTrade(longOrder.baseAssetQuantity, markPrice)
         expect(await clearingHouse.isAboveMaintenanceMargin(alice.address)).to.eq(false)
 
         let tx = await orderBook.liquidateAndExecuteOrder(alice.address, order, signature, toLiquidate.mul(2).abs())
@@ -405,6 +407,7 @@ describe('Order Book - Error Handling', function () {
             orderHash,
             signature,
             toLiquidate.abs(),
+            longOrder.baseAssetQuantity.mul(4),
             governance
         )
         await assertPosSize(shortOrder.baseAssetQuantity.sub(toLiquidate), longOrder.baseAssetQuantity)
