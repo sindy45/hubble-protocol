@@ -36,6 +36,7 @@ async function main() {
         restrictedVUSD: false,
         genesisProxies: true,
         mockOrderBook: false,
+        testClearingHouse: false,
         amm: {
             initialRate: 10
         }
