@@ -100,12 +100,12 @@ interface IOrderBook {
         bool isMakerOrder;
     }
 
-    event OrderPlaced(address indexed trader, Order order, bytes signature, bytes32 orderHash);
-    event OrderCancelled(address indexed trader, bytes32 orderHash);
-    event OrdersMatched(bytes32[2] orderHash, uint256 fillAmount, uint price, uint openInterestNotional, address relayer);
-    event LiquidationOrderMatched(address indexed trader, bytes32 orderHash, bytes signature, uint256 fillAmount, uint openInterestNotional, address relayer);
+    event OrderPlaced(address indexed trader, bytes32 indexed orderHash, Order order, bytes signature);
+    event OrderCancelled(address indexed trader, bytes32 indexed orderHash);
+    event OrdersMatched(bytes32 indexed orderHash0, bytes32 indexed orderHash1, uint256 fillAmount, uint price, uint openInterestNotional, address relayer);
+    event LiquidationOrderMatched(address indexed trader, bytes32 indexed orderHash, bytes signature, uint256 fillAmount, uint openInterestNotional, address relayer);
     event OrderMatchingError(bytes32 indexed orderHash, string err);
-    event LiquidationError(address indexed trader, bytes32 orderHash, string err, uint256 toLiquidate);
+    event LiquidationError(address indexed trader, bytes32 indexed orderHash, string err, uint256 toLiquidate);
 
     function executeMatchedOrders(Order[2] memory orders, bytes[2] memory signatures, int256 fillAmount) external;
     function settleFunding() external;

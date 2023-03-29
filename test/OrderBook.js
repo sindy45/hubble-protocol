@@ -57,9 +57,9 @@ describe('Order Book', function () {
         const tx = await orderBook.connect(alice).placeOrder(shortOrder, signature1)
         await expect(tx).to.emit(orderBook, "OrderPlaced").withArgs(
             shortOrder.trader,
+            order1Hash,
             Object.values(shortOrder),
-            signature1,
-            order1Hash
+            signature1
         )
         await expect(orderBook.connect(alice).placeOrder(shortOrder, signature1)).to.revertedWith('OB_Order_already_exists')
         expect((await orderBook.orderInfo(order1Hash)).status).to.eq(1) // placed
@@ -86,7 +86,8 @@ describe('Order Book', function () {
         order2Hash = await orderBook.getOrderHash(longOrder)
 
         await expect(tx).to.emit(orderBook, 'OrdersMatched').withArgs(
-            [ order2Hash, order1Hash ],
+            order2Hash,
+            order1Hash,
             longOrder.baseAssetQuantity,
             longOrder.price,
             longOrder.baseAssetQuantity.mul(2),
@@ -221,9 +222,9 @@ describe('Order Book - Error Handling', function () {
         const tx = await orderBook.connect(alice).placeOrder(shortOrder, signature1)
         await expect(tx).to.emit(orderBook, "OrderPlaced").withArgs(
             shortOrder.trader,
+            order1Hash,
             Object.values(shortOrder),
-            signature1,
-            order1Hash
+            signature1
         )
         await expect(orderBook.connect(alice).placeOrder(shortOrder, signature1)).to.revertedWith('OB_Order_already_exists')
         expect((await orderBook.orderInfo(order1Hash)).status).to.eq(1) // placed
@@ -320,7 +321,8 @@ describe('Order Book - Error Handling', function () {
         )
 
         await expect(tx).to.emit(orderBook, 'OrdersMatched').withArgs(
-            [ order2Hash, order1Hash ],
+            order2Hash,
+            order1Hash,
             longOrder.baseAssetQuantity,
             longOrder.price,
             longOrder.baseAssetQuantity.mul(2),

@@ -97,7 +97,7 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
             // get openInterestNotional for indexing
             IAMM amm = clearingHouse.amms(orders[0].ammIndex);
             uint openInterestNotional = amm.openInterestNotional();
-            emit OrdersMatched([matchInfo[0].orderHash, matchInfo[1].orderHash], fillAmount.toUint256(), fulfillPrice, openInterestNotional, msg.sender);
+            emit OrdersMatched(matchInfo[0].orderHash, matchInfo[1].orderHash, fillAmount.toUint256(), fulfillPrice, openInterestNotional, msg.sender);
         } catch Error(string memory err) { // catches errors emitted from "revert/require"
             try this.parseMatchingError(err) returns(bytes32 orderHash, string memory reason) {
                 emit OrderMatchingError(orderHash, reason);
@@ -126,7 +126,7 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         // @todo assert margin requirements for placing the order
         // @todo min size requirement while placing order
 
-        emit OrderPlaced(order.trader, order, signature, orderHash);
+        emit OrderPlaced(order.trader, orderHash, order, signature);
     }
 
     function cancelOrder(Order memory order) public {
