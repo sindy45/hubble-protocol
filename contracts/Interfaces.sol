@@ -20,8 +20,8 @@ interface IOracle {
 interface IClearingHouse {
     enum Mode { Maintenance_Margin, Min_Allowable_Margin }
 
-    event PositionModified(address indexed trader, uint indexed idx, int256 baseAsset, uint quoteAsset, int256 realizedPnl, int256 size, uint256 openNotional, uint256 timestamp);
-    event PositionLiquidated(address indexed trader, uint indexed idx, int256 baseAsset, uint256 quoteAsset, int256 realizedPnl, int256 size, uint256 openNotional, uint256 timestamp);
+    event PositionModified(address indexed trader, uint indexed idx, int256 baseAsset, uint quoteAsset, int256 realizedPnl, int256 size, uint256 openNotional, int256 fee, uint256 timestamp);
+    event PositionLiquidated(address indexed trader, uint indexed idx, int256 baseAsset, uint256 quoteAsset, int256 realizedPnl, int256 size, uint256 openNotional, int256 fee, uint256 timestamp);
     event MarketAdded(uint indexed idx, address indexed amm);
     event ReferralBonusAdded(address indexed referrer, uint referralBonus);
     event FundingPaid(address indexed trader, uint indexed idx, int256 takerFundingPayment, int256 cumulativePremiumFraction);
@@ -34,7 +34,6 @@ interface IClearingHouse {
         uint fulfillPrice
     )  external;
 
-    // function openPosition(IOrderBook.Order memory order, int256 fillAmount, uint256 fulfillPrice, bool isMakerOrder) external;
     function settleFunding() external;
     function getTotalNotionalPositionAndUnrealizedPnl(address trader, int256 margin, Mode mode)
         external
@@ -49,8 +48,8 @@ interface IClearingHouse {
     function amms(uint idx) external view returns(IAMM);
     function maintenanceMargin() external view returns(int256);
     function minAllowableMargin() external view returns(int256);
-    function takerFee() external view returns(uint256);
-    function makerFee() external view returns(uint256);
+    function takerFee() external view returns(int256);
+    function makerFee() external view returns(int256);
     function liquidationPenalty() external view returns(uint256);
     function getNotionalPositionAndMargin(address trader, bool includeFundingPayments, Mode mode)
         external
@@ -86,6 +85,13 @@ interface IOrderBook {
         Cancelled
     }
 
+    enum OrderExecutionMode {
+        Taker,
+        Maker,
+        SameBlock,
+        Liquidation
+    }
+
     struct Order {
         uint256 ammIndex;
         address trader;
@@ -97,13 +103,13 @@ interface IOrderBook {
     struct MatchInfo {
         bytes32 orderHash;
         uint blockPlaced;
-        bool isMakerOrder;
+        OrderExecutionMode mode;
     }
 
     event OrderPlaced(address indexed trader, bytes32 indexed orderHash, Order order, bytes signature);
     event OrderCancelled(address indexed trader, bytes32 indexed orderHash);
     event OrdersMatched(bytes32 indexed orderHash0, bytes32 indexed orderHash1, uint256 fillAmount, uint price, uint openInterestNotional, address relayer);
-    event LiquidationOrderMatched(address indexed trader, bytes32 indexed orderHash, bytes signature, uint256 fillAmount, uint openInterestNotional, address relayer);
+    event LiquidationOrderMatched(address indexed trader, bytes32 indexed orderHash, bytes signature, uint256 fillAmount, uint price, uint openInterestNotional, address relayer);
     event OrderMatchingError(bytes32 indexed orderHash, string err);
     event LiquidationError(address indexed trader, bytes32 indexed orderHash, string err, uint256 toLiquidate);
 
@@ -367,4 +373,8 @@ interface IHGTCore {
      * `_nonce` is the inbound nonce.
      */
     event ReceiveFromChain(uint16 indexed _srcChainId, address indexed _to, uint _amount, uint64 _nonce);
+}
+
+interface IFeeSink {
+    function transferOutVusd(address recipient, uint amount) external;
 }

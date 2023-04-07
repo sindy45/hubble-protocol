@@ -150,6 +150,10 @@ contract HGTTests is Utils, IHGTCore {
         vm.deal(from, nativeFee);
         // depositing enough amount so that it doesn't revert while withdrawing due to withdraw amount < nativeFee
         amount += 2 * nativeFee / 1e12;
+        if (amount > totalSupply / 1e12) {
+            amount = totalSupply / 1e12;
+        }
+
         uint initialDepositUsdc = amount;
 
         usdc.mint(from, amount);

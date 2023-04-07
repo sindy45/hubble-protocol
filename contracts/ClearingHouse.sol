@@ -24,10 +24,11 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
 
     uint256 constant PRECISION = 1e6;
     bytes32 constant public LIQUIDATION_FAILED = keccak256("LIQUIDATION_FAILED");
+    int256 constant PRECISION_INT = 1e6;
 
     int256 override public maintenanceMargin;
-    uint override public takerFee;
-    uint override public makerFee;
+    int256 override public takerFee; // defining as int for consistency with makerFee
+    int256 override public makerFee;
     uint override public liquidationPenalty;
     int256 public minAllowableMargin;
     uint public referralShare;
@@ -79,9 +80,9 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     )   external
         onlyOrderBook
     {
-        try this.openPosition(orders[0], fillAmount, fulfillPrice, matchInfo[0].isMakerOrder) {
+        try this.openPosition(orders[0], fillAmount, fulfillPrice, matchInfo[0].mode) {
             // only executed if the above doesn't revert
-            try this.openPosition(orders[1], -fillAmount, fulfillPrice, matchInfo[1].isMakerOrder) {
+            try this.openPosition(orders[1], -fillAmount, fulfillPrice, matchInfo[1].mode) {
             } catch Error(string memory reason) {
                 // will revert all state changes including those made in this.openPosition(orders[0])
                 revert(string(abi.encode(matchInfo[1].orderHash, reason)));
@@ -96,8 +97,8 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     * @notice Open/Modify/Close Position
     * @param order Order to be executed
     */
-    function openPosition(IOrderBook.Order memory order, int256 fillAmount, uint256 fulfillPrice, bool isMakerOrder) public onlyMySelf {
-        _openPosition(order, fillAmount, fulfillPrice, isMakerOrder);
+    function openPosition(IOrderBook.Order calldata order, int256 fillAmount, uint256 fulfillPrice, IOrderBook.OrderExecutionMode mode) public onlyMySelf {
+        _openPosition(order, fillAmount, fulfillPrice, mode);
     }
 
     function updatePositions(address trader) override public whenNotPaused {
@@ -151,7 +152,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         updatePositions(trader);
         try this.liquidateSingleAmm(trader, order.ammIndex, price, liquidationAmount) {
             // only executed if the above doesn't revert
-            try this.openPosition(order, liquidationAmount, price, true /* isMakerOrder */) {
+            try this.openPosition(order, liquidationAmount, price, matchInfo.mode) {
             } catch Error(string memory reason) {
                 // will revert all state changes including those made in this.liquidateSingleAmm
                 revert(string(abi.encode(matchInfo.orderHash, reason)));
@@ -178,48 +179,81 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
             int size,
             uint openNotional
         ) = amms[ammIndex].liquidatePosition(trader, price, toLiquidate);
-        emit PositionLiquidated(trader, ammIndex, toLiquidate, quoteAsset, realizedPnl, size, openNotional, _blockTimestamp());
 
-        uint liquidationFee = _chargeFeeAndRealizePnL(trader, realizedPnl, quoteAsset, true /* isLiquidation */, false /* isMakerOrder */);
-        marginAccount.transferOutVusd(feeSink, liquidationFee);
+        (int liquidationFee,) = _chargeFeeAndRealizePnL(trader, realizedPnl, quoteAsset, IOrderBook.OrderExecutionMode.Liquidation);
+        marginAccount.transferOutVusd(feeSink, liquidationFee.toUint256()); // will revert if liquidationFee is negative
+
+        emit PositionLiquidated(trader, ammIndex, toLiquidate, quoteAsset, realizedPnl, size, openNotional, liquidationFee, _blockTimestamp());
     }
 
+    /**
+    * @notice calculate trade/liquidatin fee
+    * @param realizedPnl realized PnL of the trade, only sent in so that call an extra call to marginAccount.realizePnL can be saved
+    * @return toFeeSink fee to be sent to fee sink, always >= 0
+    * @return feeCharged total fee including referral bonus and maker fee, can be positive or negative
+    * negative feeCharged => fee is payed to the maker
+    * referral bonus and fee discount is given when positive fee is charged from either maker or taker
+    */
     function _chargeFeeAndRealizePnL(
         address trader,
         int realizedPnl,
         uint quoteAsset,
-        bool isLiquidation,
-        bool isMakerOrder
+        IOrderBook.OrderExecutionMode mode
     )
         internal
-        returns (uint fee)
+        returns (int toFeeSink, int feeCharged)
     {
-        int256 marginCharge;
-        if (isLiquidation) {
-            fee = _calculateLiquidationPenalty(quoteAsset);
-            marginCharge = realizedPnl - fee.toInt256();
-        } else {
-            fee = _calculateTradeFee(quoteAsset, isMakerOrder);
-
-            address referrer = hubbleReferral.getTraderRefereeInfo(trader);
-            uint referralBonus;
-            if (referrer != address(0x0)) {
-                referralBonus = quoteAsset * referralShare / PRECISION;
-                // add margin to the referrer
-                marginAccount.realizePnL(referrer, referralBonus.toInt256());
-                emit ReferralBonusAdded(referrer, referralBonus);
-
-                uint discount = quoteAsset * tradingFeeDiscount / PRECISION;
-                fee -= discount;
+        if (mode == IOrderBook.OrderExecutionMode.Taker) {
+            feeCharged = _calculateTakerFee(quoteAsset);
+            if (makerFee < 0) {
+                // when maker fee is -ve, don't send to fee sink
+                // it will be credited to the maker when processing the other side of the trade
+                toFeeSink = _calculateMakerFee(quoteAsset); // toFeeSink is now -ve
             }
-            marginCharge = realizedPnl - fee.toInt256();
-            // deduct referral bonus from insurance fund share
-            fee -= referralBonus;
+        } else if (mode == IOrderBook.OrderExecutionMode.SameBlock) {
+            // charge taker fee without expecting a corresponding maker component
+            feeCharged = _calculateTakerFee(quoteAsset);
+        } else if (mode == IOrderBook.OrderExecutionMode.Maker) {
+            feeCharged = _calculateMakerFee(quoteAsset); // can be -ve or +ve
+        }  else if (mode == IOrderBook.OrderExecutionMode.Liquidation){
+            feeCharged = _calculateLiquidationPenalty(quoteAsset);
+            if (makerFee < 0) {
+                // when maker fee is -ve, don't send to fee sink
+                // it will be credited to the maker when processing the other side of the trade
+                toFeeSink = _calculateMakerFee(quoteAsset);
+            }
         }
-        marginAccount.realizePnL(trader, marginCharge);
+
+        if (feeCharged > 0) {
+            toFeeSink += feeCharged;
+            if (mode != IOrderBook.OrderExecutionMode.Liquidation) {
+                (uint discount, uint referralBonus) = _payReferralBonus(trader, feeCharged.toUint256());
+                feeCharged -= discount.toInt256();
+                // deduct referral bonus (already credit to referrer) from fee sink share
+                toFeeSink = toFeeSink - discount.toInt256() - referralBonus.toInt256();
+            }
+        }
+
+        marginAccount.realizePnL(trader, realizedPnl - feeCharged);
     }
 
-    function _openPosition(IOrderBook.Order memory order, int256 fillAmount, uint256 fulfillPrice, bool isMakerOrder) internal {
+    /**
+     * @param feeCharged fee charged to the trader, caller makes sure that this is positive
+    */
+    function _payReferralBonus(address trader, uint feeCharged) internal returns(uint discount, uint referralBonus) {
+        address referrer = hubbleReferral.getTraderRefereeInfo(trader);
+        if (referrer != address(0x0)) {
+            referralBonus = feeCharged * referralShare / PRECISION;
+            // add margin to the referrer
+            // note that this fee will be deducted from the fee sink share in the calling function
+            marginAccount.realizePnL(referrer, referralBonus.toInt256());
+            emit ReferralBonusAdded(referrer, referralBonus);
+
+            discount = feeCharged * tradingFeeDiscount / PRECISION;
+        }
+    }
+
+    function _openPosition(IOrderBook.Order memory order, int256 fillAmount, uint256 fulfillPrice, IOrderBook.OrderExecutionMode mode) internal {
         updatePositions(order.trader); // adjust funding payments
         uint quoteAsset = abs(fillAmount).toUint256() * fulfillPrice / 1e18;
         (
@@ -229,13 +263,15 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
             uint openNotional
         ) = amms[order.ammIndex].openPosition(order, fillAmount, fulfillPrice);
 
-        uint _fee = _chargeFeeAndRealizePnL(order.trader, realizedPnl, quoteAsset, false /* isLiquidation */, isMakerOrder);
-        marginAccount.transferOutVusd(feeSink, _fee);
+        (int toFeeSink, int feeCharged) = _chargeFeeAndRealizePnL(order.trader, realizedPnl, quoteAsset, mode);
+        if (toFeeSink != 0) {
+            marginAccount.transferOutVusd(feeSink, toFeeSink.toUint256());
+        }
 
         if (isPositionIncreased) {
             assertMarginRequirement(order.trader);
         }
-        emit PositionModified(order.trader, order.ammIndex, fillAmount, quoteAsset, realizedPnl, size, openNotional, _blockTimestamp());
+        emit PositionModified(order.trader, order.ammIndex, fillAmount, quoteAsset, realizedPnl, size, openNotional, feeCharged, _blockTimestamp());
     }
 
     /* ****************** */
@@ -339,15 +375,23 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         require(calcMarginFraction(trader, false, Mode.Maintenance_Margin) < maintenanceMargin, "CH: Above Maintenance Margin");
     }
 
-    function _calculateTradeFee(uint quoteAsset, bool isMakerOrder) internal view returns (uint) {
+    function _calculateTradeFee(uint quoteAsset, bool isMakerOrder) internal view returns (int) {
         if (isMakerOrder) {
-            return quoteAsset * makerFee / PRECISION;
+            return _calculateMakerFee(quoteAsset);
         }
-        return quoteAsset * takerFee / PRECISION;
+        return quoteAsset.toInt256() * takerFee / PRECISION_INT;
     }
 
-    function _calculateLiquidationPenalty(uint quoteAsset) internal view returns (uint) {
-        return quoteAsset * liquidationPenalty / PRECISION;
+    function _calculateTakerFee(uint quoteAsset) internal view returns (int) {
+        return quoteAsset.toInt256() * takerFee / PRECISION_INT;
+    }
+
+    function _calculateMakerFee(uint quoteAsset) internal view returns (int) {
+        return quoteAsset.toInt256() * makerFee / PRECISION_INT;
+    }
+
+    function _calculateLiquidationPenalty(uint quoteAsset) internal view returns (int) {
+        return (quoteAsset * liquidationPenalty / PRECISION).toInt256();
     }
 
     /* ****************** */
@@ -392,8 +436,8 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     function setParams(
         int _maintenanceMargin,
         int _minAllowableMargin,
-        uint _takerFee,
-        uint _makerFee,
+        int _takerFee,
+        int _makerFee,
         uint _referralShare,
         uint _tradingFeeDiscount,
         uint _liquidationPenalty

@@ -409,6 +409,7 @@ describe('Order Book - Error Handling', function () {
             orderHash,
             signature,
             toLiquidate.abs(),
+            order.price,
             longOrder.baseAssetQuantity.mul(4),
             governance
         )

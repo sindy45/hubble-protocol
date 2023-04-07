@@ -20,6 +20,7 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
     IClearingHouse public immutable clearingHouse;
 
     struct OrderInfo {
+        address trader;
         uint blockPlaced;
         int256 filledAmount;
         OrderStatus status;
@@ -79,14 +80,15 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         // Interactions
         uint fulfillPrice;
         if (matchInfo[0].blockPlaced < matchInfo[1].blockPlaced) {
-            matchInfo[0].isMakerOrder = true;
+            matchInfo[0].mode = OrderExecutionMode.Maker;
             fulfillPrice = orders[0].price;
         } else if (matchInfo[0].blockPlaced > matchInfo[1].blockPlaced) {
-            matchInfo[1].isMakerOrder = true;
+            matchInfo[1].mode = OrderExecutionMode.Maker;
             fulfillPrice = orders[1].price;
         } else { // both orders are placed in the same block, not possible to determine what came first in solidity
-            matchInfo[0].isMakerOrder = true;
-            matchInfo[1].isMakerOrder = true;
+            // executing both orders as taker order
+            matchInfo[0].mode = OrderExecutionMode.SameBlock;
+            matchInfo[1].mode = OrderExecutionMode.SameBlock;
             // Bulls (Longs) are our friends. We give them a favorable price in this corner case
             fulfillPrice = orders[1].price;
         }
@@ -122,21 +124,21 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         (, bytes32 orderHash) = verifySigner(order, signature);
         // order should not exist in the orderStatus map already
         require(orderInfo[orderHash].status == OrderStatus.Invalid, "OB_Order_already_exists");
-        orderInfo[orderHash] = OrderInfo(block.number, 0, OrderStatus.Placed);
+        orderInfo[orderHash] = OrderInfo(order.trader, block.number, 0, OrderStatus.Placed);
         // @todo assert margin requirements for placing the order
         // @todo min size requirement while placing order
 
         emit OrderPlaced(order.trader, orderHash, order, signature);
     }
 
-    function cancelOrder(Order memory order) public {
-        require(msg.sender == order.trader, "OB_sender_is_not_trader");
-        bytes32 orderHash = getOrderHash(order);
+    function cancelOrder(bytes32 orderHash) public {
+        address trader = orderInfo[orderHash].trader;
+        require(msg.sender == trader, "OB_sender_is_not_trader");
         // order status should be placed
         require(orderInfo[orderHash].status == OrderStatus.Placed, "OB_Order_does_not_exist");
         orderInfo[orderHash].status = OrderStatus.Cancelled;
 
-        emit OrderCancelled(order.trader, orderHash);
+        emit OrderCancelled(trader, orderHash);
     }
 
     // @todo onlyValidator modifier
@@ -169,13 +171,15 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         }
         MatchInfo memory matchInfo;
         (matchInfo.orderHash, matchInfo.blockPlaced) = _verifyOrder(order, signature, fillAmount);
+        // execute matching order as maker order
+        matchInfo.mode = OrderExecutionMode.Maker;
 
         try clearingHouse.liquidate(order, matchInfo, fillAmount, order.price, trader) {
             _updateOrder(matchInfo.orderHash, fillAmount, order.baseAssetQuantity);
             // get openInterestNotional for indexing
             IAMM amm = clearingHouse.amms(order.ammIndex);
             uint openInterestNotional = amm.openInterestNotional();
-            emit LiquidationOrderMatched(trader, matchInfo.orderHash, signature, liquidationAmount, openInterestNotional, msg.sender);
+            emit LiquidationOrderMatched(trader, matchInfo.orderHash, signature, liquidationAmount, order.price, openInterestNotional, msg.sender);
         } catch Error(string memory err) { // catches errors emitted from "revert/require"
             try this.parseMatchingError(err) returns(bytes32 _orderHash, string memory reason) {
                 if (matchInfo.orderHash == _orderHash) { // err in openPosition for the order
@@ -225,9 +229,9 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
     /*   Test/UI Helpers  */
     /* ****************** */
 
-    function cancelMultipleOrders(Order[] memory orders) external {
-        for (uint i; i < orders.length; i++) {
-            cancelOrder(orders[i]);
+    function cancelMultipleOrders(bytes32[] memory orderHashes) external {
+        for (uint i; i < orderHashes.length; i++) {
+            cancelOrder(orderHashes[i]);
         }
     }
 

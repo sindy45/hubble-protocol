@@ -37,10 +37,11 @@ abstract contract Utils is Test {
     Registry public registry;
     HubbleViewer public hubbleViewer;
     RestrictedErc20 public wavax;
-    address public governance = makeAddr("governance");
     address public feeSink = makeAddr("feeSink");
-    uint public makerFee = 0.0005 * 1e6; // 0.05%
-    uint public takerFee = 0.0005 * 1e6; // 0.05%
+    address public governance = makeAddr("governance");
+    int public makerFee = 0.05 * 1e4; // 0.05%
+    int public takerFee = 0.05 * 1e4; // 0.05%
+    uint public liquidationPenalty = 5 * 1e4; // 5%
     // for layer0 bridge test
     uint16 public baseChainId = 1;
     uint16 public otherChainId = 2;
@@ -53,6 +54,9 @@ abstract contract Utils is Test {
     address public alice;
     uint public bobKey;
     address public bob;
+
+    // used for temporary variables in test functions to avoid stack too deep
+    uint256[50] public temp;
 
     function setupContracts() public {
         (alice, aliceKey) = makeAddrAndKey("alice");
@@ -255,18 +259,21 @@ abstract contract Utils is Test {
         return (order, signature, orderHash);
     }
 
-    function placeAndExecuteOrder(uint ammIndex, uint trader1Key, uint trader2Key, int size, uint price) internal {
+    function placeAndExecuteOrder(uint ammIndex, uint trader1Key, uint trader2Key, int size, uint price, bool sameBlock) internal returns (uint margin) {
         IOrderBook.Order[2] memory orders;
         bytes[2] memory signatures;
         bytes32[2] memory ordersHash;
 
-        (orders[0], signatures[0], ordersHash[0]) = placeOrder(ammIndex, trader1Key, size, price);
-        (orders[1], signatures[1], ordersHash[1]) = placeOrder(ammIndex, trader2Key, -size, price);
+        (orders[0], signatures[0], ordersHash[0]) = placeOrder(ammIndex, trader1Key, int(stdMath.abs(size)), price);
+        if (!sameBlock) {
+            vm.roll(block.number + 1);
+        }
+        (orders[1], signatures[1], ordersHash[1]) = placeOrder(ammIndex, trader2Key, -int(stdMath.abs(size)), price);
 
-        uint quote = stdMath.abs(size) * price / 2e18; // 2x leverage
-        addMargin(alice, quote);
-        addMargin(bob, quote);
-        orderBook.executeMatchedOrders(orders, signatures, size);
+        margin = stdMath.abs(size) * price / 2e18; // 2x leverage
+        addMargin(alice, margin);
+        addMargin(bob, margin);
+        orderBook.executeMatchedOrders(orders, signatures, int(stdMath.abs(size)));
     }
 
     function assertPositions(address trader, int size, uint openNotional, int unrealizedPnl, uint avgOpen) internal {

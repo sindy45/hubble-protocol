@@ -181,7 +181,7 @@ describe('AMM unit tests', async function() {
         avax = await utils.setupRestrictedTestToken('avax', 'avax', 6)
         ;({ amm: avaxAmm } = await utils.setupAmm(
             alice,
-            [ 'AVAX-PERP', avax.address, oracle.address, 100 /* min size = 100 wei */ ],
+            [ 'AVAX-PERP', avax.address, oracle.address, _1e18 /* min size = 1 ether */ ],
             {
                 initialRate: 65,
                 whitelist: false
@@ -217,7 +217,7 @@ describe('AMM unit tests', async function() {
         await expect(
             clearingHouse.connect(bob).openPosition2(0, _1e18.div(10), 0)
         ).to.be.revertedWith('position_less_than_minSize')
-        await clearingHouse.openPosition2(1, -10000, 0)
+        await clearingHouse.openPosition2(1, _1e18.add(1), 0)
 
         await ops()
     })

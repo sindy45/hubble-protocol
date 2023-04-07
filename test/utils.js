@@ -368,7 +368,7 @@ async function getTradeDetails(tx, tradeFee = DEFAULT_TRADE_FEE) {
     const positionModifiedEvent = await filterEvent(tx, 'PositionModified')
     return {
         quoteAsset: positionModifiedEvent.args.quoteAsset,
-        fee: positionModifiedEvent.args.quoteAsset.mul(tradeFee).div(_1e6)
+        fee: positionModifiedEvent.args.fee
     }
 }
 

@@ -25,7 +25,7 @@ contract TestClearingHouse is ClearingHouse {
 
         uint salt = _blockTimestamp();
         IOrderBook.Order memory order = IOrderBook.Order(ammIndex, _msgSender(), baseAssetQuantity, price, salt);
-        _openPosition(order, order.baseAssetQuantity, order.price, true);
+        _openPosition(order, order.baseAssetQuantity, order.price, IOrderBook.OrderExecutionMode.Taker);
     }
 
     function closePosition(uint ammIndex) external {
@@ -34,7 +34,7 @@ contract TestClearingHouse is ClearingHouse {
         uint salt = _blockTimestamp();
         (int baseAssetQuantity,,,) = amms[ammIndex].positions(trader);
         IOrderBook.Order memory order = IOrderBook.Order(ammIndex,_msgSender(), -baseAssetQuantity, price, salt);
-        _openPosition(order, order.baseAssetQuantity, order.price, false);
+        _openPosition(order, order.baseAssetQuantity, order.price, IOrderBook.OrderExecutionMode.Taker);
     }
 
     function liquidate2(address trader) external {
