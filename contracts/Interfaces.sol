@@ -98,6 +98,7 @@ interface IOrderBook {
         int256 baseAssetQuantity;
         uint256 price;
         uint256 salt;
+        uint256 expiry;
     }
 
     struct MatchInfo {

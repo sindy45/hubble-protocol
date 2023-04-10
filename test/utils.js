@@ -638,23 +638,10 @@ function bnToFloat(num, decimals = 6) {
     return parseFloat(ethers.utils.formatUnits(num.toString(), decimals))
 }
 
-async function unbondAndRemoveLiquidity(signer, amm, index, dToken, minQuote, minBase) {
-    await amm.connect(signer).unbondLiquidity(dToken)
-    await gotoNextUnbondEpoch(amm, signer.address)
-    return clearingHouse.connect(signer).removeLiquidity(index, dToken, minQuote, minBase)
-}
-
-async function gotoNextWithdrawEpoch(amm, maker) {
+async function setNextBlockTimestamp(timestamp) {
     return network.provider.send(
         'evm_setNextBlockTimestamp',
-        [(await amm.makers(maker)).unbondTime.toNumber() + 86401]
-    );
-}
-
-async function gotoNextUnbondEpoch(amm, maker) {
-    return network.provider.send(
-        'evm_setNextBlockTimestamp',
-        [(await amm.makers(maker)).unbondTime.toNumber()]
+        [timestamp]
     );
 }
 
@@ -713,11 +700,9 @@ module.exports = {
     generateConfig,
     sleep,
     bnToFloat,
-    unbondAndRemoveLiquidity,
-    gotoNextWithdrawEpoch,
     forkCChain,
     forkFuji,
-    gotoNextUnbondEpoch,
+    setNextBlockTimestamp,
     setBalance,
     calcMakerLiquidationPrice,
     setDefaultClearingHouseParams

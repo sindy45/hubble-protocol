@@ -232,7 +232,7 @@ abstract contract Utils is Test {
         vm.stopPrank();
     }
 
-    function prepareOrder(uint ammIndex, uint traderKey, int size, uint price) internal view returns (
+    function prepareOrder(uint ammIndex, uint traderKey, int size, uint price, uint expiry) internal view returns (
         address trader,
         IOrderBook.Order memory order,
         bytes memory signature,
@@ -244,7 +244,8 @@ abstract contract Utils is Test {
             trader,
             size,
             price,
-            block.timestamp
+            block.timestamp, // salt
+            expiry
         );
 
         orderHash = orderBook.getOrderHash(order);
@@ -252,8 +253,8 @@ abstract contract Utils is Test {
         signature = abi.encodePacked(r, s, v);
     }
 
-    function placeOrder(uint ammIndex, uint traderKey, int size, uint price) internal returns (IOrderBook.Order memory, bytes memory, bytes32) {
-        (address trader, IOrderBook.Order memory order, bytes memory signature, bytes32 orderHash) = prepareOrder(ammIndex, traderKey, size, price);
+    function placeOrder(uint ammIndex, uint traderKey, int size, uint price, uint expiry) internal returns (IOrderBook.Order memory, bytes memory, bytes32) {
+        (address trader, IOrderBook.Order memory order, bytes memory signature, bytes32 orderHash) = prepareOrder(ammIndex, traderKey, size, price, expiry);
         vm.prank(trader);
         orderBook.placeOrder(order, signature);
         return (order, signature, orderHash);
@@ -263,12 +264,13 @@ abstract contract Utils is Test {
         IOrderBook.Order[2] memory orders;
         bytes[2] memory signatures;
         bytes32[2] memory ordersHash;
+        uint expiry = block.timestamp;
 
-        (orders[0], signatures[0], ordersHash[0]) = placeOrder(ammIndex, trader1Key, int(stdMath.abs(size)), price);
+        (orders[0], signatures[0], ordersHash[0]) = placeOrder(ammIndex, trader1Key, int(stdMath.abs(size)), price, expiry);
         if (!sameBlock) {
             vm.roll(block.number + 1);
         }
-        (orders[1], signatures[1], ordersHash[1]) = placeOrder(ammIndex, trader2Key, -int(stdMath.abs(size)), price);
+        (orders[1], signatures[1], ordersHash[1]) = placeOrder(ammIndex, trader2Key, -int(stdMath.abs(size)), price, expiry);
 
         margin = stdMath.abs(size) * price / 2e18; // 2x leverage
         addMargin(alice, margin);

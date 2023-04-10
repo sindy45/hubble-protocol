@@ -15,9 +15,10 @@ describe('Order Book', function () {
         ;([, alice, bob] = signers)
         ;({ orderBook, usdc, oracle, weth } = await setupContracts({mockOrderBook: false}))
 
-        await orderBook.setValidatorStatus(signers[0].address, true)
         await addMargin(alice, _1e6.mul(4000))
         await addMargin(bob, _1e6.mul(4000))
+        const tx = await orderBook.setValidatorStatus(signers[0].address, true)
+        timestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp;
     })
 
     it('verify signer', async function() {
@@ -36,6 +37,7 @@ describe('Order Book', function () {
                 { name: "baseAssetQuantity", type: "int256" },
                 { name: "price", type: "uint256" },
                 { name: "salt", type: "uint256" },
+                { name: "expiry", type: "uint256" },
             ]
         }
         shortOrder = {
@@ -43,7 +45,8 @@ describe('Order Book', function () {
             trader: alice.address,
             baseAssetQuantity: ethers.utils.parseEther('-5'),
             price: ethers.utils.parseUnits('1000', 6),
-            salt: BigNumber.from(Date.now())
+            salt: BigNumber.from(Date.now()),
+            expiry: BigNumber.from(timestamp + 3600)
         }
 
         order1Hash = await orderBook.getOrderHash(shortOrder)
@@ -72,7 +75,8 @@ describe('Order Book', function () {
             trader: bob.address,
             baseAssetQuantity: ethers.utils.parseEther('5'),
             price: ethers.utils.parseUnits('1000', 6),
-            salt: BigNumber.from(Date.now())
+            salt: BigNumber.from(Date.now()),
+            expiry: BigNumber.from(timestamp + 3600)
         }
         signature2 = await bob._signTypedData(domain, orderType, longOrder)
         await orderBook.connect(bob).placeOrder(longOrder, signature2)
@@ -152,14 +156,14 @@ describe('Order Book', function () {
     it('liquidateAndExecuteOrder', async function() {
         // force alice in liquidation zone
         const markPrice = _1e6.mul(1180)
-        await placeAndExecuteTrade(_1e18.mul(5), markPrice)
+        await placeAndExecuteTrade(_1e18.mul(5), markPrice, longOrder.expiry)
         expect(await clearingHouse.isAboveMaintenanceMargin(alice.address)).to.eq(false)
         expect(await clearingHouse.isAboveMaintenanceMargin(bob.address)).to.eq(true)
         const { size } = await amm.positions(alice.address)
 
         const charlie = signers[7]
         await addMargin(charlie, _1e6.mul(2000))
-        const { order, signature } = await placeOrder(size, markPrice, charlie)
+        const { order, signature } = await placeOrder(size, markPrice, charlie, longOrder.expiry)
 
         // liquidate
         const toLiquidate = size.mul(25e4).div(1e6).add(1) // 1/4th position liquidated
@@ -184,7 +188,8 @@ describe('Order Book - Error Handling', function () {
         ;([, alice, bob] = signers)
         ;({ orderBook, usdc, oracle, weth, amm } = await setupContracts({mockOrderBook: false}))
 
-        await orderBook.setValidatorStatus(signers[0].address, true)
+        const tx = await orderBook.setValidatorStatus(signers[0].address, true)
+        timestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp;
 
         // we will deliberately not add any margin so that openPosition fails
     })
@@ -198,6 +203,7 @@ describe('Order Book - Error Handling', function () {
                 { name: "baseAssetQuantity", type: "int256" },
                 { name: "price", type: "uint256" },
                 { name: "salt", type: "uint256" },
+                { name: "expiry", type: "uint256" },
             ]
         }
 
@@ -213,7 +219,8 @@ describe('Order Book - Error Handling', function () {
             trader: alice.address,
             baseAssetQuantity: ethers.utils.parseEther('-5'),
             price: ethers.utils.parseUnits('1000', 6),
-            salt: BigNumber.from(Date.now())
+            salt: BigNumber.from(Date.now()),
+            expiry: BigNumber.from(timestamp + 3600)
         }
         order1Hash = await orderBook.getOrderHash(shortOrder)
         signature1 = await alice._signTypedData(domain, orderType, shortOrder)
@@ -237,7 +244,8 @@ describe('Order Book - Error Handling', function () {
             trader: bob.address,
             baseAssetQuantity: ethers.utils.parseEther('5'),
             price: ethers.utils.parseUnits('1000', 6),
-            salt: BigNumber.from(Date.now())
+            salt: BigNumber.from(Date.now()),
+            expiry: BigNumber.from(timestamp + 3600)
         }
         order2Hash = await orderBook.getOrderHash(longOrder)
         signature2 = await bob._signTypedData(domain, orderType, longOrder)
@@ -343,7 +351,7 @@ describe('Order Book - Error Handling', function () {
         const { size } = await amm.positions(alice.address)
         charlie = signers[7]
         markPrice = _1e6.mul(1180)
-        ;({ order, signature } = await placeOrder(size, markPrice, charlie))
+        ;({ order, signature } = await placeOrder(size, markPrice, charlie, longOrder.expiry))
         // liquidate
         toLiquidate = size.mul(25e4).div(1e6).add(1) // 1/4th position liquidated
         let tx = await orderBook.liquidateAndExecuteOrder(alice.address, order, signature, toLiquidate.abs())
@@ -359,7 +367,7 @@ describe('Order Book - Error Handling', function () {
 
     it('ch.liquidateSingleAmm fails - revert from amm', async function() {
         // force alice in liquidation zone
-        await placeAndExecuteTrade(longOrder.baseAssetQuantity, markPrice)
+        await placeAndExecuteTrade(longOrder.baseAssetQuantity, markPrice, longOrder.expiry)
         expect(await clearingHouse.isAboveMaintenanceMargin(alice.address)).to.eq(false)
 
         let tx = await orderBook.liquidateAndExecuteOrder(alice.address, order, signature, toLiquidate.mul(2).abs())
@@ -429,14 +437,14 @@ async function assertPosSize(s1, s2) {
     return { alicePos, bobPos }
 }
 
-async function placeAndExecuteTrade(size, price) {
+async function placeAndExecuteTrade(size, price, expiry) {
         const signer1 = signers[9]
         const signer2 = signers[8]
         await addMargin(signer1, _1e6.mul(_1e6))
         await addMargin(signer2, _1e6.mul(_1e6))
 
-        const { order: order1, signature: signature1} = await placeOrder(size, price, signer1)
-        const { order: order2, signature: signature2} = await placeOrder(size.mul(-1), price, signer2)
+        const { order: order1, signature: signature1} = await placeOrder(size, price, signer1, expiry)
+        const { order: order2, signature: signature2} = await placeOrder(size.mul(-1), price, signer2, expiry)
 
         await orderBook.executeMatchedOrders(
             [ order1, order2 ],
@@ -445,7 +453,7 @@ async function placeAndExecuteTrade(size, price) {
         )
 }
 
-async function placeOrder(size, price, signer) {
+async function placeOrder(size, price, signer, expiry) {
     if (!signer) {
         signer = signers[9]
         await addMargin(signer, _1e6.mul(_1e6))
@@ -456,7 +464,8 @@ async function placeOrder(size, price, signer) {
         trader: signer.address,
         baseAssetQuantity: size,
         price: price,
-        salt: BigNumber.from(Date.now())
+        salt: BigNumber.from(Date.now()),
+        expiry
     }
 
     const signature = await signer._signTypedData(domain, orderType, order)

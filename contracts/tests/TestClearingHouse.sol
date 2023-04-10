@@ -24,7 +24,8 @@ contract TestClearingHouse is ClearingHouse {
         }
 
         uint salt = _blockTimestamp();
-        IOrderBook.Order memory order = IOrderBook.Order(ammIndex, _msgSender(), baseAssetQuantity, price, salt);
+        uint expiry = _blockTimestamp() + 1 hours;
+        IOrderBook.Order memory order = IOrderBook.Order(ammIndex, _msgSender(), baseAssetQuantity, price, salt, expiry);
         _openPosition(order, order.baseAssetQuantity, order.price, IOrderBook.OrderExecutionMode.Taker);
     }
 
@@ -32,8 +33,9 @@ contract TestClearingHouse is ClearingHouse {
         address trader = _msgSender();
         uint price = amms[ammIndex].lastPrice();
         uint salt = _blockTimestamp();
+        uint expiry = _blockTimestamp() + 1 hours;
         (int baseAssetQuantity,,,) = amms[ammIndex].positions(trader);
-        IOrderBook.Order memory order = IOrderBook.Order(ammIndex,_msgSender(), -baseAssetQuantity, price, salt);
+        IOrderBook.Order memory order = IOrderBook.Order(ammIndex,_msgSender(), -baseAssetQuantity, price, salt, expiry);
         _openPosition(order, order.baseAssetQuantity, order.price, IOrderBook.OrderExecutionMode.Taker);
     }
 
