@@ -8,6 +8,21 @@ require('hardhat-contract-sizer')
 require("@tenderly/hardhat-tenderly");
 require("@nomiclabs/hardhat-etherscan");
 
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+// get the name fo the network
+const network = process.env.HARDHAT_NETWORK || 'hardhat';
+
+let chainId
+if (network === 'subnet') {
+    const filePath = path.join(os.homedir(), '.hubblenet.json')
+    const fileData = fs.readFileSync(filePath, 'utf-8');
+    const jsonData = JSON.parse(fileData);
+    chainId = jsonData.chain_id;
+}
+
 const PRIVATE_KEY = `0x${process.env.PRIVATE_KEY || 'ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80'}`
 
 /**
@@ -37,19 +52,25 @@ module.exports = {
         // },
         local: {
             url: 'http://127.0.0.1:8545',
-            chainId: 1337,
+            chainId: 321123,
         },
         hardhat: {
-            chainId: 1337
+            chainId: 321123
         },
         subnet: {
-            url: 'http://127.0.0.1:9650/ext/bc/ApqPLzkwctjXTxsFAfcUoVyxCmReQ9vTARdnBunuMna3DzLaF/rpc', // changes on every fresh run
+            url: `http://127.0.0.1:9650/ext/bc/${chainId}/rpc`,
             chainId: 321123,
             throwOnTransactionFailures: true,
             gasLimit: 5000000,
             accounts: {
                 mnemonic: "test test test test test test test test test test test junk"
             }
+        },
+        fujinet: {
+            url: 'https://internal-hubblenet-rpc.hubble.exchange/ext/bc/zMahcey2Yk8jiHdVr4sCVrc4gQKhpyaWCtQK55PsmtoGqnBfY/rpc',
+            chainId: 321123,
+            throwOnTransactionFailures: true,
+            gasLimit: 5000000
         },
         fuji: {
             url: 'https://internal-hubblenet-rpc.hubble.exchange/ext/bc/2ErDhAugYgUSwpeejAsCBcHY4MzLYZ5Y13nDuNRtrSWjQN5SDM/rpc', // changes on every fresh run

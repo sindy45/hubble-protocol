@@ -64,6 +64,7 @@ interface IClearingHouse {
     ) external;
     function feeSink() external view returns(address);
     function calcMarginFraction(address trader, bool includeFundingPayments, Mode mode) external view returns(int256);
+    function getUnderlyingPrice() external view returns(uint[] memory prices);
 }
 
 interface ERC20Detailed {
@@ -150,6 +151,7 @@ interface IAMM {
     function lastPrice() external view returns(uint256);
     function startFunding() external returns(uint256);
     function openInterestNotional() external returns(uint256);
+    function getUnderlyingPrice() external view returns(uint256);
 }
 
 // for backward compatibility in forked tests

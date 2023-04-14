@@ -338,6 +338,18 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         return amms;
     }
 
+    /**
+     * @notice Get the underlying price of the AMMs
+     * @dev The matching engine uses this to filter out the orders are above the AMM spread limit; which otherwise will cause the matching engine to fail
+    */
+    function getUnderlyingPrice() override public view returns(uint[] memory prices) {
+        uint numAmms = amms.length;
+        prices = new uint[](numAmms);
+        for (uint i; i < numAmms; ++i) {
+            prices[i] = amms[i].getUnderlyingPrice();
+        }
+    }
+
     /* ****************** */
     /*   Test/UI Helpers  */
     /* ****************** */

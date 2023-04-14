@@ -48,7 +48,7 @@ async function main() {
     // whitelist evm address for order execution transactions
     await orderBook.setValidatorStatus(ethers.utils.getAddress('0x4Cf2eD3665F6bFA95cE6A11CFDb7A2EF5FC1C7E4'), true)
     // set spread limit to higher value
-    const maxOracleSpreadRatio = 1e6 // 100%
+    const maxOracleSpreadRatio = 100 * 1e4 // 100%
     const maxPriceSpreadPerBlock = 1 * 1e4 // 1% - not used for testnet as of now
     await amm.setPriceSpreadParams(maxOracleSpreadRatio, maxPriceSpreadPerBlock)
 

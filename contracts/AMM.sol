@@ -414,6 +414,10 @@ contract AMM is IAMM, Governable {
         return reserveSnapshots[reserveSnapshots.length - 1].lastPrice;
     }
 
+    function getUnderlyingPrice() public view returns(uint256) {
+        return uint(oracle.getUnderlyingPrice(underlyingAsset));
+    }
+
     function openInterestNotional() override public view returns (uint256) {
         return longOpenInterestNotional + shortOpenInterestNotional;
     }
@@ -454,11 +458,14 @@ contract AMM is IAMM, Governable {
         // @todo think about if this is required, commenting for testnet
         // _checkMarkPriceSingleBlockSpread(price);
 
-        // shorts not allowed if market price < (1 - maxOracleSpreadRatio)*index price
-        uint256 oraclePrice = uint(oracle.getUnderlyingPrice(underlyingAsset));
-        oraclePrice = oraclePrice * (1e6 - maxOracleSpreadRatio) / 1e6;
-        if (!isLiquidation && price < oraclePrice) {
-            revert("AMM_price_decrease_not_allowed");
+        // if maxOracleSpreadRatio >= 1e6 it means that 100% variation is allowed which means shorts at $0 will also pass.
+        // so we don't need to check for that case
+        if (maxOracleSpreadRatio < 1e6) {
+            uint256 oraclePrice = uint(oracle.getUnderlyingPrice(underlyingAsset));
+            oraclePrice = oraclePrice * (1e6 - maxOracleSpreadRatio) / 1e6;
+            if (!isLiquidation && price < oraclePrice) {
+                revert("AMM_price_decrease_not_allowed");
+            }
         }
     }
 
