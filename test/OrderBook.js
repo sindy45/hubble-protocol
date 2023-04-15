@@ -58,11 +58,13 @@ describe('Order Book', function () {
     it('place an order', async function() {
         await expect(orderBook.placeOrder(shortOrder, signature1)).to.revertedWith('OB_sender_is_not_trader')
         const tx = await orderBook.connect(alice).placeOrder(shortOrder, signature1)
+        const _timestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp
         await expect(tx).to.emit(orderBook, "OrderPlaced").withArgs(
             shortOrder.trader,
             order1Hash,
             Object.values(shortOrder),
-            signature1
+            signature1,
+            _timestamp
         )
         await expect(orderBook.connect(alice).placeOrder(shortOrder, signature1)).to.revertedWith('OB_Order_already_exists')
         expect((await orderBook.orderInfo(order1Hash)).status).to.eq(1) // placed
@@ -89,13 +91,15 @@ describe('Order Book', function () {
 
         order2Hash = await orderBook.getOrderHash(longOrder)
 
+        const _timestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp
         await expect(tx).to.emit(orderBook, 'OrdersMatched').withArgs(
             order2Hash,
             order1Hash,
             longOrder.baseAssetQuantity,
             longOrder.price,
             longOrder.baseAssetQuantity.mul(2),
-            governance
+            governance,
+            _timestamp
         )
 
         expect((await orderBook.orderInfo(order1Hash)).status).to.eq(2) // filled
@@ -227,11 +231,13 @@ describe('Order Book - Error Handling', function () {
 
         await expect(orderBook.placeOrder(shortOrder, signature1)).to.revertedWith('OB_sender_is_not_trader')
         const tx = await orderBook.connect(alice).placeOrder(shortOrder, signature1)
+        const _timestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp
         await expect(tx).to.emit(orderBook, "OrderPlaced").withArgs(
             shortOrder.trader,
             order1Hash,
             Object.values(shortOrder),
-            signature1
+            signature1,
+            _timestamp
         )
         await expect(orderBook.connect(alice).placeOrder(shortOrder, signature1)).to.revertedWith('OB_Order_already_exists')
         expect((await orderBook.orderInfo(order1Hash)).status).to.eq(1) // placed
@@ -328,13 +334,15 @@ describe('Order Book - Error Handling', function () {
             longOrder.baseAssetQuantity
         )
 
+        const _timestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp
         await expect(tx).to.emit(orderBook, 'OrdersMatched').withArgs(
             order2Hash,
             order1Hash,
             longOrder.baseAssetQuantity,
             longOrder.price,
             longOrder.baseAssetQuantity.mul(2),
-            governance
+            governance,
+            _timestamp
         )
 
         expect((await orderBook.orderInfo(order1Hash)).status).to.eq(2) // filled
@@ -412,6 +420,7 @@ describe('Order Book - Error Handling', function () {
     it('liquidations when all conditions met', async function() {
         await addMargin(charlie, _1e6.mul(2000))
         let tx = await orderBook.liquidateAndExecuteOrder(alice.address, order, signature, toLiquidate.abs())
+        const _timestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp
         await expect(tx).to.emit(orderBook, 'LiquidationOrderMatched').withArgs(
             alice.address,
             orderHash,
@@ -419,7 +428,8 @@ describe('Order Book - Error Handling', function () {
             toLiquidate.abs(),
             order.price,
             longOrder.baseAssetQuantity.mul(4),
-            governance
+            governance,
+            _timestamp
         )
         await assertPosSize(shortOrder.baseAssetQuantity.sub(toLiquidate), longOrder.baseAssetQuantity)
         const charliePos = await hubbleViewer.userPositions(charlie.address)

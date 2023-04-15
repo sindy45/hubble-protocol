@@ -6,10 +6,10 @@ import "./Utils.sol";
 contract OrderBookTests is Utils {
     uint constant public margin = 2000 * 1e6;
 
-    event OrderPlaced(address indexed trader, bytes32 indexed orderHash, IOrderBook.Order order, bytes signature);
-    event OrderCancelled(address indexed trader, bytes32 orderHash);
-    event OrdersMatched(bytes32 indexed orderHash0, bytes32 indexed orderHash1, uint256 fillAmount, uint price, uint openInterestNotional, address relayer);
-    event LiquidationOrderMatched(address indexed trader, bytes32 indexed orderHash, bytes signature, uint256 fillAmount, uint price, uint openInterestNotional, address relayer);
+    event OrderPlaced(address indexed trader, bytes32 indexed orderHash, IOrderBook.Order order, bytes signature, uint timestamp);
+    event OrderCancelled(address indexed trader, bytes32 indexed orderHash, uint timestamp);
+    event OrdersMatched(bytes32 indexed orderHash0, bytes32 indexed orderHash1, uint256 fillAmount, uint price, uint openInterestNotional, address relayer, uint timestamp);
+    event LiquidationOrderMatched(address indexed trader, bytes32 indexed orderHash, bytes signature, uint256 fillAmount, uint price, uint openInterestNotional, address relayer, uint timestamp);
     event OrderMatchingError(bytes32 indexed orderHash, string err);
     event LiquidationError(address indexed trader, bytes32 orderHash, string err, uint256 toLiquidate);
 
@@ -39,7 +39,7 @@ contract OrderBookTests is Utils {
         expiry += 1;
         (trader, order, signature, orderHash) = prepareOrder(0, traderKey, size, price, expiry);
         vm.expectEmit(true, true, false, true, address(orderBook));
-        emit OrderPlaced(trader, orderHash, order, signature);
+        emit OrderPlaced(trader, orderHash, order, signature, block.timestamp);
         orderBook.placeOrder(order, signature);
 
         vm.expectRevert("OB_Order_already_exists");
@@ -89,7 +89,7 @@ contract OrderBookTests is Utils {
         addMargin(bob, quote / 2);
 
         vm.expectEmit(true, true, false, true, address(orderBook));
-        emit OrdersMatched(ordersHash[0], ordersHash[1], uint(size), uint(price), stdMath.abs(2 * size), address(this));
+        emit OrdersMatched(ordersHash[0], ordersHash[1], uint(size), uint(price), stdMath.abs(2 * size), address(this), block.timestamp);
         orderBook.executeMatchedOrders(orders, signatures, size);
 
         (,,int filledAmount, OrderBook.OrderStatus status) = orderBook.orderInfo(ordersHash[0]);
@@ -136,7 +136,7 @@ contract OrderBookTests is Utils {
 
             uint feeSinkBalanceBefore = husd.balanceOf(feeSink);
             vm.expectEmit(true, true, false, true, address(orderBook));
-            emit LiquidationOrderMatched(address(alice), orderHash, signature, toLiquidate, price, stdMath.abs(2 * size), address(this));
+            emit LiquidationOrderMatched(address(alice), orderHash, signature, toLiquidate, price, stdMath.abs(2 * size), address(this), block.timestamp);
             orderBook.liquidateAndExecuteOrder(alice, order, signature, toLiquidate);
 
             {
@@ -162,7 +162,7 @@ contract OrderBookTests is Utils {
         }
         {
             vm.expectEmit(true, false, false, true, address(orderBook));
-            emit LiquidationOrderMatched(address(bob), orderHash, signature, toLiquidate, price, stdMath.abs(2 * size), address(this));
+            emit LiquidationOrderMatched(address(bob), orderHash, signature, toLiquidate, price, stdMath.abs(2 * size), address(this), block.timestamp);
             orderBook.liquidateAndExecuteOrder(bob, order, signature, toLiquidate);
         }
         {
@@ -392,7 +392,7 @@ contract OrderBookTests is Utils {
 
             uint feeSinkBalanceBefore = husd.balanceOf(feeSink);
             vm.expectEmit(true, true, false, true, address(orderBook));
-            emit LiquidationOrderMatched(address(alice), orderHash, signature, toLiquidate, price, stdMath.abs(2 * size), address(this));
+            emit LiquidationOrderMatched(address(alice), orderHash, signature, toLiquidate, price, stdMath.abs(2 * size), address(this), block.timestamp);
             orderBook.liquidateAndExecuteOrder(alice, order, signature, toLiquidate);
 
             {

@@ -99,7 +99,7 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
             // get openInterestNotional for indexing
             IAMM amm = clearingHouse.amms(orders[0].ammIndex);
             uint openInterestNotional = amm.openInterestNotional();
-            emit OrdersMatched(matchInfo[0].orderHash, matchInfo[1].orderHash, fillAmount.toUint256(), fulfillPrice, openInterestNotional, msg.sender);
+            emit OrdersMatched(matchInfo[0].orderHash, matchInfo[1].orderHash, fillAmount.toUint256(), fulfillPrice, openInterestNotional, msg.sender, block.timestamp);
         } catch Error(string memory err) { // catches errors emitted from "revert/require"
             try this.parseMatchingError(err) returns(bytes32 orderHash, string memory reason) {
                 emit OrderMatchingError(orderHash, reason);
@@ -131,7 +131,7 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         // @todo assert margin requirements for placing the order
         // @todo min size requirement while placing order
 
-        emit OrderPlaced(order.trader, orderHash, order, signature);
+        emit OrderPlaced(order.trader, orderHash, order, signature, block.timestamp);
     }
 
     function cancelOrder(bytes32 orderHash) public {
@@ -141,7 +141,7 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         require(orderInfo[orderHash].status == OrderStatus.Placed, "OB_Order_does_not_exist");
         orderInfo[orderHash].status = OrderStatus.Cancelled;
 
-        emit OrderCancelled(trader, orderHash);
+        emit OrderCancelled(trader, orderHash, block.timestamp);
     }
 
     // @todo onlyValidator modifier
@@ -183,7 +183,7 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
             // get openInterestNotional for indexing
             IAMM amm = clearingHouse.amms(order.ammIndex);
             uint openInterestNotional = amm.openInterestNotional();
-            emit LiquidationOrderMatched(trader, matchInfo.orderHash, signature, liquidationAmount, order.price, openInterestNotional, msg.sender);
+            emit LiquidationOrderMatched(trader, matchInfo.orderHash, signature, liquidationAmount, order.price, openInterestNotional, msg.sender, block.timestamp);
         } catch Error(string memory err) { // catches errors emitted from "revert/require"
             try this.parseMatchingError(err) returns(bytes32 _orderHash, string memory reason) {
                 if (matchInfo.orderHash == _orderHash) { // err in openPosition for the order
