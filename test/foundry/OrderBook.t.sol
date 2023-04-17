@@ -21,23 +21,12 @@ contract OrderBookTests is Utils {
 
     function testPlaceOrder(uint128 traderKey, int size, uint price) public {
         vm.assume(traderKey != 0);
-        uint expiry = block.timestamp + 4 weeks + 1;
-        (address trader, IOrderBook.Order memory order, bytes memory signature, bytes32 orderHash) = prepareOrder(0, traderKey, size, price, expiry);
+        (address trader, IOrderBook.Order memory order, bytes memory signature, bytes32 orderHash) = prepareOrder(0, traderKey, size, price);
 
         vm.expectRevert("OB_sender_is_not_trader");
         orderBook.placeOrder(order, signature);
 
         vm.startPrank(trader);
-        vm.expectRevert("OB_invalid_expiry_time");
-        orderBook.placeOrder(order, signature);
-
-        expiry = block.timestamp - 1;
-        (trader, order, signature, orderHash) = prepareOrder(0, traderKey, size, price, expiry);
-        vm.expectRevert("OB_invalid_expiry_time");
-        orderBook.placeOrder(order, signature);
-
-        expiry += 1;
-        (trader, order, signature, orderHash) = prepareOrder(0, traderKey, size, price, expiry);
         vm.expectEmit(true, true, false, true, address(orderBook));
         emit OrderPlaced(trader, orderHash, order, signature, block.timestamp);
         orderBook.placeOrder(order, signature);
@@ -77,8 +66,8 @@ contract OrderBookTests is Utils {
         bytes32[2] memory ordersHash;
 
         int size = int(uint(size_) + amm.minSizeRequirement()); // to avoid min size error
-        (orders[0], signatures[0], ordersHash[0]) = placeOrder(0, aliceKey, size, price, block.timestamp + 1 hours);
-        (orders[1], signatures[1], ordersHash[1]) = placeOrder(0, bobKey, -size, price, block.timestamp + 1 hours);
+        (orders[0], signatures[0], ordersHash[0]) = placeOrder(0, aliceKey, size, price);
+        (orders[1], signatures[1], ordersHash[1]) = placeOrder(0, bobKey, -size, price);
 
         vm.expectEmit(true, false, false, true, address(orderBook));
         emit OrderMatchingError(ordersHash[0], "CH: Below Minimum Allowable Margin");
@@ -123,7 +112,7 @@ contract OrderBookTests is Utils {
 
         (address charlie, uint charlieKey) = makeAddrAndKey("charlie");
         addMargin(charlie, stdMath.abs(size) * price / 1e18);
-        (IOrderBook.Order memory order, bytes memory signature, bytes32 orderHash) = placeOrder(0, charlieKey, size, price, block.timestamp + 1 hours);
+        (IOrderBook.Order memory order, bytes memory signature, bytes32 orderHash) = placeOrder(0, charlieKey, size, price);
 
         uint toLiquidate;
         {
@@ -158,7 +147,7 @@ contract OrderBookTests is Utils {
             // liquidate bob
             (address peter, uint peterKey) = makeAddrAndKey("peter");
             addMargin(peter, stdMath.abs(size) * price / 1e18);
-            (order, signature, orderHash) = placeOrder(0, peterKey, -size, price, block.timestamp + 1 hours);
+            (order, signature, orderHash) = placeOrder(0, peterKey, -size, price);
         }
         {
             vm.expectEmit(true, false, false, true, address(orderBook));
@@ -379,7 +368,7 @@ contract OrderBookTests is Utils {
         (charlie, temp[0] /**charlieKey */) = makeAddrAndKey("charlie");
         uint charlieMargin = stdMath.abs(size) * price / 1e18;
         addMargin(charlie, charlieMargin);
-        (IOrderBook.Order memory order, bytes memory signature, bytes32 orderHash) = placeOrder(0, temp[0], size, price, block.timestamp);
+        (IOrderBook.Order memory order, bytes memory signature, bytes32 orderHash) = placeOrder(0, temp[0], size, price);
 
         uint toLiquidate;
         {
@@ -409,49 +398,5 @@ contract OrderBookTests is Utils {
                 assertEq(husd.balanceOf(address(marginAccount)), charlieMargin - liquidationPenalty + makerFeePayed);
             }
         }
-    }
-
-    function testCannotExecuteMatchedOrders(uint32 price, uint120 size_) public {
-        {
-            uint oraclePrice = uint(oracle.getUnderlyingPrice(address(wavax)));
-            uint maxOracleSpreadRatio = amm.maxOracleSpreadRatio();
-            uint upperLimit = oraclePrice * (1e6 + maxOracleSpreadRatio) / 1e6 - 2;
-            uint lowerLimit = oraclePrice * (1e6 - maxOracleSpreadRatio) / 1e6 + 2;
-            vm.assume(price < upperLimit && price > lowerLimit);
-        }
-
-        IOrderBook.Order[2] memory orders;
-        bytes[2] memory signatures;
-        bytes32[2] memory ordersHash;
-
-        int size = int(uint(size_) + amm.minSizeRequirement()); // to avoid min size error
-        uint expiry = block.timestamp;
-        (orders[0], signatures[0], ordersHash[0]) = placeOrder(0, aliceKey, size, price, expiry);
-        (orders[1], signatures[1], ordersHash[1]) = placeOrder(0, bobKey, -size, price, expiry);
-
-        vm.expectRevert("OB_order_0_is_not_long");
-        orderBook.executeMatchedOrders([orders[1], orders[0]], signatures, size);
-        vm.expectRevert("OB_order_1_is_not_short");
-        orderBook.executeMatchedOrders([orders[0], orders[0]], signatures, size);
-        vm.expectRevert("OB_fill_amount_0");
-        orderBook.executeMatchedOrders(orders, signatures, 0);
-        vm.warp(expiry + 1);
-        vm.expectRevert("OB_order_0_expired");
-        orderBook.executeMatchedOrders(orders, signatures, size);
-
-        expiry += 1;
-        (orders[0], signatures[0], ordersHash[0]) = placeOrder(0, aliceKey, size, price, expiry);
-        vm.expectRevert("OB_order_1_expired");
-        orderBook.executeMatchedOrders(orders, signatures, size);
-
-        // reduce long order price
-        (orders[0], signatures[0], ordersHash[0]) = placeOrder(0, aliceKey, size, price - 1, expiry);
-        vm.expectRevert("OB_orders_price_do_not_match");
-        orderBook.executeMatchedOrders(orders, signatures, size);
-
-        // different amms
-        (orders[0], signatures[0], ordersHash[0]) = placeOrder(1, aliceKey, size, price, expiry);
-        vm.expectRevert("OB_orders_for_different_amms");
-        orderBook.executeMatchedOrders(orders, signatures, size);
     }
 }

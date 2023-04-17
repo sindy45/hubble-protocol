@@ -14,8 +14,8 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
     using SafeCast for uint256;
     using SafeCast for int256;
 
-    // keccak256("Order(uint256 ammIndex,address trader,int256 baseAssetQuantity,uint256 price,uint256 salt,uint256 expiry)");
-    bytes32 public constant ORDER_TYPEHASH = 0xc21589085b6cbbff20869634f3c34593d3a53f65e39d251bd1e0a783b9d5c7e8;
+    // keccak256("Order(uint256 ammIndex,address trader,int256 baseAssetQuantity,uint256 price,uint256 salt)");
+    bytes32 public constant ORDER_TYPEHASH = 0xba5bdc08c77846c2444ea7c84fcaf3479e3389b274ebc7ab59358538ca00dbe0;
 
     IClearingHouse public immutable clearingHouse;
 
@@ -27,9 +27,6 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
     }
     mapping(bytes32 => OrderInfo) public orderInfo;
     mapping(address => bool) isValidator;
-
-    // maximum open order duration
-    uint public maxOrderDuration;
 
     uint256[50] private __gap;
 
@@ -50,7 +47,6 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         __EIP712_init(_name, _version);
         // this is problematic for re-initialization but as long as we are not changing gov address across runs, it wont be a problem
         _setGovernace(_governance);
-        maxOrderDuration = 4 weeks;
     }
 
     /**
@@ -70,7 +66,11 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         onlyValidator
     {
         // Checks and Effects
-        _checkMatchingRequirements(orders, fillAmount);
+        require(orders[0].baseAssetQuantity > 0, "OB_order_0_is_not_long");
+        require(orders[1].baseAssetQuantity < 0, "OB_order_1_is_not_short");
+        require(orders[0].price /* buy */ >= orders[1].price /* sell */, "OB_orders_do_not_match");
+        require(orders[0].ammIndex == orders[1].ammIndex, "OB_orders_for_different_amms");
+        require(fillAmount != 0, "OB_fill_amount_0");
 
         MatchInfo[2] memory matchInfo;
         (matchInfo[0].orderHash, matchInfo[0].blockPlaced) = _verifyOrder(orders[0], signatures[0], fillAmount);
@@ -125,9 +125,6 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         // order should not exist in the orderStatus map already
         require(orderInfo[orderHash].status == OrderStatus.Invalid, "OB_Order_already_exists");
         orderInfo[orderHash] = OrderInfo(order.trader, block.number, 0, OrderStatus.Placed);
-        // expiry should not be too much or too less
-        require(order.expiry <= block.timestamp + maxOrderDuration && order.expiry >= block.timestamp, "OB_invalid_expiry_time");
-
         // @todo assert margin requirements for placing the order
         // @todo min size requirement while placing order
 
@@ -168,7 +165,6 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         whenNotPaused
         onlyValidator
     {
-        require(block.timestamp <= order.expiry, "OB_matching_order_expired");
         int256 fillAmount = liquidationAmount.toInt256();
         if (order.baseAssetQuantity < 0) { // order is short, so short position is being liquidated
             fillAmount *= -1;
@@ -267,16 +263,6 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         }
     }
 
-    function _checkMatchingRequirements(Order[2] memory orders, int256 fillAmount) internal view {
-        require(orders[0].baseAssetQuantity > 0, "OB_order_0_is_not_long");
-        require(orders[1].baseAssetQuantity < 0, "OB_order_1_is_not_short");
-        require(orders[0].price /* buy */ >= orders[1].price /* sell */, "OB_orders_price_do_not_match");
-        require(orders[0].ammIndex == orders[1].ammIndex, "OB_orders_for_different_amms");
-        require(fillAmount != 0, "OB_fill_amount_0");
-        require(block.timestamp <= orders[0].expiry, "OB_order_0_expired");
-        require(block.timestamp <= orders[1].expiry, "OB_order_1_expired");
-    }
-
     /* ****************** */
     /*        Pure        */
     /* ****************** */
@@ -299,9 +285,5 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
 
     function setValidatorStatus(address validator, bool status) external onlyGovernance whenNotPaused {
         isValidator[validator] = status;
-    }
-
-    function setOrderBookParams(uint _maxOrderDuration) external onlyGovernance {
-        maxOrderDuration = _maxOrderDuration;
     }
 }
