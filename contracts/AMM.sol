@@ -60,7 +60,7 @@ contract AMM is IAMM, Governable {
     }
     ReserveSnapshot[] public reserveSnapshots;
 
-    /// @notice Min amount of base asset quantity to trade or add liquidity for
+    /// @notice Min amount of base asset quantity to trade
     uint256 public minSizeRequirement;
 
     struct VarGroup1 {
@@ -140,7 +140,7 @@ contract AMM is IAMM, Governable {
 
         uint totalPosSize = uint(abs(size));
         require(totalPosSize == 0 || totalPosSize >= minSizeRequirement, "position_less_than_minSize");
-        // update liquidation thereshold
+        // update liquidation threshold
         positions[order.trader].liquidationThreshold = Math.max(
             (totalPosSize * maxLiquidationRatio / 1e6) + 1,
             minSizeRequirement
@@ -336,8 +336,9 @@ contract AMM is IAMM, Governable {
     /**
     * @notice returns notionalPosition and unrealizedPnl when isOverSpreadLimit()
     * calculate margin fraction using markPrice and oraclePrice
-    * if mode = Maintenance_Margin, return values which have maximum margin fraction
-    * if mode = min_allowable_margin, return values which have minimum margin fraction
+    * @dev it's the responsibility of the caller to check isOverSpreadLimit()
+    * if mode = Maintenance_Margin, return values which have maximum margin fraction i.e we make the best effort to save user from the liquidation
+    * if mode = Min_Allowable_Margin, return values which have minimum margin fraction. We use this to determine whether user can take any more leverage
     */
     function getOracleBasedPnl(address trader, int256 margin, IClearingHouse.Mode mode) override external view returns (uint notionalPosition, int256 unrealizedPnl) {
         int256 size;

@@ -364,10 +364,10 @@ async function filterEvent(tx, name) {
     return events.find(e => e.event == name)
 }
 
-async function getTradeDetails(tx, tradeFee = DEFAULT_TRADE_FEE) {
-    const positionModifiedEvent = await filterEvent(tx, 'PositionModified')
+async function getTradeDetails(tx, tradeFee = DEFAULT_TRADE_FEE, type = 'PositionModified') {
+    const positionModifiedEvent = await filterEvent(tx, type)
     return {
-        quoteAsset: positionModifiedEvent.args.quoteAsset,
+        quoteAsset: positionModifiedEvent.args.baseAsset.abs().mul(positionModifiedEvent.args.price).div(_1e18),
         fee: positionModifiedEvent.args.fee
     }
 }

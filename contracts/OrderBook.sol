@@ -26,7 +26,7 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         OrderStatus status;
     }
     mapping(bytes32 => OrderInfo) public orderInfo;
-    mapping(address => bool) isValidator;
+    mapping(address => bool) public isValidator;
 
     uint256[50] private __gap;
 
@@ -120,13 +120,13 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
 
     function placeOrder(Order memory order, bytes memory signature) external whenNotPaused {
         require(msg.sender == order.trader, "OB_sender_is_not_trader");
-        // verifying signature here to avoid too many fake placeOrders
+        require(abs(order.baseAssetQuantity).toUint256() >= IAMM(clearingHouse.amms(order.ammIndex)).minSizeRequirement(), "OB_order_size_too_small");
         (, bytes32 orderHash) = verifySigner(order, signature);
         // order should not exist in the orderStatus map already
         require(orderInfo[orderHash].status == OrderStatus.Invalid, "OB_Order_already_exists");
+
         orderInfo[orderHash] = OrderInfo(order.trader, block.number, 0, OrderStatus.Placed);
         // @todo assert margin requirements for placing the order
-        // @todo min size requirement while placing order
 
         emit OrderPlaced(order.trader, orderHash, order, signature, block.timestamp);
     }

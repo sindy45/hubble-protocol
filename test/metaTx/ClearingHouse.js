@@ -38,8 +38,8 @@ describe('Clearing House Meta Txs', async function() {
 
         const tx = await forwarder.connect(relayer).executeRequiringSuccess(req, sign);
         const positionModifiedEvent = await parseRawEvent(tx, clearingHouse, 'PositionModified')
-        const quoteAsset = positionModifiedEvent.args.quoteAsset
-        const fee = quoteAsset.mul(tradeFee).div(_1e6)
+        const quoteAsset = positionModifiedEvent.args.baseAsset.abs().mul(positionModifiedEvent.args.price).div(_1e18)
+        const fee = positionModifiedEvent.args.fee
 
         await assertions(contracts, alice, {
             size: baseAssetQuantity,
@@ -68,8 +68,8 @@ describe('Clearing House Meta Txs', async function() {
 
         const tx = await forwarder.connect(relayer).executeRequiringSuccess(req, sign);
         const positionModifiedEvent = await parseRawEvent(tx, clearingHouse, 'PositionModified')
-        const quoteAsset = positionModifiedEvent.args.quoteAsset
-        const fee = quoteAsset.mul(tradeFee).div(_1e6)
+        const quoteAsset = positionModifiedEvent.args.baseAsset.abs().mul(positionModifiedEvent.args.price).div(_1e18)
+        const fee = positionModifiedEvent.args.fee
 
         // this asserts that short was executed at a price >= amount
         expect(quoteAsset.gte(amount)).to.be.true

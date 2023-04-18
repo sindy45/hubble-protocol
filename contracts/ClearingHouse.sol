@@ -183,7 +183,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         (int liquidationFee,) = _chargeFeeAndRealizePnL(trader, realizedPnl, quoteAsset, IOrderBook.OrderExecutionMode.Liquidation);
         marginAccount.transferOutVusd(feeSink, liquidationFee.toUint256()); // will revert if liquidationFee is negative
 
-        emit PositionLiquidated(trader, ammIndex, toLiquidate, quoteAsset, realizedPnl, size, openNotional, liquidationFee, _blockTimestamp());
+        emit PositionLiquidated(trader, ammIndex, toLiquidate, price, realizedPnl, size, openNotional, liquidationFee, _blockTimestamp());
     }
 
     /**
@@ -271,7 +271,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         if (isPositionIncreased) {
             assertMarginRequirement(order.trader);
         }
-        emit PositionModified(order.trader, order.ammIndex, fillAmount, quoteAsset, realizedPnl, size, openNotional, feeCharged, _blockTimestamp());
+        emit PositionModified(order.trader, order.ammIndex, fillAmount, fulfillPrice, realizedPnl, size, openNotional, feeCharged, _blockTimestamp());
     }
 
     /* ****************** */

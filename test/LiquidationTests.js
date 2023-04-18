@@ -441,7 +441,7 @@ describe('Partial Liquidation Threshold', async function() {
         const feeSinkBalance = await vusd.balanceOf(feeSink)
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
         let tx = await clearingHouse.connect(liquidator1).liquidate2(alice)
-        let liquidationEvent = (await filterEvent(tx, 'PositionLiquidated')).args
+        const { quoteAsset } = await getTradeDetails(tx, null, 'PositionLiquidated')
 
         const markPrice = await amm.lastPrice()
         await oracle.setUnderlyingPrice(weth.address, markPrice) // to make amm under spread limit
@@ -450,7 +450,7 @@ describe('Partial Liquidation Threshold', async function() {
         expect(position.size).to.eq(baseAssetQuantity.mul(75).div(100).add(1))
         expect(position.liquidationThreshold).to.eq(baseAssetQuantity.mul(25).div(100).abs().add(1))
 
-        const liquidationPenalty = liquidationEvent.quoteAsset.mul(5e4).div(_1e6)
+        const liquidationPenalty = quoteAsset.mul(5e4).div(_1e6)
         expect(await vusd.balanceOf(feeSink)).to.eq(liquidationPenalty.add(feeSinkBalance))
 
         // alice is still in liquidation zone
@@ -485,14 +485,14 @@ describe('Partial Liquidation Threshold', async function() {
         const feeSinkBalance = await vusd.balanceOf(feeSink)
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
         let tx = await clearingHouse.connect(liquidator1).liquidate2(alice)
-        let liquidationEvent = (await filterEvent(tx, 'PositionLiquidated')).args
+        const { quoteAsset } = await getTradeDetails(tx, null, 'PositionLiquidated')
 
         // alice has 75% position left
         position = await amm.positions(alice)
         expect(position.liquidationThreshold).to.eq(baseAssetLong.mul(25).div(100).add(1))
         baseAssetLong = baseAssetLong.mul(75).div(100).sub(1)
         expect(position.size).to.eq(baseAssetLong)
-        const liquidationPenalty = liquidationEvent.quoteAsset.mul(5e4).div(_1e6)
+        const liquidationPenalty = quoteAsset.mul(5e4).div(_1e6)
         expect(await vusd.balanceOf(feeSink)).to.eq(liquidationPenalty.add(feeSinkBalance))
 
         // alice is still in liquidation zone

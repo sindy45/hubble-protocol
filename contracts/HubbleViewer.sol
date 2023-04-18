@@ -169,6 +169,7 @@ contract HubbleViewer is IHubbleViewer {
         }
 
         if (isOverSpreadLimit) {
+            // when over spread limit, liquidation margin is different from min allowable margin
             marginFractionLiquidation = clearingHouse.calcMarginFraction(trader, true, IClearingHouse.Mode.Maintenance_Margin);
         }
 

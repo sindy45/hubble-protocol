@@ -20,13 +20,19 @@ contract OrderBookTests is Utils {
     }
 
     function testPlaceOrder(uint128 traderKey, int size, uint price) public {
-        vm.assume(traderKey != 0);
-        (address trader, IOrderBook.Order memory order, bytes memory signature, bytes32 orderHash) = prepareOrder(0, traderKey, size, price);
+        uint minSize = amm.minSizeRequirement();
+        vm.assume(traderKey != 0 && stdMath.abs(size) >= minSize && size != type(int).min /** abs(size) fails */);
+        (address trader, IOrderBook.Order memory order, bytes memory signature, bytes32 orderHash) = prepareOrder(0, traderKey, int(minSize - 1), price);
 
         vm.expectRevert("OB_sender_is_not_trader");
         orderBook.placeOrder(order, signature);
 
         vm.startPrank(trader);
+        vm.expectRevert("OB_order_size_too_small");
+        orderBook.placeOrder(order, signature);
+
+        (trader, order, signature, orderHash) = prepareOrder(0, traderKey, size, price);
+
         vm.expectEmit(true, true, false, true, address(orderBook));
         emit OrderPlaced(trader, orderHash, order, signature, block.timestamp);
         orderBook.placeOrder(order, signature);

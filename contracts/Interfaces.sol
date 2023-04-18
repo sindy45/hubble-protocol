@@ -20,8 +20,8 @@ interface IOracle {
 interface IClearingHouse {
     enum Mode { Maintenance_Margin, Min_Allowable_Margin }
 
-    event PositionModified(address indexed trader, uint indexed idx, int256 baseAsset, uint quoteAsset, int256 realizedPnl, int256 size, uint256 openNotional, int256 fee, uint256 timestamp);
-    event PositionLiquidated(address indexed trader, uint indexed idx, int256 baseAsset, uint256 quoteAsset, int256 realizedPnl, int256 size, uint256 openNotional, int256 fee, uint256 timestamp);
+    event PositionModified(address indexed trader, uint indexed idx, int256 baseAsset, uint price, int256 realizedPnl, int256 size, uint256 openNotional, int256 fee, uint256 timestamp);
+    event PositionLiquidated(address indexed trader, uint indexed idx, int256 baseAsset, uint256 price, int256 realizedPnl, int256 size, uint256 openNotional, int256 fee, uint256 timestamp);
     event MarketAdded(uint indexed idx, address indexed amm);
     event ReferralBonusAdded(address indexed referrer, uint referralBonus);
     event FundingPaid(address indexed trader, uint indexed idx, int256 takerFundingPayment, int256 cumulativePremiumFraction);
@@ -151,6 +151,7 @@ interface IAMM {
     function startFunding() external returns(uint256);
     function openInterestNotional() external returns(uint256);
     function getUnderlyingPrice() external view returns(uint256);
+    function minSizeRequirement() external view returns(uint256);
 }
 
 // for backward compatibility in forked tests
