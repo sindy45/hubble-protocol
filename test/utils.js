@@ -132,7 +132,7 @@ async function setupContracts(options = {}) {
         clearingHouseProxy = await TransparentUpgradeableProxy.deploy(...constructorArguments, getTxOptions())
     }
     initArgs = [ 'Hubble', '2.0', governance ]
-    deployArgs = [ clearingHouseProxy.address ]
+    deployArgs = [ clearingHouseProxy.address, marginAccount.address ]
     if (options.genesisProxies) {
         orderBook = await setupGenesisProxy('OrderBook', proxyAdmin, initArgs, deployArgs, orderBookProxy)
     } else {
@@ -182,7 +182,7 @@ async function setupContracts(options = {}) {
 
     await vusd.grantRole(ethers.utils.id('MINTER_ROLE'), marginAccount.address, getTxOptions())
 
-    constructorArguments = [oracle.address, clearingHouse.address, insuranceFund.address, marginAccount.address, vusd.address]
+    constructorArguments = [oracle.address, clearingHouse.address, insuranceFund.address, marginAccount.address, vusd.address, orderBook.address]
     registry = await Registry.deploy(...constructorArguments.concat(getTxOptions()))
     await Promise.all([
         marginAccount.syncDeps(registry.address, 5e4, getTxOptions()), // liquidationIncentive = 5% = .05 scaled 6 decimals
@@ -355,7 +355,7 @@ async function addMargin(trader, margin, token = usdc, index = 0, marginAccountH
         await marginAccountHelper_.connect(trader).addVUSDMarginWithReserve(margin, {value: hgtAmount})
     } else {
         await token.connect(trader).approve(marginAccount.address, margin)
-        await marginAccount.addMargin(index, margin)
+        await marginAccount.connect(trader).addMargin(index, margin)
     }
 }
 

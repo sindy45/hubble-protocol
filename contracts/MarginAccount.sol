@@ -17,7 +17,8 @@ import {
     IRegistry,
     IMarginAccount,
     IERC20FlexibleSupply,
-    IWAVAX
+    IWAVAX,
+    IOrderBook
 } from "./Interfaces.sol";
 
 /**
@@ -58,6 +59,7 @@ contract MarginAccount is IMarginAccount, HubbleBase, ReentrancyGuard {
     /* ****************** */
 
     IClearingHouse public clearingHouse;
+    IOrderBook public orderBook;
     IOracle public oracle;
     IInsuranceFund public insuranceFund;
     IERC20FlexibleSupply public vusd;
@@ -77,12 +79,21 @@ contract MarginAccount is IMarginAccount, HubbleBase, ReentrancyGuard {
     * @dev equivalent to margin(uint idx, address user)
     */
     mapping(uint => mapping(address => int)) override public margin;
+    /**
+    * @notice Maps trader => reserved margin for open orders
+    */
+    mapping(address => uint) public reservedMargin;
     address public portfolioManager;
 
     uint256[49] private __gap;
 
     modifier onlyClearingHouse() {
         require(_msgSender() == address(clearingHouse), "Only clearingHouse");
+        _;
+    }
+
+    modifier onlyOrderBook() {
+        require(_msgSender() == address(orderBook), "Only orderBook");
         _;
     }
 
@@ -217,6 +228,34 @@ contract MarginAccount is IMarginAccount, HubbleBase, ReentrancyGuard {
         onlyClearingHouse
     {
         _transferOutVusd(recipient, amount);
+    }
+
+    function reserveMargin(address trader, uint amount)
+        override
+        external
+        onlyOrderBook
+    {
+        require(getAvailableMargin(trader) >= amount.toInt256(), "MA_reserveMargin: Insufficient margin");
+        reservedMargin[trader] += amount;
+        emit MarginReserved(trader, amount);
+    }
+
+    function releaseMargin(address trader, uint amount)
+        override
+        external
+        onlyOrderBook
+    {
+        require(reservedMargin[trader] >= amount, "MA_releaseMargin: Insufficient reserved margin");
+        reservedMargin[trader] -= amount;
+        emit MarginReleased(trader, amount);
+    }
+
+    function getAvailableMargin(address trader) public view override returns (int availableMargin) {
+        // availableMargin = margin + unrealizedPnl - fundingPayment - reservedMargin - utilizedMargin
+        uint notionalPosition;
+        (notionalPosition, availableMargin) = clearingHouse.getNotionalPositionAndMargin(trader, true, IClearingHouse.Mode.Min_Allowable_Margin);
+        int utilizedMargin = notionalPosition.toInt256() * clearingHouse.minAllowableMargin() / 1e6;
+        availableMargin = availableMargin - utilizedMargin - reservedMargin[trader].toInt256();
     }
 
     /* ****************** */
@@ -629,6 +668,7 @@ contract MarginAccount is IMarginAccount, HubbleBase, ReentrancyGuard {
         require(registry.marginAccount() == address(this), "Incorrect setup");
 
         clearingHouse = IClearingHouse(registry.clearingHouse());
+        orderBook = IOrderBook(registry.orderBook());
         oracle = IOracle(registry.oracle());
         insuranceFund = IInsuranceFund(registry.insuranceFund());
         liquidationIncentive = _liquidationIncentive;

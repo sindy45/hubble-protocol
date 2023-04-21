@@ -8,18 +8,21 @@ contract Registry {
     address public immutable insuranceFund;
     address public immutable marginAccount;
     address public immutable vusd;
+    address public immutable orderBook;
 
     constructor(
         address _oracle,
         address _clearingHouse,
         address _insuranceFund,
         address _marginAccount,
-        address _vusd
+        address _vusd,
+        address _orderBook
     ) {
         oracle = _oracle;
         clearingHouse = _clearingHouse;
         insuranceFund = _insuranceFund;
         marginAccount = _marginAccount;
         vusd = _vusd;
+        orderBook = _orderBook;
     }
 }

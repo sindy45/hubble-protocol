@@ -277,7 +277,7 @@ describe('Insurance Fund Auction Tests', function() {
 })
 
 async function setMarginAccount(marginAccount) {
-    registry = await Registry.deploy(oracle.address, clearingHouse.address, insuranceFund.address, marginAccount.address, vusd.address)
+    registry = await Registry.deploy(oracle.address, clearingHouse.address, insuranceFund.address, marginAccount.address, vusd.address, orderBook.address)
     await insuranceFund.syncDeps(registry.address)
 }
 

@@ -6,6 +6,7 @@ const {
     constants: { _1e6, _1e18, ZERO },
     setupContracts,
     addMargin,
+    setupRestrictedTestToken,
     filterEvent
 } = utils
 
@@ -163,7 +164,7 @@ describe('Order Book', function () {
         const { size } = await amm.positions(alice.address)
 
         const charlie = signers[7]
-        await addMargin(charlie, _1e6.mul(2000))
+        await addMargin(charlie, _1e6.mul(4000))
         const { order, signature } = await placeOrder(size, markPrice, charlie)
 
         // liquidate
@@ -186,12 +187,22 @@ describe('Order Book', function () {
 describe('Order Book - Error Handling', function () {
     before(async function () {
         signers = await ethers.getSigners()
-        ;([, alice, bob] = signers)
-        ;({ orderBook, usdc, oracle, weth, amm } = await setupContracts({mockOrderBook: false}))
+        ;([, alice, bob ] = signers)
+        ;({ orderBook, usdc, oracle, weth, amm, marginAccount } = await setupContracts({mockOrderBook: false}))
 
         await orderBook.setValidatorStatus(signers[0].address, true)
-
-        // we will deliberately not add any margin so that openPosition fails
+        // add collateral
+        wavax = await setupRestrictedTestToken('Hubble Avax', 'hWAVAX', 18)
+        initialAvaxPrice = 1e6 * 10// $10
+        await oracle.setUnderlyingPrice(wavax.address, initialAvaxPrice)
+        await marginAccount.whitelistCollateral(wavax.address, 0.7 * 1e6) // weight = 0.7
+        // add margin for alice
+        const wavaxMargin = _1e18.mul(150) // 10 * 150 * 0.7 = 1050
+        await wavax.mint(alice.address, wavaxMargin)
+        await addMargin(alice, wavaxMargin, wavax, 1)
+        // add margin for bob
+        await wavax.mint(bob.address, wavaxMargin)
+        await addMargin(bob, wavaxMargin, wavax, 1)
     })
 
     it('alice places order', async function() {
@@ -249,6 +260,8 @@ describe('Order Book - Error Handling', function () {
         order2Hash = await orderBook.getOrderHash(longOrder)
         signature2 = await bob._signTypedData(domain, orderType, longOrder)
         await orderBook.connect(bob).placeOrder(longOrder, signature2)
+        // reduce oracel price so that margin falls below minimum margin
+        await oracle.setUnderlyingPrice(wavax.address, _1e6.mul(5))
 
         const tx = await orderBook.executeMatchedOrders(
             [ longOrder, shortOrder ],
@@ -284,6 +297,8 @@ describe('Order Book - Error Handling', function () {
         badShortOrder.price = ethers.utils.parseUnits('2000', 6)
         // signature1, order2Hash, signature2 are declared locally so they don't affect the vars in global scope
         const signature1 = await alice._signTypedData(domain, orderType, badShortOrder)
+
+        await oracle.setUnderlyingPrice(wavax.address, initialAvaxPrice * 4)
         await orderBook.connect(alice).placeOrder(badShortOrder, signature1)
 
         const badLongOrder = JSON.parse(JSON.stringify(longOrder))
@@ -319,8 +334,6 @@ describe('Order Book - Error Handling', function () {
     })
 
     it('orders match when conditions are met', async function() {
-        await addMargin(alice, _1e6.mul(1010)) // alice deposits margin so that is not the error scenario anymore
-
         const tx = await orderBook.executeMatchedOrders(
             [ longOrder, shortOrder ],
             [ signature2, signature1 ],
@@ -352,7 +365,13 @@ describe('Order Book - Error Handling', function () {
         const { size } = await amm.positions(alice.address)
         charlie = signers[7]
         markPrice = _1e6.mul(1180)
+        // set avax price to initial price
+        const wavaxMargin = _1e18.mul(200)
+        await oracle.setUnderlyingPrice(wavax.address, initialAvaxPrice)
+        await wavax.mint(charlie.address, wavaxMargin)
+        await addMargin(charlie, wavaxMargin, wavax, 1)
         ;({ order, signature } = await placeOrder(size, markPrice, charlie))
+
         // liquidate
         toLiquidate = size.mul(25e4).div(1e6).add(1) // 1/4th position liquidated
         let tx = await orderBook.liquidateAndExecuteOrder(alice.address, order, signature, toLiquidate.abs())
@@ -383,6 +402,7 @@ describe('Order Book - Error Handling', function () {
     })
 
     it('ch.openPosition fails in liquidation', async function() {
+        await oracle.setUnderlyingPrice(wavax.address, initialAvaxPrice / 10)
         let tx = await orderBook.liquidateAndExecuteOrder(alice.address, order, signature, toLiquidate.abs())
         orderHash = await orderBook.getOrderHash(order)
         await expect(tx).to.emit(orderBook, 'LiquidationError').withArgs(

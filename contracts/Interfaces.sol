@@ -10,6 +10,7 @@ interface IRegistry {
     function vusd() external view returns(address);
     function insuranceFund() external view returns(address);
     function marginAccount() external view returns(address);
+    function orderBook() external view returns(address);
 }
 
 interface IOracle {
@@ -27,6 +28,8 @@ interface IClearingHouse {
     event FundingPaid(address indexed trader, uint indexed idx, int256 takerFundingPayment, int256 cumulativePremiumFraction);
     event FundingRateUpdated(uint indexed idx, int256 premiumFraction, uint256 underlyingPrice, int256 cumulativePremiumFraction, uint256 nextFundingTime, uint256 timestamp, uint256 blockNumber);
 
+    function orderBook() external view returns(IOrderBook);
+    function getRequiredMargin(int256 baseAssetQuantity, uint256 price) external view returns(uint marginRequired);
     function openComplementaryPositions(
         IOrderBook.Order[2] memory orders,
         IOrderBook.MatchInfo[2] memory matchInfo,
@@ -105,6 +108,14 @@ interface IOrderBook {
         bytes32 orderHash;
         uint blockPlaced;
         OrderExecutionMode mode;
+    }
+
+    struct OrderInfo {
+        IOrderBook.Order order;
+        uint blockPlaced;
+        int256 filledAmount;
+        uint256 reservedMargin;
+        OrderStatus status;
     }
 
     event OrderPlaced(address indexed trader, bytes32 indexed orderHash, Order order, bytes signature, uint timestamp);
@@ -197,6 +208,8 @@ interface IMarginAccount {
     * @param repayAmount The debt that was repayed
     */
     event MarginAccountLiquidated(address indexed trader, uint indexed idx, uint seizeAmount, uint repayAmount, uint256 timestamp);
+    event MarginReserved(address indexed trader, uint amount);
+    event MarginReleased(address indexed trader, uint amount);
 
     /**
     * @notice Emitted when funds from insurance fund are tasked to settle system's bad debt
@@ -221,6 +234,10 @@ interface IMarginAccount {
     function liquidateExactRepay(address trader, uint repay, uint idx, uint minSeizeAmount) external;
     function oracle() external view returns(IOracle);
     function removeMarginFor(address trader, uint idx, uint256 amount) external;
+    function reserveMargin(address trader, uint amount) external;
+    function releaseMargin(address trader, uint amount) external;
+    function reservedMargin(address trader) external view returns(uint);
+    function getAvailableMargin(address trader) external view returns (int availableMargin);
 }
 
 interface AggregatorV3Interface {

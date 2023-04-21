@@ -118,7 +118,7 @@ abstract contract Utils is Test {
         TransparentUpgradeableProxy clProxy = new TransparentUpgradeableProxy(
             address(oracle) /** random contarct address */, address(proxyAdmin), "");
 
-        OrderBook obImpl = new OrderBook(address(clProxy));
+        OrderBook obImpl = new OrderBook(address(clProxy), address(marginAccount));
         proxy = new TransparentUpgradeableProxy(
             address(obImpl),
             address(proxyAdmin),
@@ -138,7 +138,7 @@ abstract contract Utils is Test {
         ));
         clearingHouse = ClearingHouse(address(clProxy));
 
-        registry = new Registry(address(oracle), address(clearingHouse), address(insuranceFund), address(marginAccount), address(husd));
+        registry = new Registry(address(oracle), address(clearingHouse), address(insuranceFund), address(marginAccount), address(husd), address(orderBook));
 
         hubbleViewer = new HubbleViewer(address(clearingHouse), address(marginAccount), address(registry));
 
@@ -266,15 +266,16 @@ abstract contract Utils is Test {
         bytes[2] memory signatures;
         bytes32[2] memory ordersHash;
 
+        margin = stdMath.abs(size) * price / 2e18; // 2x leverage
+        addMargin(alice, margin);
+        addMargin(bob, margin);
+
         (orders[0], signatures[0], ordersHash[0]) = placeOrder(ammIndex, trader1Key, int(stdMath.abs(size)), price);
         if (!sameBlock) {
             vm.roll(block.number + 1);
         }
         (orders[1], signatures[1], ordersHash[1]) = placeOrder(ammIndex, trader2Key, -int(stdMath.abs(size)), price);
 
-        margin = stdMath.abs(size) * price / 2e18; // 2x leverage
-        addMargin(alice, margin);
-        addMargin(bob, margin);
         orderBook.executeMatchedOrders(orders, signatures, int(stdMath.abs(size)));
     }
 

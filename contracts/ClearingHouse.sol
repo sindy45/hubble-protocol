@@ -346,6 +346,16 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         }
     }
 
+    /**
+    * @notice Get the margin required to place an order
+    * @dev includes trade fee (taker fee)
+    */
+    function getRequiredMargin(int256 baseAssetQuantity, uint256 price) external override view returns(uint256 requiredMargin) {
+        uint quoteAsset = abs(baseAssetQuantity).toUint256() * price / 1e18;
+        requiredMargin = quoteAsset * minAllowableMargin.toUint256() / PRECISION;
+        requiredMargin += _calculateTakerFee(quoteAsset).toUint256();
+    }
+
     /* ****************** */
     /*   Test/UI Helpers  */
     /* ****************** */

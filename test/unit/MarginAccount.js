@@ -201,6 +201,6 @@ describe('MarginAccount Unit Tests', function() {
 })
 
 async function setClearingHouse(clearingHouse) {
-    registry = await Registry.deploy(oracle.address, clearingHouse.address, insuranceFund.address, marginAccount.address, vusd.address)
+    registry = await Registry.deploy(oracle.address, clearingHouse.address, insuranceFund.address, marginAccount.address, vusd.address, orderBook.address)
     await marginAccount.syncDeps(registry.address, 5e4)
 }

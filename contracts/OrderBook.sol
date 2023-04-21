@@ -8,7 +8,7 @@ import { Pausable } from "@openzeppelin/contracts/security/Pausable.sol";
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 import { VanillaGovernable } from "./legos/Governable.sol";
-import { IClearingHouse, IOrderBook, IAMM } from "./Interfaces.sol";
+import { IClearingHouse, IOrderBook, IAMM, IMarginAccount } from "./Interfaces.sol";
 
 contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable {
     using SafeCast for uint256;
@@ -18,13 +18,8 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
     bytes32 public constant ORDER_TYPEHASH = 0xba5bdc08c77846c2444ea7c84fcaf3479e3389b274ebc7ab59358538ca00dbe0;
 
     IClearingHouse public immutable clearingHouse;
+    IMarginAccount public immutable marginAccount;
 
-    struct OrderInfo {
-        address trader;
-        uint blockPlaced;
-        int256 filledAmount;
-        OrderStatus status;
-    }
     mapping(bytes32 => OrderInfo) public orderInfo;
     mapping(address => bool) public isValidator;
 
@@ -35,8 +30,9 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         _;
     }
 
-    constructor(address _clearingHouse) {
+    constructor(address _clearingHouse, address _marginAccount) {
         clearingHouse = IClearingHouse(_clearingHouse);
+        marginAccount = IMarginAccount(_marginAccount);
     }
 
     function initialize(
@@ -125,18 +121,29 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         // order should not exist in the orderStatus map already
         require(orderInfo[orderHash].status == OrderStatus.Invalid, "OB_Order_already_exists");
 
-        orderInfo[orderHash] = OrderInfo(order.trader, block.number, 0, OrderStatus.Placed);
-        // @todo assert margin requirements for placing the order
+        // reserve margin for the order
+        uint reserveAmount = clearingHouse.getRequiredMargin(order.baseAssetQuantity, order.price);
+        marginAccount.reserveMargin(order.trader, reserveAmount);
 
+        // add orderInfo for the corresponding orderHash
+        orderInfo[orderHash] = OrderInfo(order, block.number, 0, reserveAmount, OrderStatus.Placed);
         emit OrderPlaced(order.trader, orderHash, order, signature, block.timestamp);
     }
 
     function cancelOrder(bytes32 orderHash) public {
-        address trader = orderInfo[orderHash].trader;
-        require(msg.sender == trader, "OB_sender_is_not_trader");
+        address trader = orderInfo[orderHash].order.trader;
+        if (msg.sender != trader) {
+            require(isValidator[msg.sender], "OB_invalid_sender");
+            // allow cancellation of order by validator if availableMargin < 0
+            require(marginAccount.getAvailableMargin(trader) < 0, "OB_available_margin_not_negative");
+        }
+
         // order status should be placed
         require(orderInfo[orderHash].status == OrderStatus.Placed, "OB_Order_does_not_exist");
         orderInfo[orderHash].status = OrderStatus.Cancelled;
+        // release margin
+        marginAccount.releaseMargin(trader, orderInfo[orderHash].reservedMargin);
+        _deleteOrderInfo(orderHash);
 
         emit OrderCancelled(trader, orderHash, block.timestamp);
     }
@@ -251,16 +258,38 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         require(order.baseAssetQuantity * fillAmount > 0, "OB_fill_and_base_sign_not_match");
         // fillAmount[orderHash] should be strictly increasing or strictly decreasing
         require(orderInfo[orderHash].filledAmount * fillAmount >= 0, "OB_invalid_fillAmount");
-        require(abs(orderInfo[orderHash].filledAmount) <= abs(order.baseAssetQuantity), "OB_filled_amount_higher_than_order_base");
         return (orderHash, orderInfo[orderHash].blockPlaced);
     }
 
     function _updateOrder(bytes32 orderHash, int256 fillAmount, int256 baseAssetQuantity) internal {
         orderInfo[orderHash].filledAmount += fillAmount;
-        // update order status if filled
+        require(abs(orderInfo[orderHash].filledAmount) <= abs(baseAssetQuantity), "OB_filled_amount_higher_than_order_base");
+
+        uint reservedMargin = orderInfo[orderHash].reservedMargin;
+        address trader = orderInfo[orderHash].order.trader;
+
+        // update order status if filled and free up reserved margin
         if (orderInfo[orderHash].filledAmount == baseAssetQuantity) {
             orderInfo[orderHash].status = OrderStatus.Filled;
+
+            marginAccount.releaseMargin(trader, reservedMargin);
+            _deleteOrderInfo(orderHash);
+        } else {
+            // update reserved margin
+            uint utilisedMargin = uint(abs(fillAmount)) * reservedMargin / uint(abs(baseAssetQuantity));
+            orderInfo[orderHash].reservedMargin -= utilisedMargin;
+            marginAccount.releaseMargin(trader, utilisedMargin);
         }
+    }
+
+    /**
+    * @notice deletes everything except status and filledAmount from orderInfo
+    * @dev cannot delete order status because then same order can be placed again
+    */
+    function _deleteOrderInfo(bytes32 orderHash) internal {
+        delete orderInfo[orderHash].order;
+        delete orderInfo[orderHash].blockPlaced;
+        delete orderInfo[orderHash].reservedMargin;
     }
 
     /* ****************** */
