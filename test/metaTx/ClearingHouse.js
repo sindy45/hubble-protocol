@@ -21,7 +21,7 @@ describe('Clearing House Meta Txs', async function() {
 
     beforeEach(async function() {
         contracts = await setupContracts()
-        ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, forwarder, tradeFee, hubbleViewer } = contracts)
+        ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, forwarder, tradeFee, hubbleViewer, oracle } = contracts)
         await setDefaultClearingHouseParams(clearingHouse)
         // add margin
         margin = _1e6.mul(1000)
@@ -108,6 +108,8 @@ describe('Clearing House Meta Txs', async function() {
         const price = _1e6.mul(1130)
         await addMargin(bob, base.mul(price).div(_1e18))
         await clearingHouse.connect(bob).openPosition2(0, base, base.mul(price).div(_1e18))
+        // oracle price also needs to update for alice to be in liquidation zone
+        await oracle.setUnderlyingPrice(weth.address, price)
 
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
         try {

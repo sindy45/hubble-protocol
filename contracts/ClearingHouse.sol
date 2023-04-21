@@ -305,11 +305,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         int256 _unrealizedPnl;
         uint numAmms = amms.length;
         for (uint i; i < numAmms; ++i) {
-            if (amms[i].isOverSpreadLimit()) {
-                (_notionalPosition, _unrealizedPnl) = amms[i].getOracleBasedPnl(trader, margin, mode);
-            } else {
-                (_notionalPosition, _unrealizedPnl,,) = amms[i].getNotionalPositionAndUnrealizedPnl(trader);
-            }
+            (_notionalPosition, _unrealizedPnl) = amms[i].getOracleBasedPnl(trader, margin, mode);
             notionalPosition += _notionalPosition;
             unrealizedPnl += _unrealizedPnl;
         }

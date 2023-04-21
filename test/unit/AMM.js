@@ -276,7 +276,6 @@ describe('Oracle Price Spread Check', async function() {
     it('price decrease not allowed when markPrice is below price spread', async function() {
         // markPrice = 1000, indexPrice = 1000/0.8 = 1250
         await oracle.setUnderlyingPrice(weth.address, _1e6.mul(1250))
-        expect(await amm.isOverSpreadLimit()).to.be.true
         await expect(
             clearingHouse.openPosition2(0, _1e18.mul(-5), _1e6.mul(4999)) // price = 4999 / 5 = 999.8
         ).to.be.revertedWith('AMM_price_decrease_not_allowed')
@@ -288,7 +287,6 @@ describe('Oracle Price Spread Check', async function() {
     it('price increase not allowed when markPrice is above price spread', async function() {
         // markPrice = 1000, indexPrice = 1000/1.2 = 833
         await oracle.setUnderlyingPrice(weth.address, _1e6.mul(833))
-        expect(await amm.isOverSpreadLimit()).to.be.true
         await expect(
             clearingHouse.openPosition2(0, _1e18.mul(5), ethers.constants.MaxUint256)
         ).to.be.revertedWith('AMM_price_increase_not_allowed')
@@ -299,7 +297,6 @@ describe('Oracle Price Spread Check', async function() {
 
     // marginFraction < maintenanceMargin < minAllowableMargin < oracleBasedMF
     it('amm isOverSpreadLimit on long side', async function() {
-        expect(await amm.isOverSpreadLimit()).to.be.false
         await clearingHouse.openPosition2(0, _1e18.mul(-5), 0)
 
         // bob makes counter-trade to drastically reduce amm based marginFraction
@@ -314,7 +311,6 @@ describe('Oracle Price Spread Check', async function() {
 
         // Get amm over spread limit
         await oracle.setUnderlyingPrice(weth.address, _1e6.mul(700))
-        expect(await amm.isOverSpreadLimit()).to.be.true
 
         // evaluate both MFs independently from the AMM
         const margin = await marginAccount.getNormalizedMargin(alice) // avaxMargin * avaxOraclePrice * .8 - tradeFee and no funding payments
@@ -365,11 +361,9 @@ describe('Oracle Price Spread Check', async function() {
     // we will assert that oracle based pricing kicks in when lastPrice = ~998, indexPrice = 1300
     // oracleBasedMF < maintenanceMargin < minAllowableMargin < marginFraction
     it('amm isOverSpreadLimit on short side', async function() {
-        expect(await amm.isOverSpreadLimit()).to.be.false
         await clearingHouse.openPosition2(0, _1e18.mul(-5), 0)
 
         await oracle.setUnderlyingPrice(weth.address, _1e6.mul(1300))
-        expect(await amm.isOverSpreadLimit()).to.be.true
 
         // evaluate both MFs independently from the AMM
         let margin = await marginAccount.getNormalizedMargin(alice) // avaxMargin * avaxOraclePrice * .8 - tradeFee and no funding payments

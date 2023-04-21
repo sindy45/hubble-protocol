@@ -22,6 +22,7 @@ describe('Funding Tests', function() {
         beforeEach(async function() {
             contracts = await setupContracts()
             ;({ swap, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, oracle, weth, hubbleViewer } = contracts)
+            initialRate = _1e6.mul(1000)
 
             // add margin
             margin = _1e6.mul(2000)
@@ -34,7 +35,8 @@ describe('Funding Tests', function() {
 
         it('alice shorts and receives +ve funding', async () => {
             const baseAssetQuantity = _1e18.mul(-5)
-            let tx = await clearingHouse.openPosition2(0 /* amm index */, baseAssetQuantity, _1e6.mul(4975))
+            const shortPrice = _1e6.mul(980)
+            let tx = await clearingHouse.openPosition3(0 /* amm index */, baseAssetQuantity, shortPrice)
             ;({ quoteAsset, fee } = await getTradeDetails(tx))
 
             // underlying
@@ -67,7 +69,12 @@ describe('Funding Tests', function() {
             const { totalCollateral, freeMargin } = await hubbleViewer.getAccountInfo(alice)
             const minAllowableMargin = await clearingHouse.minAllowableMargin()
             expect(totalCollateral).to.eq(remainingMargin)
-            expect(freeMargin).to.eq(remainingMargin.sub(quoteAsset.mul(minAllowableMargin).div(_1e6)))
+
+            // free_margin = remainingMargin + min(oracle_pnl, mark_pnl) - notionalPosition/minAllowableMargin
+            // mark_pnl = 0 because no trades after the initial trade
+            const oracle_np = initialRate.mul(baseAssetQuantity.abs()).div(_1e18)
+            const oracle_pnl = quoteAsset.sub(oracle_np)
+            expect(freeMargin).to.eq(remainingMargin.add(oracle_pnl).sub(oracle_np.mul(minAllowableMargin).div(_1e6)))
         })
 
         it('alice shorts and pays -ve funding', async () => {
@@ -133,12 +140,18 @@ describe('Funding Tests', function() {
             const { totalCollateral, freeMargin } = await hubbleViewer.getAccountInfo(alice)
             const minAllowableMargin = await clearingHouse.minAllowableMargin()
             expect(totalCollateral).to.eq(remainingMargin)
-            expect(freeMargin).to.eq(remainingMargin.sub(quoteAsset.mul(minAllowableMargin).div(_1e6)))
+
+            // free_margin = remainingMargin + min(oracle_pnl, mark_pnl) - notionalPosition/minAllowableMargin
+            // mark_pnl = 0 because no trades after the initial trade
+            const oracle_np = initialRate.mul(baseAssetQuantity.abs()).div(_1e18)
+            const oracle_pnl = oracle_np.sub(quoteAsset)
+            expect(freeMargin).to.eq(remainingMargin.add(oracle_pnl).sub(oracle_np.mul(minAllowableMargin).div(_1e6)))
         })
 
         it('alice longs and receives -ve funding', async () => {
             const baseAssetQuantity = _1e18.mul(5)
-            let tx = await clearingHouse.openPosition2(0 /* amm index */, baseAssetQuantity, _1e6.mul(5100))
+            const longPrice = _1e6.mul(1020)
+            let tx = await clearingHouse.openPosition3(0 /* amm index */, baseAssetQuantity, longPrice)
             ;({ quoteAsset, fee } = await getTradeDetails(tx))
 
             const oracleTwap = _1e6.mul(1100)

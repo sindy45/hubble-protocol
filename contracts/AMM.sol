@@ -292,15 +292,26 @@ contract AMM is IAMM, Governable {
         return _calcTwap(_intervalInSeconds).toInt256();
     }
 
-    function getNotionalPositionAndUnrealizedPnl(address trader)
+    /**
+     * @notice Get notional postion and unrealized PnL at the last trade price
+    */
+   function getNotionalPositionAndUnrealizedPnl(address trader)
         override
         public
         view
         returns(uint256 notionalPosition, int256 unrealizedPnl, int256 size, uint256 openNotional)
     {
+        return _getNotionalPositionAndUnrealizedPnl(trader, lastPrice());
+    }
+
+    function _getNotionalPositionAndUnrealizedPnl(address trader, uint256 price)
+        internal
+        view
+        returns(uint256 notionalPosition, int256 unrealizedPnl, int256 size, uint256 openNotional)
+    {
         Position memory position = positions[trader];
         size = position.size;
-        notionalPosition = uint(abs(size) * lastPrice().toInt256() / BASE_PRECISION);
+        notionalPosition = uint(abs(size) * price.toInt256() / BASE_PRECISION);
         // @todo redundant size and openNotional
         openNotional = position.openNotional;
         // @todo can convert open notional to int, so that unrealizedPnl = size * lastPrice - openNotional
@@ -312,31 +323,7 @@ contract AMM is IAMM, Governable {
     }
 
     /**
-    * @notice returns false if
-    * (1-maxSpreadRatio)*indexPrice < markPrice < (1+maxSpreadRatio)*indexPrice
-    * else, true
-    */
-    function isOverSpreadLimit() external view returns(bool) {
-        uint oraclePrice = uint(oracle.getUnderlyingPrice(underlyingAsset));
-        uint markPrice = lastPrice();
-        uint oracleSpreadRatioAbs;
-        if (markPrice > oraclePrice) {
-            oracleSpreadRatioAbs = markPrice - oraclePrice;
-        } else {
-            oracleSpreadRatioAbs = oraclePrice - markPrice;
-        }
-        oracleSpreadRatioAbs = oracleSpreadRatioAbs * 1e6 / oraclePrice;
-
-        if (oracleSpreadRatioAbs >= maxOracleSpreadRatio) {
-            return true;
-        }
-        return false;
-    }
-
-    /**
-    * @notice returns notionalPosition and unrealizedPnl when isOverSpreadLimit()
-    * calculate margin fraction using markPrice and oraclePrice
-    * @dev it's the responsibility of the caller to check isOverSpreadLimit()
+    * @notice returns max/min(oracle_mf, last_price_mf) depending on mode
     * if mode = Maintenance_Margin, return values which have maximum margin fraction i.e we make the best effort to save user from the liquidation
     * if mode = Min_Allowable_Margin, return values which have minimum margin fraction. We use this to determine whether user can take any more leverage
     */
@@ -559,7 +546,7 @@ contract AMM is IAMM, Governable {
         internal
         returns (int realizedPnl)
     {
-        (, int256 unrealizedPnl,,) = getNotionalPositionAndUnrealizedPnl(trader);
+        (, int256 unrealizedPnl,,) = _getNotionalPositionAndUnrealizedPnl(trader, price);
 
         Position storage position = positions[trader]; // storage because there are updates at the end
         bool isLongPosition = position.size > 0 ? true : false;

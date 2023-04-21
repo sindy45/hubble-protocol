@@ -22,7 +22,10 @@ contract TestClearingHouse is ClearingHouse {
         } else {
             price = quote * 1e18 / uint(abs(baseAssetQuantity));
         }
+        openPosition3(ammIndex, baseAssetQuantity, price);
+    }
 
+    function openPosition3(uint ammIndex, int baseAssetQuantity, uint price) public {
         uint salt = _blockTimestamp();
         IOrderBook.Order memory order = IOrderBook.Order(ammIndex, _msgSender(), baseAssetQuantity, price, salt);
         _openPosition(order, order.baseAssetQuantity, order.price, IOrderBook.OrderExecutionMode.Taker);

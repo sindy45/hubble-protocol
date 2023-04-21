@@ -183,8 +183,8 @@ describe('Multi-collateral Liquidation Tests', async function() {
         expect((await marginAccount.isLiquidatable(alice, true))[0]).to.eq(2) // NO_DEBT
 
         // addMargin
-        wethMargin = _1e18.div(2) // $500
-        avaxMargin = _1e6.mul(10) // $500
+        wethMargin = _1e18.div(4) // $250
+        avaxMargin = _1e6.mul(15) // $750
         await Promise.all([
             weth.mint(alice, wethMargin),
             weth.approve(marginAccount.address, wethMargin),
@@ -205,6 +205,9 @@ describe('Multi-collateral Liquidation Tests', async function() {
         const price = _1e6.mul(1130)
         await addMargin(bob, base.mul(price).div(_1e18))
         await clearingHouse.connect(bob).openPosition2(0, base, base.mul(price).div(_1e18))
+
+        // index also increases
+        await oracle.setUnderlyingPrice(weth.address, price)
     })
 
     it('alice\'s position is liquidated', async function() {
@@ -213,12 +216,13 @@ describe('Multi-collateral Liquidation Tests', async function() {
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
         ;({ unrealizedPnl, notionalPosition } = await amm.getNotionalPositionAndUnrealizedPnl(alice))
 
+        // unrealizedPnl = (1000 - 1130) * 5 = -650, notionalPosition = 5 * 1130 = 5650
         const feeSinkBalance = await vusd.balanceOf(feeSink)
         await clearingHouse.connect(liquidator1).liquidate2(alice)
 
-        const liquidationPenalty = notionalPosition.mul(5e4).div(_1e6)
+        const liquidationPenalty = notionalPosition.mul(5e4).div(_1e6) // 5650 * .05 = 282.5
         expect(await marginAccount.margin(0, alice)).to.eq(
-            unrealizedPnl.sub(liquidationPenalty).sub(tradeFee)
+            unrealizedPnl.sub(liquidationPenalty).sub(tradeFee) // -650 - 282.5 - 2.5 = -935
         )
         expect(await vusd.balanceOf(feeSink)).to.eq(liquidationPenalty.add(feeSinkBalance))
     })
@@ -232,7 +236,7 @@ describe('Multi-collateral Liquidation Tests', async function() {
     })
 
     it('liquidateFlexible (_liquidateExactSeize branch, incentivePerDollar < 5%)', async function() {
-        // the alice's debt is -935.x, margin = .5*1000*.7 + 10*50*.8 = $750, spot = .5*1000 + 10*50 = $1000
+        // the alice's debt is -935, margin = .25*1130*.7 + 15*50*.8 = $797.75, spot = .25*1130 + 15*50 = $1032.5
         const [
             { weighted, spot },
             { _isLiquidatable, repayAmount, incentivePerDollar },
@@ -242,8 +246,8 @@ describe('Multi-collateral Liquidation Tests', async function() {
             marginAccount.isLiquidatable(alice, true),
             marginAccount.margin(1, alice)
         ])
-        expect(parseInt(weighted.toNumber() / 1e6)).to.eq(-185) // 750 - 935.x
-        expect(parseInt(spot.toNumber() / 1e6)).to.eq(65) // 1000 - 935.x
+        expect(weighted.toNumber() / 1e6).to.eq(-137.25) // 797.75 - 935
+        expect(spot.toNumber() / 1e6).to.eq(97.5) // 1032.5 - 935
         expect(_isLiquidatable).to.eq(0) // IS_LIQUIDATABLE
         expect(incentivePerDollar.toNumber() / 1e6).to.eq(1.05) // min(1.05, 1000/935)
 
@@ -251,6 +255,7 @@ describe('Multi-collateral Liquidation Tests', async function() {
         await vusd.connect(liquidator3).approve(marginAccount.address, repayAmount)
 
         // _liquidateExactSeize part of if-else is called
+        // will seize all eth and repay .25*1130/1.05 = 269.04 husd
         await marginAccount.connect(liquidator3).liquidateFlexible(alice, ethers.constants.MaxUint256, [1])
 
         expect(await weth.balanceOf(liquidator3.address)).to.eq(wethMargin)
@@ -259,7 +264,7 @@ describe('Multi-collateral Liquidation Tests', async function() {
     })
 
     it('liquidateExactRepay (incentivePerDollar < 5%)', async function() {
-        // the alice's debt is -458.x, margin = 10*50*.8 = $400, spot = 10*50 = $500
+        // margin = 15*50*.8 = $600, spot = 15*50 = $750, bad debt = - 935 + 269.04 = -665.96
         const [
             { weighted, spot },
             { _isLiquidatable, repayAmount, incentivePerDollar },
@@ -269,8 +274,8 @@ describe('Multi-collateral Liquidation Tests', async function() {
             marginAccount.isLiquidatable(alice, true),
             marginAccount.margin(2, alice)
         ])
-        expect(parseInt(weighted.toNumber() / 1e6)).to.eq(-58) // 400 - 458.x
-        expect(parseInt(spot.toNumber() / 1e6)).to.eq(41) // 500 - 458.x
+        expect(parseInt(weighted.toNumber() / 1e6)).to.eq(-65) // 600 - 665.96 = -65.96
+        expect(parseInt(spot.toNumber() / 1e6)).to.eq(84) // 750 - 665.96
         expect(_isLiquidatable).to.eq(0) // IS_LIQUIDATABLE
         expect(incentivePerDollar.toNumber() / 1e6).to.eq(1.05) // min(1.05, 500/458)
 
@@ -676,6 +681,11 @@ describe('Liquidation Price Safeguard', async function() {
         const price = _1e6.mul(1130)
         await addMargin(bob, base.mul(price).div(_1e18))
         await clearingHouse.connect(bob).openPosition2(0, base, base.mul(price).div(_1e18))
+
+        // since both the oracle price and mark price determine whether someone is above the maintenance margin, just increasing the mark price should not be enough
+        expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.true
+
+        await oracle.setUnderlyingPrice(weth.address, price.mul(989).div(1000)) // 3rd test needs mark > 1% of index
         // alice is in liquidation zone
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
     })

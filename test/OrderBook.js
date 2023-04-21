@@ -157,6 +157,7 @@ describe('Order Book', function () {
         // force alice in liquidation zone
         const markPrice = _1e6.mul(1180)
         await placeAndExecuteTrade(_1e18.mul(5), markPrice)
+        await oracle.setUnderlyingPrice(weth.address, markPrice)
         expect(await clearingHouse.isAboveMaintenanceMargin(alice.address)).to.eq(false)
         expect(await clearingHouse.isAboveMaintenanceMargin(bob.address)).to.eq(true)
         const { size } = await amm.positions(alice.address)
@@ -368,6 +369,7 @@ describe('Order Book - Error Handling', function () {
     it('ch.liquidateSingleAmm fails - revert from amm', async function() {
         // force alice in liquidation zone
         await placeAndExecuteTrade(longOrder.baseAssetQuantity, markPrice)
+        await oracle.setUnderlyingPrice(weth.address, markPrice)
         expect(await clearingHouse.isAboveMaintenanceMargin(alice.address)).to.eq(false)
 
         let tx = await orderBook.liquidateAndExecuteOrder(alice.address, order, signature, toLiquidate.mul(2).abs())

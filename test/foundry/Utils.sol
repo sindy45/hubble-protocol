@@ -216,8 +216,10 @@ abstract contract Utils is Test {
         );
         amm_ = AMM(address(proxy));
 
-        vm.prank(governance);
+        vm.startPrank(governance);
         ClearingHouse(clearingHouse).whitelistAmm(address(amm_));
+        amm_.setPriceSpreadParams(10 * 1e4 /* maxOracleSpreadRatio 10% */, 1 * 1e4 /* maxPriceSpreadPerBlock 1% */ );
+        vm.stopPrank();
     }
 
     /**

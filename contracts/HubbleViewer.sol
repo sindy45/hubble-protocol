@@ -157,21 +157,7 @@ contract HubbleViewer is IHubbleViewer {
         int256 margin;
         (margin, totalCollateral) = marginAccount.weightedAndSpotCollateral(trader);
         marginFraction = clearingHouse.calcMarginFraction(trader, true, IClearingHouse.Mode.Min_Allowable_Margin);
-
-        uint l = clearingHouse.getAmmsLength();
-        bool isOverSpreadLimit = false;
-        for (uint i; i < l; i++) {
-            IAMM amm = clearingHouse.amms(i);
-            (int size,,,) = amm.positions(trader);
-            if (amm.isOverSpreadLimit() && size != 0) {
-                isOverSpreadLimit = true;
-            }
-        }
-
-        if (isOverSpreadLimit) {
-            // when over spread limit, liquidation margin is different from min allowable margin
-            marginFractionLiquidation = clearingHouse.calcMarginFraction(trader, true, IClearingHouse.Mode.Maintenance_Margin);
-        }
+        marginFractionLiquidation = clearingHouse.calcMarginFraction(trader, true, IClearingHouse.Mode.Maintenance_Margin);
 
         (notionalPosition, unrealizedPnl) = clearingHouse.getTotalNotionalPositionAndUnrealizedPnl(trader, margin, IClearingHouse.Mode.Min_Allowable_Margin);
         int256 minAllowableMargin = clearingHouse.minAllowableMargin();

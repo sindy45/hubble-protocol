@@ -397,7 +397,7 @@ async function assertions(contracts, trader, vals, shouldLog) {
     ])
 
     if (shouldLog) {
-        log(position, notionalPosition, unrealizedPnl, marginFraction, size, openNotional)
+        console.log(position, notionalPosition, unrealizedPnl, marginFraction, size, openNotional)
     }
 
     if (vals.size != null) {

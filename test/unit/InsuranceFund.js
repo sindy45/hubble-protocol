@@ -205,11 +205,20 @@ describe('Insurance Fund Auction Tests', function() {
         await clearingHouse.openPosition2(0, _1e18.mul(-5), 0)
         await clearingHouse.connect(charlie).openPosition2(0, _1e18.mul(-5), 0)
 
-        // bob increases the price
+        // bob increases the mark price
         const base = _1e18.mul(15)
         const price = _1e6.mul(1199)
         await addMargin(bob, base.mul(price).div(_1e18))
         await clearingHouse.connect(bob).openPosition2(0, base, base.mul(price).div(_1e18))
+
+        // since both the oracle price and mark price determine whether someone is above the maintenance margin, just increasing the mark price should not be enough
+        expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.true
+        expect(await clearingHouse.isAboveMaintenanceMargin(charlie.address)).to.be.true
+
+        // increase the oracle price
+        wethOraclePrice = price
+        await oracle.setUnderlyingPrice(weth.address, wethOraclePrice)
+
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
         expect(await clearingHouse.isAboveMaintenanceMargin(charlie.address)).to.be.false
 

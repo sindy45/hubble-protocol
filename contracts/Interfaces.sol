@@ -145,7 +145,6 @@ interface IAMM {
         external
         pure
         returns(uint256 remainOpenNotional, int realizedPnl);
-    function isOverSpreadLimit() external view returns (bool);
     function getOracleBasedPnl(address trader, int256 margin, IClearingHouse.Mode mode) external view returns (uint, int256);
     function lastPrice() external view returns(uint256);
     function startFunding() external returns(uint256);
