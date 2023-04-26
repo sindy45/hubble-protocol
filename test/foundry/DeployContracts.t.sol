@@ -41,8 +41,8 @@ contract DeployContracts is Utils {
         assertEq(address(clearingHouse.hubbleReferral()), address(hubbleReferral));
         assertEq(clearingHouse.maintenanceMargin(), 1e5);
         assertEq(clearingHouse.minAllowableMargin(), 2e5);
-        assertEq(clearingHouse.takerFee(), 500);
-        assertEq(clearingHouse.makerFee(), 500);
+        assertEq(clearingHouse.takerFee(), takerFee);
+        assertEq(clearingHouse.makerFee(), makerFee);
         assertEq(clearingHouse.referralShare(), 50);
         assertEq(clearingHouse.tradingFeeDiscount(), 100);
         assertEq(clearingHouse.liquidationPenalty(), 5e4);

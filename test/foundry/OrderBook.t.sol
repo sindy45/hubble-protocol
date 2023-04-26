@@ -4,6 +4,9 @@ pragma solidity 0.8.9;
 import "./Utils.sol";
 
 contract OrderBookTests is Utils {
+    RestrictedErc20 public weth;
+    int public constant defaultWethPrice = 1000 * 1e6;
+
     event OrderPlaced(address indexed trader, bytes32 indexed orderHash, IOrderBook.Order order, bytes signature, uint timestamp);
     event OrderCancelled(address indexed trader, bytes32 indexed orderHash, uint timestamp);
     event OrdersMatched(bytes32 indexed orderHash0, bytes32 indexed orderHash1, uint256 fillAmount, uint price, uint openInterestNotional, address relayer, uint timestamp);
@@ -13,8 +16,14 @@ contract OrderBookTests is Utils {
 
     function setUp() public {
         setupContracts();
-        vm.prank(governance);
+        // add collateral
+        weth = setupRestrictedTestToken('Hubble Ether', 'WETH', 18);
+
+        vm.startPrank(governance);
         orderBook.setValidatorStatus(address(this), true);
+        oracle.setUnderlyingPrice(address(weth), defaultWethPrice);
+        marginAccount.whitelistCollateral(address(weth), 1e6);
+        vm.stopPrank();
     }
 
     function testPlaceOrder(uint128 traderKey, int size, uint price) public {
@@ -34,14 +43,14 @@ contract OrderBookTests is Utils {
 
         uint quote = stdMath.abs(size) * price / 1e18;
         uint marginRequired = quote / 5 + quote * uint(takerFee) / 1e6;
-        addMargin(trader, marginRequired - 1);
+        addMargin(trader, marginRequired - 1, 0, address(0));
 
         vm.startPrank(trader);
         vm.expectRevert("MA_reserveMargin: Insufficient margin");
         orderBook.placeOrder(order, signature);
         vm.stopPrank();
 
-        addMargin(trader, 1);
+        addMargin(trader, 1, 0, address(0));
         vm.startPrank(trader);
         vm.expectEmit(true, true, false, true, address(orderBook));
         emit OrderPlaced(trader, orderHash, order, signature, block.timestamp);
@@ -102,8 +111,8 @@ contract OrderBookTests is Utils {
         int size = int(uint(size_) + amm.minSizeRequirement()); // to avoid min size error
 
         uint quote = stdMath.abs(size) * price / 1e18;
-        addMargin(alice, quote / 2); // 2x leverage
-        addMargin(bob, quote / 2);
+        addMargin(alice, quote / 2, 0, address(0)); // 2x leverage
+        addMargin(bob, quote / 2, 0, address(0));
 
         (orders[0], signatures[0], ordersHash[0]) = placeOrder(0, aliceKey, size, price);
         (orders[1], signatures[1], ordersHash[1]) = placeOrder(0, bobKey, -size, price);
@@ -153,58 +162,65 @@ contract OrderBookTests is Utils {
         vm.assume(size_ != 0);
         int size = int(uint(size_) + amm.minSizeRequirement()); // to avoid min size error
         uint price = 20 * 1e6;
-        placeAndExecuteOrder(0, aliceKey, bobKey, size, price, true);
+
+        // add weth margin
+        temp[0] = clearingHouse.getRequiredMargin(size, price) * 1e18 / uint(defaultWethPrice) + 1e12; // required weth margin in 1e18, add 1e12 for any precision loss
+        addMargin(alice, temp[0], 1, address(weth));
+        addMargin(bob, temp[0], 1, address(weth));
+        placeAndExecuteOrder(0, aliceKey, bobKey, size, price, true, false);
 
         // make alice and bob in liquidatin zone
-        vm.prank(governance);
-        marginAccount.setPortfolioManager(address(this));
-        marginAccount.removeMarginFor(alice, 0, uint(marginAccount.margin(0, alice)));
-        marginAccount.removeMarginFor(bob, 0, uint(marginAccount.margin(0, bob)));
+        oracle.setUnderlyingPrice(address(weth), defaultWethPrice / 2);
         assertFalse(clearingHouse.isAboveMaintenanceMargin(alice));
         assertFalse(clearingHouse.isAboveMaintenanceMargin(bob));
 
-        (address charlie, uint charlieKey) = makeAddrAndKey("charlie");
-        addMargin(charlie, stdMath.abs(size) * price / 1e18);
-        (IOrderBook.Order memory order, bytes memory signature, bytes32 orderHash) = placeOrder(0, charlieKey, size, price);
+        address charlie;
+        (charlie, temp[3] /** charlieKey */) = makeAddrAndKey("charlie");
+        addMargin(charlie, stdMath.abs(size) * price / 1e18, 0, address(0));
+        (IOrderBook.Order memory order, bytes memory signature, bytes32 orderHash) = placeOrder(0, temp[3], size, price);
 
+        // liquidate alice
         uint toLiquidate;
         {
-            {
-                // liquidate alice
-                vm.roll(block.number + 1); // to avoid AMM.liquidation_not_allowed_after_trade
-                (,,,uint liquidationThreshold) = amm.positions(alice);
-                toLiquidate = Math.min(stdMath.abs(size), liquidationThreshold);
-            }
-
-            uint feeSinkBalanceBefore = husd.balanceOf(feeSink);
-            vm.expectEmit(true, true, false, true, address(orderBook));
-            emit LiquidationOrderMatched(address(alice), orderHash, signature, toLiquidate, price, stdMath.abs(2 * size), address(this), block.timestamp);
-            orderBook.liquidateAndExecuteOrder(alice, order, signature, toLiquidate);
-
-            {
-                (,,int filledAmount, uint reservedMargin, OrderBook.OrderStatus status) = orderBook.orderInfo(orderHash);
-                assertEq(uint(status), 1);
-                assertEq(filledAmount, int(toLiquidate));
-                temp[1] = stdMath.abs(size) * price / 1e18; // quote
-                temp[0] = temp[1] / 5 + temp[1] * uint(takerFee) / 1e6; // margin required
-                assertEq(marginAccount.reservedMargin(charlie), temp[0] - temp[0] * toLiquidate / stdMath.abs(size));
-                assertEq(reservedMargin, temp[0] - temp[0] * toLiquidate / stdMath.abs(size));
-            }
-            {
-                uint liquidationPenalty = toLiquidate * price * liquidationPenalty / 1e24;
-                uint tradeFee = toLiquidate * price * uint(takerFee) / 1e24;
-                assertEq(husd.balanceOf(feeSink), feeSinkBalanceBefore + liquidationPenalty + tradeFee);
-                assertEq(husd.balanceOf(address(marginAccount)), uint(marginAccount.margin(0, charlie)) - liquidationPenalty);
-            }
+            vm.roll(block.number + 1); // to avoid AMM.liquidation_not_allowed_after_trade
+            (,,,uint liquidationThreshold) = amm.positions(alice);
+            toLiquidate = Math.min(stdMath.abs(size), liquidationThreshold);
         }
 
+        vm.expectEmit(true, true, false, true, address(orderBook));
+        emit LiquidationOrderMatched(address(alice), orderHash, signature, toLiquidate, price, stdMath.abs(2 * size), address(this), block.timestamp);
+        orderBook.liquidateAndExecuteOrder(alice, order, signature, toLiquidate);
+
+        {
+            (,,int filledAmount, uint reservedMargin, OrderBook.OrderStatus status) = orderBook.orderInfo(orderHash);
+            assertEq(uint(status), 1);
+            assertEq(filledAmount, int(toLiquidate));
+            temp[1] = stdMath.abs(size) * price / 1e18; // quote
+            temp[0] = temp[1] / 5 + temp[1] * uint(takerFee) / 1e6; // margin required
+            assertEq(marginAccount.reservedMargin(charlie), temp[0] - temp[0] * toLiquidate / stdMath.abs(size));
+            assertEq(reservedMargin, temp[0] - temp[0] * toLiquidate / stdMath.abs(size));
+        }
+        {
+            uint liquidationPenalty = toLiquidate * price * liquidationPenalty / 1e24;
+            assertEq(marginAccount.margin(0, alice), -int(calculateTakerFee(size, price) + liquidationPenalty));
+            // feeSink husd balance = orderMaching fee + liquidationPenalty + tradeFee in liquidation
+            assertEq(husd.balanceOf(feeSink), 2 * calculateTakerFee(size, price) + liquidationPenalty + calculateMakerFee(int(toLiquidate), price));
+            // marginAccount husd balance = sum(husd margin of all accounts)
+            assertEq(
+                husd.balanceOf(address(marginAccount)),
+                uint(marginAccount.margin(0, charlie)) // charlie margin
+                - liquidationPenalty - calculateTakerFee(size, price) // alice margin
+                - calculateTakerFee(size, price) // bob margin
+            );
+        }
+
+        // liquidate bob
         address peter;
         {
             // @todo allow multiple liquidations in a single block
             vm.roll(block.number + 1); // to avoid AMM.liquidation_not_allowed_after_trade
-            // liquidate bob
             (peter, temp[3] /** peterKey */) = makeAddrAndKey("peter");
-            addMargin(peter, stdMath.abs(size) * price / 1e18);
+            addMargin(peter, stdMath.abs(size) * price / 1e18, 0, address(0));
             (order, signature, orderHash) = placeOrder(0, temp[3], -size, price);
         }
         {
@@ -218,6 +234,18 @@ contract OrderBookTests is Utils {
             assertEq(filledAmount, -int(toLiquidate));
             assertEq(marginAccount.reservedMargin(peter), temp[0] - temp[0] * toLiquidate / stdMath.abs(size));
             assertEq(reservedMargin, temp[0] - temp[0] * toLiquidate / stdMath.abs(size));
+        }
+        {
+            uint liquidationPenalty = toLiquidate * price * liquidationPenalty / 1e24;
+            assertEq(marginAccount.margin(0, bob), -int(calculateTakerFee(size, price) + liquidationPenalty));
+            // feeSink husd balance = orderMaching fee + 2 * (liquidationPenalty + tradeFee in liquidation)
+            assertEq(husd.balanceOf(feeSink), 2 * (calculateTakerFee(size, price) + liquidationPenalty + calculateMakerFee(int(toLiquidate), price)));
+            // marginAccount husd balance = sum(husd margin of all accounts)
+            assertEq(
+                husd.balanceOf(address(marginAccount)),
+                2 * uint(marginAccount.margin(0, charlie)) // charlie + peter margin
+                - 2 * (liquidationPenalty + calculateTakerFee(size, price)) // alice + bob margin
+            );
         }
     }
 
@@ -262,7 +290,7 @@ contract OrderBookTests is Utils {
 
         uint price = 20 * 1e6;
         // alice - maker, bob - taker
-        uint margin = placeAndExecuteOrder(0, aliceKey, bobKey, size, price, false);
+        uint margin = placeAndExecuteOrder(0, aliceKey, bobKey, size, price, false, true);
 
         uint quote = stdMath.abs(size) * price / 1e18;
         uint makerFeePayed = quote * stdMath.abs(_makerFee) / 1e6;
@@ -320,7 +348,7 @@ contract OrderBookTests is Utils {
 
         uint price = 20 * 1e6;
         // alice - maker, bob - taker
-        uint margin = placeAndExecuteOrder(0, aliceKey, bobKey, size, price, false);
+        uint margin = placeAndExecuteOrder(0, aliceKey, bobKey, size, price, false, true);
 
         uint quote = stdMath.abs(size) * price / 1e18;
         uint makerFeeCharged = quote * uint(_makerFee) / 1e6;
@@ -380,7 +408,7 @@ contract OrderBookTests is Utils {
 
         uint price = 20 * 1e6;
         // alice - taker, bob - taker
-        uint margin = placeAndExecuteOrder(0, aliceKey, bobKey, size, price, true);
+        uint margin = placeAndExecuteOrder(0, aliceKey, bobKey, size, price, true, true);
 
         uint quote = stdMath.abs(size) * price / 1e18;
         uint takerFeeCharged = quote * uint(_takerFee) / 1e6;
@@ -414,77 +442,86 @@ contract OrderBookTests is Utils {
             liquidationPenalty // liquidationPenalty = 5%
         );
 
-        placeAndExecuteOrder(0, aliceKey, bobKey, size, price, true);
+        // add weth margin
+        temp[0] = clearingHouse.getRequiredMargin(size, price) * 1e18 / uint(defaultWethPrice) + 1e12; // required weth margin in 1e18, add 1e12 for any precision loss
+        addMargin(alice, temp[0], 1, address(weth));
+        addMargin(bob, temp[0], 1, address(weth));
+        placeAndExecuteOrder(0, aliceKey, bobKey, size, price, true, false);
 
         // make alice and bob in liquidatin zone
-        vm.prank(governance);
-        marginAccount.setPortfolioManager(address(this));
-        marginAccount.removeMarginFor(alice, 0, uint(marginAccount.margin(0, alice)));
-        marginAccount.removeMarginFor(bob, 0, uint(marginAccount.margin(0, bob)));
+        oracle.setUnderlyingPrice(address(weth), defaultWethPrice / 2);
         assertFalse(clearingHouse.isAboveMaintenanceMargin(alice));
         assertFalse(clearingHouse.isAboveMaintenanceMargin(bob));
 
         address charlie;
         (charlie, temp[0] /**charlieKey */) = makeAddrAndKey("charlie");
         uint charlieMargin = stdMath.abs(size) * price / 1e18;
-        addMargin(charlie, charlieMargin);
+        addMargin(charlie, charlieMargin, 0, address(0));
         (IOrderBook.Order memory order, bytes memory signature, bytes32 orderHash) = placeOrder(0, temp[0], size, price);
 
+        // liquidate alice
         uint toLiquidate;
         {
-            {
-                // liquidate alice
-                vm.roll(block.number + 1); // to avoid AMM.liquidation_not_allowed_after_trade
-                (,,, temp[1] /** liquidationThreshold */) = amm.positions(alice);
-                toLiquidate = Math.min(stdMath.abs(size), temp[1]);
-            }
+            vm.roll(block.number + 1); // to avoid AMM.liquidation_not_allowed_after_trade
+            (,,,uint liquidationThreshold) = amm.positions(alice);
+            toLiquidate = Math.min(stdMath.abs(size), liquidationThreshold);
+        }
 
-            uint feeSinkBalanceBefore = husd.balanceOf(feeSink);
-            vm.expectEmit(true, true, false, true, address(orderBook));
-            emit LiquidationOrderMatched(address(alice), orderHash, signature, toLiquidate, price, stdMath.abs(2 * size), address(this), block.timestamp);
-            orderBook.liquidateAndExecuteOrder(alice, order, signature, toLiquidate);
+        vm.expectEmit(true, true, false, true, address(orderBook));
+        emit LiquidationOrderMatched(address(alice), orderHash, signature, toLiquidate, price, stdMath.abs(2 * size), address(this), block.timestamp);
+        orderBook.liquidateAndExecuteOrder(alice, order, signature, toLiquidate);
 
-            {
-                (,,int filledAmount,, OrderBook.OrderStatus status) = orderBook.orderInfo(orderHash);
-                assertEq(uint(status), 1);
-                assertEq(filledAmount, int(toLiquidate));
-            }
-            {
-                uint liquidationPenalty = toLiquidate * price * liquidationPenalty / 1e24;
-                uint makerFeePayed = toLiquidate * price * uint(-makerFee) / 1e24;
-                assertEq(husd.balanceOf(feeSink), feeSinkBalanceBefore + liquidationPenalty - makerFeePayed);
-                // makerFeePayed is added to charlie margin
-                assertEq(uint(marginAccount.margin(0, charlie)), charlieMargin + makerFeePayed);
-                assertEq(husd.balanceOf(address(marginAccount)), charlieMargin - liquidationPenalty + makerFeePayed);
-            }
+        {
+            (,,int filledAmount, uint reservedMargin, OrderBook.OrderStatus status) = orderBook.orderInfo(orderHash);
+            assertEq(uint(status), 1);
+            assertEq(filledAmount, int(toLiquidate));
+            temp[1] = stdMath.abs(size) * price / 1e18; // quote
+            temp[0] = temp[1] / 5 + temp[1] * uint(takerFee) / 1e6; // margin required
+            assertEq(marginAccount.reservedMargin(charlie), temp[0] - temp[0] * toLiquidate / stdMath.abs(size));
+            assertEq(reservedMargin, temp[0] - temp[0] * toLiquidate / stdMath.abs(size));
+        }
+        {
+            uint liquidationPenalty = toLiquidate * price * liquidationPenalty / 1e24;
+            assertEq(marginAccount.margin(0, alice), -int(calculateTakerFee(size, price) + liquidationPenalty));
+            // feeSink husd balance = orderMaching fee + liquidationPenalty - makerFee in liquidation
+            assertEq(husd.balanceOf(feeSink), 2 * calculateTakerFee(size, price) + liquidationPenalty - calculateMakerFee(int(toLiquidate), price));
+            // makerFee is added to charlie margin
+            assertEq(uint(marginAccount.margin(0, charlie)), charlieMargin + calculateMakerFee(int(toLiquidate), price));
+            // marginAccount husd balance = sum(husd margin of all accounts)
+            assertEq(
+                husd.balanceOf(address(marginAccount)),
+                uint(marginAccount.margin(0, charlie)) // charlie margin
+                - liquidationPenalty - calculateTakerFee(size, price) // alice margin
+                - calculateTakerFee(size, price) // bob margin
+            );
         }
     }
 
     function testOrderCancellationWhenNotEnoughMargin(uint32 price, uint120 size_) public {
-        vm.assume(price > 1e4);
+        vm.assume(price > 10);
         oracle.setUnderlyingPrice(address(wavax), int(uint(price)));
         int size = int(uint(size_) + amm.minSizeRequirement()); // to avoid min size error
 
         // alice opens position
-        int margin = int(placeAndExecuteOrder(0, aliceKey, bobKey, size, price, true));
-        int quote = int(stdMath.abs(size) * price / 1e18);
-        int utilizedMargin = quote * 2e5 / 1e6; // 5x max leverage
+        // add weth margin scaled to 18 decimals
+        temp[0] =  uint(size) * price / uint(defaultWethPrice); // 1x leverage
+        addMargin(alice, temp[0], 1, address(weth));
+        addMargin(bob, temp[0], 1, address(weth));
+        placeAndExecuteOrder(0, aliceKey, bobKey, size, price, true, false);
 
-        // alice places 2 orders, total margin added = 2 * margin
-        addMargin(alice, uint(margin));
+        int quote = size * int(uint(price)) / 1e18;
+        int utilizedMargin = quote / MAX_LEVERAGE; // 5x max leverage
+
+        // alice places 2 open orders
         (,,bytes32 orderHash1) = placeOrder(0, aliceKey, size + 1, price);
         uint reservedMarginForOrder1 = marginAccount.reservedMargin(alice);
         (,,bytes32 orderHash2) = placeOrder(0, aliceKey, size + 2, price);
         uint totalReservedMargin = marginAccount.reservedMargin(alice);
 
-        // alice removes margin such that avaialble margin < 0
-        // remaining margin = margin
-        vm.prank(alice);
-        marginAccount.removeMargin(0, uint(margin));
+        // collateral price decreases such that avaialble margin < 0
+        oracle.setUnderlyingPrice(address(weth), defaultWethPrice / 2);
         assertTrue(marginAccount.getAvailableMargin(alice) < 0);
-        // subtract fee from margin deposited
-        margin -= takerFee * quote / 1e6;
-        assertEq(marginAccount.getAvailableMargin(alice), margin - int(totalReservedMargin) - utilizedMargin);
+        assertAvailableMargin(alice, 0, int(totalReservedMargin), utilizedMargin);
 
         // other users cannot cancel order
         vm.prank(bob);
@@ -507,7 +544,7 @@ contract OrderBookTests is Utils {
         {
             // alice avalable margin is > 0
             assertTrue(marginAccount.getAvailableMargin(alice) >= 0);
-            assertEq(marginAccount.getAvailableMargin(alice), margin - int(totalReservedMargin) - utilizedMargin + int(reservedMarginForOrder1));
+            assertAvailableMargin(alice, 0, int(totalReservedMargin - reservedMarginForOrder1), utilizedMargin);
         }
 
         vm.expectRevert('OB_available_margin_not_negative');
@@ -523,7 +560,7 @@ contract OrderBookTests is Utils {
         orderBook.cancelOrder(orderHash2);
         assertEq(marginAccount.reservedMargin(alice), 0);
         // cannot cancel already cancelled order
-        vm.expectRevert('OB_invalid_sender'); // invalid sender because order is deleted from orderInfo mapping
+        vm.expectRevert('OB_Order_does_not_exist');
         orderBook.cancelOrder(orderHash2);
         vm.stopPrank();
     }

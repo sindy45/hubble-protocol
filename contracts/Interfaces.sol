@@ -129,6 +129,7 @@ interface IOrderBook {
     function settleFunding() external;
     function liquidateAndExecuteOrder(address trader, Order memory order, bytes memory signature, uint256 toLiquidate) external;
     function getLastTradePrices() external view returns(uint[] memory lastTradePrices);
+    function cancelMultipleOrders(bytes32[] memory orderHashes) external;
 }
 
 interface IAMM {
@@ -156,7 +157,7 @@ interface IAMM {
         external
         pure
         returns(uint256 remainOpenNotional, int realizedPnl);
-    function getOracleBasedPnl(address trader, int256 margin, IClearingHouse.Mode mode) external view returns (uint, int256);
+    function getOptimalPnl(address trader, int256 margin, IClearingHouse.Mode mode) external view returns (uint, int256);
     function lastPrice() external view returns(uint256);
     function startFunding() external returns(uint256);
     function openInterestNotional() external returns(uint256);
@@ -233,7 +234,6 @@ interface IMarginAccount {
     function transferOutVusd(address recipient, uint amount) external;
     function liquidateExactRepay(address trader, uint repay, uint idx, uint minSeizeAmount) external;
     function oracle() external view returns(IOracle);
-    function removeMarginFor(address trader, uint idx, uint256 amount) external;
     function reserveMargin(address trader, uint amount) external;
     function releaseMargin(address trader, uint amount) external;
     function reservedMargin(address trader) external view returns(uint);

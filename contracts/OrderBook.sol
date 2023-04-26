@@ -131,15 +131,18 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
     }
 
     function cancelOrder(bytes32 orderHash) public {
+        // order status should be placed
+        require(orderInfo[orderHash].status == OrderStatus.Placed, "OB_Order_does_not_exist");
+
         address trader = orderInfo[orderHash].order.trader;
+        // settle pending funding
+        clearingHouse.updatePositions(trader);
         if (msg.sender != trader) {
             require(isValidator[msg.sender], "OB_invalid_sender");
             // allow cancellation of order by validator if availableMargin < 0
             require(marginAccount.getAvailableMargin(trader) < 0, "OB_available_margin_not_negative");
         }
 
-        // order status should be placed
-        require(orderInfo[orderHash].status == OrderStatus.Placed, "OB_Order_does_not_exist");
         orderInfo[orderHash].status = OrderStatus.Cancelled;
         // release margin
         marginAccount.releaseMargin(trader, orderInfo[orderHash].reservedMargin);

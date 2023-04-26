@@ -36,6 +36,7 @@ contract MarginAccount is IMarginAccount, HubbleBase, ReentrancyGuard {
 
     // used for all usd based values
     uint constant PRECISION = 1e6;
+    int constant PRECISION_INT = 1e6;
 
     error NOT_LIQUIDATABLE(IMarginAccount.LiquidationStatus);
 
@@ -83,7 +84,6 @@ contract MarginAccount is IMarginAccount, HubbleBase, ReentrancyGuard {
     * @notice Maps trader => reserved margin for open orders
     */
     mapping(address => uint) public reservedMargin;
-    address public portfolioManager;
 
     uint256[49] private __gap;
 
@@ -94,11 +94,6 @@ contract MarginAccount is IMarginAccount, HubbleBase, ReentrancyGuard {
 
     modifier onlyOrderBook() {
         require(_msgSender() == address(orderBook), "Only orderBook");
-        _;
-    }
-
-    modifier onlyPortfolioManager () {
-        require(_msgSender() == portfolioManager, "Only portfolioManger");
         _;
     }
 
@@ -189,21 +184,6 @@ contract MarginAccount is IMarginAccount, HubbleBase, ReentrancyGuard {
     }
 
     /**
-    * @notice remove margin in Avax
-    * @param amount Amount to withdraw
-    */
-    function removeMarginFor(address trader, uint idx, uint amount) external whenNotPaused onlyPortfolioManager {
-        _validateRemoveMargin(idx, amount, trader);
-
-        if (idx == VUSD_IDX) {
-            _transferOutVusd(portfolioManager, amount);
-        } else {
-            supportedCollateral[idx].token.safeTransfer(portfolioManager, amount);
-        }
-        emit MarginRemoved(trader, idx, amount, _blockTimestamp());
-    }
-
-    /**
     * @notice Invoked to realize PnL, credit/debit funding payments, pay trade and liquidation fee
     * @dev Will only make a change to VUSD balance.
     *   only clearingHouse is authorized to call.
@@ -235,6 +215,8 @@ contract MarginAccount is IMarginAccount, HubbleBase, ReentrancyGuard {
         external
         onlyOrderBook
     {
+        // settle pending funding payment
+        clearingHouse.updatePositions(trader);
         require(getAvailableMargin(trader) >= amount.toInt256(), "MA_reserveMargin: Insufficient margin");
         reservedMargin[trader] += amount;
         emit MarginReserved(trader, amount);
@@ -250,12 +232,15 @@ contract MarginAccount is IMarginAccount, HubbleBase, ReentrancyGuard {
         emit MarginReleased(trader, amount);
     }
 
+    /**
+    * @dev assumes there is no pending funding payment
+    */
     function getAvailableMargin(address trader) public view override returns (int availableMargin) {
-        // availableMargin = margin + unrealizedPnl - fundingPayment - reservedMargin - utilizedMargin
-        uint notionalPosition;
-        (notionalPosition, availableMargin) = clearingHouse.getNotionalPositionAndMargin(trader, true, IClearingHouse.Mode.Min_Allowable_Margin);
-        int utilizedMargin = notionalPosition.toInt256() * clearingHouse.minAllowableMargin() / 1e6;
-        availableMargin = availableMargin - utilizedMargin - reservedMargin[trader].toInt256();
+        // availableMargin = margin + unrealizedPnl - reservedMargin - utilizedMargin
+        int _margin = getNormalizedMargin(trader);
+        (uint notionalPosition, int unrealizedPnl) = clearingHouse.getTotalNotionalPositionAndUnrealizedPnl(trader, _margin, IClearingHouse.Mode.Min_Allowable_Margin);
+        int utilizedMargin = notionalPosition.toInt256() * clearingHouse.minAllowableMargin() / PRECISION_INT;
+        availableMargin = _margin + unrealizedPnl - utilizedMargin - reservedMargin[trader].toInt256();
     }
 
     /* ****************** */
@@ -643,14 +628,25 @@ contract MarginAccount is IMarginAccount, HubbleBase, ReentrancyGuard {
 
         // credit funding payments
         clearingHouse.updatePositions(trader);
-        require(margin[idx][trader] >= amount.toInt256(), "Insufficient balance");
+        // Consider unrealized PnL only when removing VUSD margin
+        (,int unrealizedPnl) = clearingHouse.getTotalNotionalPositionAndUnrealizedPnl(
+            trader,
+            getNormalizedMargin(trader),
+            IClearingHouse.Mode.Min_Allowable_Margin
+        );
+
+        if (idx == VUSD_IDX) {
+            require(margin[VUSD_IDX][trader] + unrealizedPnl >= amount.toInt256(), "Insufficient balance");
+        } else {
+            require(margin[idx][trader] >= amount.toInt256(), "Insufficient balance");
+        }
         margin[idx][trader] -= amount.toInt256();
 
-        if (_msgSender() != portfolioManager) {
-            require(margin[VUSD_IDX][trader] >= 0, "Cannot remove margin when vusd balance is negative");
-            // Check minimum margin requirement after withdrawal
-            clearingHouse.assertMarginRequirement(trader);
-        }
+        // assert that available margin > 0 after removing margin, this will ensure that user's orders are fillable after withdrawal
+        require(getAvailableMargin(trader) >= 0, "MA: available margin < 0, withdrawing too much");
+
+        // Check minimum margin requirement after withdrawal
+        clearingHouse.assertMarginRequirement(trader);
     }
 
     function safeTransferAVAX(address to, uint256 value) internal nonReentrant {
@@ -683,9 +679,5 @@ contract MarginAccount is IMarginAccount, HubbleBase, ReentrancyGuard {
         require(_weight <= PRECISION, "weight > 1e6");
         require(idx < supportedCollateral.length, "Collateral not supported");
         supportedCollateral[idx].weight = _weight;
-    }
-
-    function setPortfolioManager(address _portfolioManager) external onlyGovernance {
-        portfolioManager = _portfolioManager;
     }
 }

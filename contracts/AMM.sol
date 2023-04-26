@@ -327,7 +327,7 @@ contract AMM is IAMM, Governable {
     * if mode = Maintenance_Margin, return values which have maximum margin fraction i.e we make the best effort to save user from the liquidation
     * if mode = Min_Allowable_Margin, return values which have minimum margin fraction. We use this to determine whether user can take any more leverage
     */
-    function getOracleBasedPnl(address trader, int256 margin, IClearingHouse.Mode mode) override external view returns (uint notionalPosition, int256 unrealizedPnl) {
+    function getOptimalPnl(address trader, int256 margin, IClearingHouse.Mode mode) override external view returns (uint notionalPosition, int256 unrealizedPnl) {
         int256 size;
         uint openNotional;
         (notionalPosition, unrealizedPnl, size, openNotional) = getNotionalPositionAndUnrealizedPnl(trader);

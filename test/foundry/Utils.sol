@@ -39,8 +39,8 @@ abstract contract Utils is Test {
     RestrictedErc20 public wavax;
     address public feeSink = makeAddr("feeSink");
     address public governance = makeAddr("governance");
-    int public makerFee = 0.05 * 1e4; // 0.05%
-    int public takerFee = 0.05 * 1e4; // 0.05%
+    int public makerFee = 0.06 * 1e4; // 0.06%
+    int public takerFee = 0.04 * 1e4; // 0.04%
     uint public liquidationPenalty = 5 * 1e4; // 5%
     // for layer0 bridge test
     uint16 public baseChainId = 1;
@@ -49,6 +49,7 @@ abstract contract Utils is Test {
     LZEndpointMock public lzEndpointOther;
     HGT public hgt;
     HGTRemote public hgtRemote;
+    int public MAX_LEVERAGE = 5;
 
     uint public aliceKey;
     address public alice;
@@ -223,15 +224,25 @@ abstract contract Utils is Test {
     }
 
     /**
-    @dev only supports usdc collateral for now
+    * @notice Add margin to the margin account
+    * @param idx index of the collateral token
+    * @param token address of the collateral token
     */
-    function addMargin(address trader, uint margin) internal {
-        uint hgtRequired = margin * 1e12;
-        vm.deal(trader, hgtRequired);
+    function addMargin(address trader, uint margin, uint idx, address token) internal {
+        if (idx == 0) {
+            uint hgtRequired = margin * 1e12;
+            vm.deal(trader, hgtRequired);
 
-        vm.startPrank(trader);
-        marginAccountHelper.addVUSDMarginWithReserve{value: hgtRequired}(margin);
-        vm.stopPrank();
+            vm.startPrank(trader);
+            marginAccountHelper.addVUSDMarginWithReserve{value: hgtRequired}(margin);
+            vm.stopPrank();
+        } else {
+            RestrictedErc20(token).mint(trader, margin);
+            vm.startPrank(trader);
+            RestrictedErc20(token).approve(address(marginAccount), margin);
+            marginAccount.addMargin(idx, margin);
+            vm.stopPrank();
+        }
     }
 
     function prepareOrder(uint ammIndex, uint traderKey, int size, uint price) internal view returns (
@@ -261,14 +272,16 @@ abstract contract Utils is Test {
         return (order, signature, orderHash);
     }
 
-    function placeAndExecuteOrder(uint ammIndex, uint trader1Key, uint trader2Key, int size, uint price, bool sameBlock) internal returns (uint margin) {
+    function placeAndExecuteOrder(uint ammIndex, uint trader1Key, uint trader2Key, int size, uint price, bool sameBlock, bool _addMargin) internal returns (uint margin) {
         IOrderBook.Order[2] memory orders;
         bytes[2] memory signatures;
         bytes32[2] memory ordersHash;
 
-        margin = stdMath.abs(size) * price / 2e18; // 2x leverage
-        addMargin(alice, margin);
-        addMargin(bob, margin);
+        if(_addMargin) {
+            margin = stdMath.abs(size) * price / 2e18; // 2x leverage
+            addMargin(vm.addr(trader1Key), margin, 0, address(0));
+            addMargin(vm.addr(trader2Key), margin, 0, address(0));
+        }
 
         (orders[0], signatures[0], ordersHash[0]) = placeOrder(ammIndex, trader1Key, int(stdMath.abs(size)), price);
         if (!sameBlock) {
@@ -294,5 +307,30 @@ abstract contract Utils is Test {
             vm.deal(trader, scaledAmount);
         }
         husd.mintWithReserve{value: scaledAmount}(address(trader), amount);
+    }
+
+    function calculateTakerFee(int size, uint price) internal view returns (uint) {
+        uint quote = stdMath.abs(size) * price / 1e18;
+        return quote * uint(takerFee) / 1e6;
+    }
+
+    function calculateMakerFee(int size, uint price) internal view returns (uint) {
+        uint quote = stdMath.abs(size) * price / 1e18;
+        return quote * stdMath.abs(makerFee) / 1e6;
+    }
+
+    function assertAvailableMargin(address trader, int unrealizedPnl, int reservedMargin, int utilizedMargin) internal {
+        int margin = marginAccount.getNormalizedMargin(trader);
+        int availableMargin = marginAccount.getAvailableMargin(trader);
+        assertEq(availableMargin, margin + unrealizedPnl - reservedMargin - utilizedMargin);
+    }
+
+    function executeTrade(uint ammIndex, int size, uint price, bool setOraclePrice) internal {
+        (, temp[0] /** charlieKey */) = makeAddrAndKey("charlie");
+        (, temp[1] /** peterKey */) = makeAddrAndKey("peter");
+        if(setOraclePrice) {
+            oracle.setUnderlyingPrice(address(wavax), int(price));
+        }
+        placeAndExecuteOrder(ammIndex, temp[0], temp[1], size, price, false, true);
     }
 }
