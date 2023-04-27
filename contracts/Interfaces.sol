@@ -45,7 +45,6 @@ interface IClearingHouse {
     function isAboveMaintenanceMargin(address trader) external view returns(bool);
     function assertMarginRequirement(address trader) external view;
     function updatePositions(address trader) external;
-    function getMarginFraction(address trader) external view returns(int256);
     function getTotalFunding(address trader) external view returns(int256 totalFunding);
     function getAmmsLength() external view returns(uint);
     function amms(uint idx) external view returns(IAMM);
@@ -102,6 +101,7 @@ interface IOrderBook {
         int256 baseAssetQuantity;
         uint256 price;
         uint256 salt;
+        bool reduceOnly;
     }
 
     struct MatchInfo {

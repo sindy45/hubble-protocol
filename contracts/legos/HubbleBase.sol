@@ -8,12 +8,25 @@ import { Context } from "@openzeppelin/contracts/utils/Context.sol";
 
 import { Governable } from "./Governable.sol";
 
-/**
-* @title This contract is used for posting margin (collateral), realizing PnL etc.
-* @notice Most notable operations include addMargin, removeMargin and liquidations
-*/
-contract HubbleBase is Governable, Pausable, ERC2771Context {
+contract HubbleBase is Governable, Pausable {
+    function _blockTimestamp() internal view virtual returns (uint256) {
+        return block.timestamp;
+    }
 
+    /* ****************** */
+    /*     Governance     */
+    /* ****************** */
+
+    function pause() external onlyGovernance {
+        _pause();
+    }
+
+    function unpause() external onlyGovernance {
+        _unpause();
+    }
+}
+
+contract MetaHubbleBase is HubbleBase, ERC2771Context {
     /**
     * @dev _trustedForwarder is a private immutable var in ERC2771Context
     */
@@ -39,22 +52,6 @@ contract HubbleBase is Governable, Pausable, ERC2771Context {
         returns (bytes memory)
     {
         return super._msgData();
-    }
-
-    function _blockTimestamp() internal view virtual returns (uint256) {
-        return block.timestamp;
-    }
-
-    /* ****************** */
-    /*     Governance     */
-    /* ****************** */
-
-    function pause() external onlyGovernance {
-        _pause();
-    }
-
-    function unpause() external onlyGovernance {
-        _unpause();
     }
 }
 

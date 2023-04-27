@@ -14,8 +14,8 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
     using SafeCast for uint256;
     using SafeCast for int256;
 
-    // keccak256("Order(uint256 ammIndex,address trader,int256 baseAssetQuantity,uint256 price,uint256 salt)");
-    bytes32 public constant ORDER_TYPEHASH = 0xba5bdc08c77846c2444ea7c84fcaf3479e3389b274ebc7ab59358538ca00dbe0;
+    // keccak256("Order(uint256 ammIndex,address trader,int256 baseAssetQuantity,uint256 price,uint256 salt,bool reduceOnly)");
+    bytes32 public constant ORDER_TYPEHASH = 0x0a2e4d36552888a97d5a8975ad22b04e90efe5ea0a8abb97691b63b431eb25d2;
 
     IClearingHouse public immutable clearingHouse;
     IMarginAccount public immutable marginAccount;
@@ -121,9 +121,12 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         // order should not exist in the orderStatus map already
         require(orderInfo[orderHash].status == OrderStatus.Invalid, "OB_Order_already_exists");
 
-        // reserve margin for the order
-        uint reserveAmount = clearingHouse.getRequiredMargin(order.baseAssetQuantity, order.price);
-        marginAccount.reserveMargin(order.trader, reserveAmount);
+        uint reserveAmount;
+        if(!order.reduceOnly) {
+            // reserve margin for the order
+            reserveAmount = clearingHouse.getRequiredMargin(order.baseAssetQuantity, order.price);
+            marginAccount.reserveMargin(order.trader, reserveAmount);
+        }
 
         // add orderInfo for the corresponding orderHash
         orderInfo[orderHash] = OrderInfo(order, block.number, 0, reserveAmount, OrderStatus.Placed);
@@ -275,9 +278,11 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         if (orderInfo[orderHash].filledAmount == baseAssetQuantity) {
             orderInfo[orderHash].status = OrderStatus.Filled;
 
-            marginAccount.releaseMargin(trader, reservedMargin);
+            if(!orderInfo[orderHash].order.reduceOnly) {
+                marginAccount.releaseMargin(trader, reservedMargin);
+            }
             _deleteOrderInfo(orderHash);
-        } else {
+        } else if(!orderInfo[orderHash].order.reduceOnly) {
             // update reserved margin
             uint utilisedMargin = uint(abs(fillAmount)) * reservedMargin / uint(abs(baseAssetQuantity));
             orderInfo[orderHash].reservedMargin -= utilisedMargin;

@@ -79,10 +79,6 @@ contract AMM is IAMM, Governable {
     /* ****************** */
     /*       Events       */
     /* ****************** */
-
-    // Trader related events
-    event PositionChanged(address indexed trader, int256 size, uint256 openNotional, int256 realizedPnl);
-
     modifier onlyClearingHouse() {
         require(msg.sender == clearingHouse, "Only clearingHouse");
         _;
@@ -145,8 +141,6 @@ contract AMM is IAMM, Governable {
             (totalPosSize * maxLiquidationRatio / 1e6) + 1,
             minSizeRequirement
         );
-
-        _emitPositionChanged(order.trader, realizedPnl);
     }
 
     function liquidatePosition(address trader, uint price, int fillAmount)
@@ -185,7 +179,6 @@ contract AMM is IAMM, Governable {
 
         size = positions[trader].size;
         openNotional = positions[trader].openNotional;
-        _emitPositionChanged(trader, realizedPnl);
     }
 
     function updatePosition(address trader)
@@ -471,43 +464,6 @@ contract AMM is IAMM, Governable {
             lastBlockTradePrice = reserveSnapshots[index - 1].lastPrice;
         } else {
             lastBlockTradePrice = reserveSnapshots[index].lastPrice;
-        }
-    }
-
-    function _emitPositionChanged(address trader, int256 realizedPnl) internal {
-        Position memory position = positions[trader];
-        emit PositionChanged(trader, position.size, position.openNotional, realizedPnl);
-    }
-
-    /**
-    * @dev Get PnL to be realized for the part of the position that is being closed
-    *   Check takerPosition != 0 before calling
-    */
-    function _getPnlWhileReducingPosition(
-        int256 takerPosition,
-        uint takerOpenNotional,
-        int256 makerPosition
-    ) internal view returns (int256 pnlToBeRealized) {
-        // notional of the combined new position
-        uint newNotional = getNotionalPosition(takerPosition + makerPosition);
-        uint totalPosition = abs(makerPosition + takerPosition).toUint256();
-
-        if (abs(takerPosition) > abs(makerPosition)) { // taker position side remains same
-            uint reducedOpenNotional = takerOpenNotional * abs(makerPosition).toUint256() / abs(takerPosition).toUint256();
-            uint makerNotional = newNotional * abs(makerPosition).toUint256() / totalPosition;
-            pnlToBeRealized = _getPnlToBeRealized(takerPosition, makerNotional, reducedOpenNotional);
-        } else { // taker position side changes
-            // @todo handle case when totalPosition = 0
-            uint closedPositionNotional = newNotional * abs(takerPosition).toUint256() / totalPosition;
-            pnlToBeRealized = _getPnlToBeRealized(takerPosition, closedPositionNotional, takerOpenNotional);
-        }
-    }
-
-    function _getPnlToBeRealized(int256 takerPosition, uint notionalPosition, uint openNotional) internal pure returns (int256 pnlToBeRealized) {
-        if (takerPosition > 0) {
-            pnlToBeRealized = notionalPosition.toInt256() - openNotional.toInt256();
-        } else {
-            pnlToBeRealized = openNotional.toInt256() - notionalPosition.toInt256();
         }
     }
 

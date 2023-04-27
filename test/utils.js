@@ -157,7 +157,7 @@ async function setupContracts(options = {}) {
         initArgs[3] = signers[0].address
     }
 
-    deployArgs = [ forwarder.address ]
+    deployArgs = []
     if (options.genesisProxies) {
         clearingHouse = await setupGenesisProxy('ClearingHouse', proxyAdmin, initArgs, deployArgs, clearingHouseProxy)
     } else {
@@ -392,7 +392,7 @@ async function assertions(contracts, trader, vals, shouldLog) {
     const [ position, { notionalPosition, unrealizedPnl, size, openNotional }, marginFraction, margin ] = await Promise.all([
         amm.positions(trader),
         amm.getNotionalPositionAndUnrealizedPnl(trader),
-        clearingHouse.getMarginFraction(trader),
+        clearingHouse.calcMarginFraction(trader, true, 1),
         marginAccount.getNormalizedMargin(trader)
     ])
 

@@ -18,7 +18,7 @@ contract MarginAccountTests is Utils {
         vm.stopPrank();
     }
 
-    function testAvailableMargin(uint32 price, uint120 size_) public {
+    function testAvailableMargin(uint64 price, uint120 size_) public {
         vm.assume(price != 0);
         oracle.setUnderlyingPrice(address(wavax), int(uint(price)));
         int size = int(uint(size_) + amm.minSizeRequirement()); // to avoid min size error
@@ -30,14 +30,14 @@ contract MarginAccountTests is Utils {
         addMargin(alice, uint(margin), 1, address(weth));
         addMargin(bob, uint(margin), 1, address(weth));
         // next step deposits husd margin at 2x leverage
-        placeAndExecuteOrder(0, aliceKey, bobKey, size, price, false, true);
+        placeAndExecuteOrder(0, aliceKey, bobKey, size, price, false, true, size, false);
         int utilizedMargin  = quote / 5; // max leverage = 5x
         assertAvailableMargin(alice, 0, 0, utilizedMargin);
         assertAvailableMargin(bob, 0, 0, utilizedMargin);
 
         // place another order to make reservedMargin non-zero
-        placeOrder(0, aliceKey, size + 1, price);
-        placeOrder(0, bobKey, size + 1, price);
+        placeOrder(0, aliceKey, size + 1, price, false);
+        placeOrder(0, bobKey, size + 1, price, false);
         uint reservedMargin = clearingHouse.getRequiredMargin(size + 1, price);
         assertAvailableMargin(alice, 0, int(reservedMargin), utilizedMargin);
         assertAvailableMargin(bob, 0, int(reservedMargin), utilizedMargin);
@@ -53,12 +53,12 @@ contract MarginAccountTests is Utils {
         assertAvailableMargin(bob, -unrealizedProfit, int(reservedMargin), utilizedMargin);
 
         // close all positions at newPrice
-        placeAndExecuteOrder(0, bobKey, aliceKey, size, newPrice, false, true);
+        placeAndExecuteOrder(0, bobKey, aliceKey, size, newPrice, false, true, size, false);
         assertAvailableMargin(alice, 0, int(reservedMargin), 0);
         assertAvailableMargin(bob, 0, int(reservedMargin), 0);
     }
 
-    function testRemoveMargin(uint32 price, uint120 size_) public {
+    function testRemoveMargin(uint64 price, uint120 size_) public {
         vm.assume(price > 10); // reducing price by 10% later in this test
         oracle.setUnderlyingPrice(address(wavax), int(uint(price)));
         int size = int(uint(size_) + amm.minSizeRequirement()); // to avoid min size error
@@ -71,7 +71,7 @@ contract MarginAccountTests is Utils {
 
         IOrderBook.Order[2] memory orders;
         bytes[2] memory signatures;
-        (orders[0], signatures[0],) = placeOrder(0, aliceKey, size, price);
+        (orders[0], signatures[0],) = placeOrder(0, aliceKey, size, price, false);
         // cannot remove more than available margin
         uint availableMargin = uint(marginAccount.getAvailableMargin(alice));
         vm.expectRevert("MA: available margin < 0, withdrawing too much");
@@ -81,7 +81,7 @@ contract MarginAccountTests is Utils {
         vm.roll(block.number + 1);
 
         // match orders
-        (orders[1], signatures[1],) = placeOrder(0, bobKey, -size, price);
+        (orders[1], signatures[1],) = placeOrder(0, bobKey, -size, price, false);
         orderBook.executeMatchedOrders(orders, signatures, size);
 
         // execute another trade to make unrealized profit/loss non-zero
@@ -110,7 +110,7 @@ contract MarginAccountTests is Utils {
         vm.stopPrank();
 
         // close all positions at newPrice
-        placeAndExecuteOrder(0, bobKey, aliceKey, size, newPrice, false, true);
+        placeAndExecuteOrder(0, bobKey, aliceKey, size, newPrice, false, true, size, false);
         // can remove all margin
         margin = marginAccount.margin(0, alice);
         vm.prank(alice);

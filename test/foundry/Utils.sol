@@ -127,7 +127,7 @@ abstract contract Utils is Test {
         );
         orderBook = OrderBook(address(proxy));
 
-        ClearingHouse clImpl = new ClearingHouse(address(forwarder));
+        ClearingHouse clImpl = new ClearingHouse();
         proxyAdmin.upgradeAndCall(clProxy, address(clImpl), abi.encodeWithSelector(
             ClearingHouse.initialize.selector,
             governance,
@@ -245,7 +245,7 @@ abstract contract Utils is Test {
         }
     }
 
-    function prepareOrder(uint ammIndex, uint traderKey, int size, uint price) internal view returns (
+    function prepareOrder(uint ammIndex, uint traderKey, int size, uint price, bool reduceOnly) internal view returns (
         address trader,
         IOrderBook.Order memory order,
         bytes memory signature,
@@ -257,7 +257,8 @@ abstract contract Utils is Test {
             trader,
             size,
             price,
-            block.timestamp
+            block.timestamp,
+            reduceOnly
         );
 
         orderHash = orderBook.getOrderHash(order);
@@ -265,14 +266,24 @@ abstract contract Utils is Test {
         signature = abi.encodePacked(r, s, v);
     }
 
-    function placeOrder(uint ammIndex, uint traderKey, int size, uint price) internal returns (IOrderBook.Order memory, bytes memory, bytes32) {
-        (address trader, IOrderBook.Order memory order, bytes memory signature, bytes32 orderHash) = prepareOrder(ammIndex, traderKey, size, price);
+    function placeOrder(uint ammIndex, uint traderKey, int size, uint price, bool reduceOnly) internal returns (IOrderBook.Order memory, bytes memory, bytes32) {
+        (address trader, IOrderBook.Order memory order, bytes memory signature, bytes32 orderHash) = prepareOrder(ammIndex, traderKey, size, price, reduceOnly);
         vm.prank(trader);
         orderBook.placeOrder(order, signature);
         return (order, signature, orderHash);
     }
 
-    function placeAndExecuteOrder(uint ammIndex, uint trader1Key, uint trader2Key, int size, uint price, bool sameBlock, bool _addMargin) internal returns (uint margin) {
+    function placeAndExecuteOrder(
+        uint ammIndex,
+        uint trader1Key,
+        uint trader2Key,
+        int size,
+        uint price,
+        bool sameBlock,
+        bool _addMargin,
+        int fillAmount,
+        bool reduceOnly
+    ) internal returns (uint margin) {
         IOrderBook.Order[2] memory orders;
         bytes[2] memory signatures;
         bytes32[2] memory ordersHash;
@@ -283,13 +294,13 @@ abstract contract Utils is Test {
             addMargin(vm.addr(trader2Key), margin, 0, address(0));
         }
 
-        (orders[0], signatures[0], ordersHash[0]) = placeOrder(ammIndex, trader1Key, int(stdMath.abs(size)), price);
+        (orders[0], signatures[0], ordersHash[0]) = placeOrder(ammIndex, trader1Key, int(stdMath.abs(size)), price, reduceOnly);
         if (!sameBlock) {
             vm.roll(block.number + 1);
         }
-        (orders[1], signatures[1], ordersHash[1]) = placeOrder(ammIndex, trader2Key, -int(stdMath.abs(size)), price);
+        (orders[1], signatures[1], ordersHash[1]) = placeOrder(ammIndex, trader2Key, -int(stdMath.abs(size)), price, reduceOnly);
 
-        orderBook.executeMatchedOrders(orders, signatures, int(stdMath.abs(size)));
+        orderBook.executeMatchedOrders(orders, signatures, int(stdMath.abs(fillAmount)));
     }
 
     function assertPositions(address trader, int size, uint openNotional, int unrealizedPnl, uint avgOpen) internal {
@@ -331,6 +342,6 @@ abstract contract Utils is Test {
         if(setOraclePrice) {
             oracle.setUnderlyingPrice(address(wavax), int(price));
         }
-        placeAndExecuteOrder(ammIndex, temp[0], temp[1], size, price, false, true);
+        placeAndExecuteOrder(ammIndex, temp[0], temp[1], size, price, false, true, size, false);
     }
 }

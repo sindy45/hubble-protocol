@@ -8,7 +8,7 @@ import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import { ReentrancyGuard } from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
-import { HubbleBase } from "./legos/HubbleBase.sol";
+import { MetaHubbleBase } from "./legos/HubbleBase.sol";
 import {
     ERC20Detailed,
     IClearingHouse,
@@ -25,7 +25,7 @@ import {
 * @title This contract is used for posting margin (collateral), realizing PnL etc.
 * @notice Most notable operations include addMargin, removeMargin and liquidations
 */
-contract MarginAccount is IMarginAccount, HubbleBase, ReentrancyGuard {
+contract MarginAccount is IMarginAccount, MetaHubbleBase, ReentrancyGuard {
     using SafeERC20 for IERC20;
     using SafeCast for uint256;
     using SafeCast for int256;
@@ -97,7 +97,7 @@ contract MarginAccount is IMarginAccount, HubbleBase, ReentrancyGuard {
         _;
     }
 
-    constructor(address _trustedForwarder) HubbleBase(_trustedForwarder) {}
+    constructor(address _trustedForwarder) MetaHubbleBase(_trustedForwarder) {}
 
     function initialize(
         address _governance,

@@ -400,7 +400,7 @@ describe('Position Tests', async function() {
             await addMargin(bob, base.mul(price).div(_1e18))
             await clearingHouse.connect(bob).openPosition2(0, base, base.mul(price).div(_1e18))
 
-            // console.log((await clearingHouse.getMarginFraction(alice)).toString())
+            // console.log((await clearingHouse.calcMarginFraction(alice, true, 1)).toString())
             expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.true
 
             ;({ unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(alice))
@@ -434,7 +434,7 @@ describe('Position Tests', async function() {
             await addMargin(bob, base.mul(price).div(_1e18))
             await clearingHouse.connect(bob).openPosition2(0, base, base.mul(price).div(_1e18))
 
-            // console.log((await clearingHouse.getMarginFraction(alice)).toString())
+            // console.log((await clearingHouse.calcMarginFraction(alice, true, 1)).toString())
             expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
 
             ;({ unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(alice))

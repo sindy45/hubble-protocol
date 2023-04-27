@@ -10,11 +10,24 @@ const {
     filterEvent
 } = utils
 
+const orderType = {
+    Order: [
+        // field ordering must be the same as LIMIT_ORDER_TYPEHASH
+        { name: "ammIndex", type: "uint256" },
+        { name: "trader", type: "address" },
+        { name: "baseAssetQuantity", type: "int256" },
+        { name: "price", type: "uint256" },
+        { name: "salt", type: "uint256" },
+        { name: "reduceOnly", type: "bool" },
+    ]
+}
+
 describe('Order Book', function () {
     before(async function () {
         signers = await ethers.getSigners()
         ;([, alice, bob] = signers)
         ;({ orderBook, usdc, oracle, weth } = await setupContracts({mockOrderBook: false}))
+        domain = await getDomain()
 
         await orderBook.setValidatorStatus(signers[0].address, true)
         await addMargin(alice, _1e6.mul(4000))
@@ -22,29 +35,13 @@ describe('Order Book', function () {
     })
 
     it('verify signer', async function() {
-        domain = {
-            name: 'Hubble',
-            version: '2.0',
-            chainId: (await ethers.provider.getNetwork()).chainId,
-            verifyingContract: orderBook.address
-        }
-
-        orderType = {
-            Order: [
-                // field ordering must be the same as LIMIT_ORDER_TYPEHASH
-                { name: "ammIndex", type: "uint256" },
-                { name: "trader", type: "address" },
-                { name: "baseAssetQuantity", type: "int256" },
-                { name: "price", type: "uint256" },
-                { name: "salt", type: "uint256" },
-            ]
-        }
         shortOrder = {
             ammIndex: ZERO,
             trader: alice.address,
             baseAssetQuantity: ethers.utils.parseEther('-5'),
             price: ethers.utils.parseUnits('1000', 6),
-            salt: BigNumber.from(Date.now())
+            salt: BigNumber.from(Date.now()),
+            reduceOnly: false
         }
 
         order1Hash = await orderBook.getOrderHash(shortOrder)
@@ -75,7 +72,8 @@ describe('Order Book', function () {
             trader: bob.address,
             baseAssetQuantity: ethers.utils.parseEther('5'),
             price: ethers.utils.parseUnits('1000', 6),
-            salt: BigNumber.from(Date.now())
+            salt: BigNumber.from(Date.now()),
+            reduceOnly: false
         }
         signature2 = await bob._signTypedData(domain, orderType, longOrder)
         await orderBook.connect(bob).placeOrder(longOrder, signature2)
@@ -189,6 +187,7 @@ describe('Order Book - Error Handling', function () {
         signers = await ethers.getSigners()
         ;([, alice, bob ] = signers)
         ;({ orderBook, usdc, oracle, weth, amm, marginAccount } = await setupContracts({mockOrderBook: false}))
+        domain = await getDomain()
 
         await orderBook.setValidatorStatus(signers[0].address, true)
         // add collateral
@@ -206,30 +205,13 @@ describe('Order Book - Error Handling', function () {
     })
 
     it('alice places order', async function() {
-        orderType = {
-            Order: [
-                // field ordering must be the same as LIMIT_ORDER_TYPEHASH
-                { name: "ammIndex", type: "uint256" },
-                { name: "trader", type: "address" },
-                { name: "baseAssetQuantity", type: "int256" },
-                { name: "price", type: "uint256" },
-                { name: "salt", type: "uint256" },
-            ]
-        }
-
-        domain = {
-            name: 'Hubble',
-            version: '2.0',
-            chainId: (await ethers.provider.getNetwork()).chainId,
-            verifyingContract: orderBook.address
-        }
-
         shortOrder = {
             ammIndex: ZERO,
             trader: alice.address,
             baseAssetQuantity: ethers.utils.parseEther('-5'),
             price: ethers.utils.parseUnits('1000', 6),
-            salt: BigNumber.from(Date.now())
+            salt: BigNumber.from(Date.now()),
+            reduceOnly: false
         }
         order1Hash = await orderBook.getOrderHash(shortOrder)
         signature1 = await alice._signTypedData(domain, orderType, shortOrder)
@@ -255,7 +237,8 @@ describe('Order Book - Error Handling', function () {
             trader: bob.address,
             baseAssetQuantity: ethers.utils.parseEther('5'),
             price: ethers.utils.parseUnits('1000', 6),
-            salt: BigNumber.from(Date.now())
+            salt: BigNumber.from(Date.now()),
+            reduceOnly: false
         }
         order2Hash = await orderBook.getOrderHash(longOrder)
         signature2 = await bob._signTypedData(domain, orderType, longOrder)
@@ -488,10 +471,20 @@ async function placeOrder(size, price, signer) {
         trader: signer.address,
         baseAssetQuantity: size,
         price: price,
-        salt: BigNumber.from(Date.now())
+        salt: BigNumber.from(Date.now()),
+        reduceOnly: false
     }
 
     const signature = await signer._signTypedData(domain, orderType, order)
     await orderBook.connect(signer).placeOrder(order, signature)
     return { order, signature }
+}
+
+async function getDomain() {
+    return {
+        name: 'Hubble',
+        version: '2.0',
+        chainId: (await ethers.provider.getNetwork()).chainId,
+        verifyingContract: orderBook.address
+    }
 }

@@ -43,8 +43,6 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
 
     uint256[50] private __gap;
 
-    constructor(address _trustedForwarder) HubbleBase(_trustedForwarder) {}
-
     function initialize(
         address _governance,
         address _feeSink,
@@ -268,8 +266,10 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
             marginAccount.transferOutVusd(feeSink, toFeeSink.toUint256());
         }
 
+        // isPositionIncreased is true when the position is increased or reversed
         if (isPositionIncreased) {
             assertMarginRequirement(order.trader);
+            require(order.reduceOnly == false, "CH: reduceOnly order can only reduce position");
         }
         emit PositionModified(order.trader, order.ammIndex, fillAmount, fulfillPrice, realizedPnl, size, openNotional, feeCharged, _blockTimestamp());
     }
@@ -362,14 +362,6 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
 
     function isAboveMaintenanceMargin(address trader) override external view returns(bool) {
         return calcMarginFraction(trader, true, Mode.Maintenance_Margin) >= maintenanceMargin;
-    }
-
-    /**
-    * @dev deprecated Use the nested call instead
-    *   calcMarginFraction(trader, true, Mode.Min_Allowable_Margin)
-    */
-    function getMarginFraction(address trader) override external view returns(int256) {
-        return calcMarginFraction(trader, true /* includeFundingPayments */, Mode.Min_Allowable_Margin);
     }
 
     /* ****************** */

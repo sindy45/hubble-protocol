@@ -13,8 +13,6 @@ contract TestClearingHouse is ClearingHouse {
     using SafeCast for uint256;
     using SafeCast for int256;
 
-    constructor(address _trustedForwarder) ClearingHouse(_trustedForwarder) {}
-
     function openPosition2(uint ammIndex, int baseAssetQuantity, uint quote) external {
         uint price;
         if (quote == 0 || quote == type(uint).max) {
@@ -27,7 +25,7 @@ contract TestClearingHouse is ClearingHouse {
 
     function openPosition3(uint ammIndex, int baseAssetQuantity, uint price) public {
         uint salt = _blockTimestamp();
-        IOrderBook.Order memory order = IOrderBook.Order(ammIndex, _msgSender(), baseAssetQuantity, price, salt);
+        IOrderBook.Order memory order = IOrderBook.Order(ammIndex, _msgSender(), baseAssetQuantity, price, salt, false);
         _openPosition(order, order.baseAssetQuantity, order.price, IOrderBook.OrderExecutionMode.Taker);
     }
 
@@ -36,7 +34,7 @@ contract TestClearingHouse is ClearingHouse {
         uint price = amms[ammIndex].lastPrice();
         uint salt = _blockTimestamp();
         (int baseAssetQuantity,,,) = amms[ammIndex].positions(trader);
-        IOrderBook.Order memory order = IOrderBook.Order(ammIndex,_msgSender(), -baseAssetQuantity, price, salt);
+        IOrderBook.Order memory order = IOrderBook.Order(ammIndex,_msgSender(), -baseAssetQuantity, price, salt, true);
         _openPosition(order, order.baseAssetQuantity, order.price, IOrderBook.OrderExecutionMode.Taker);
     }
 
