@@ -523,141 +523,6 @@ describe('Partial Liquidation Threshold', async function() {
     })
 })
 
-describe.skip('Liquidation Price Safeguard', async function() {
-    beforeEach(async function() {
-        signers = await ethers.getSigners()
-        ;([ _, bob, liquidator1, charlie, liquidator3, admin ] = signers)
-        alice = signers[0].address
-
-        contracts = await setupContracts({amm: {initialLiquidity: 5000}})
-        ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, swap, hubbleViewer, oracle } = contracts)
-
-        // add margin
-        margin = _1e6.mul(1050)
-        await addMargin(signers[0], margin)
-        await addMargin(liquidator1, _1e6.mul(20000))
-    })
-
-    it('cannot liquidate short position if markPrice moves >1%', async function() {
-        // alice shorts
-        const baseAssetQuantity = _1e18.mul(-5)
-        await clearingHouse.openPosition2(0, baseAssetQuantity, 0)
-
-        // bob longs
-        await addMargin(bob, _1e6.mul(80000))
-        let tx = await clearingHouse.connect(bob).openPosition2(0, _1e18.mul(300), ethers.constants.MaxUint256)
-        // alice is in liquidation zone
-        expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
-        const markPriceOld = await amm.lastPrice()
-
-        // set auto block mining to false
-        await network.provider.send("evm_setAutomine", [false]);
-        // liquidator1 longs
-        await clearingHouse.connect(liquidator1).openPosition2(0, _1e18.mul(30), ethers.constants.MaxUint256)
-        // liquidator1 liquidates alice
-        await clearingHouse.connect(liquidator1).liquidate2(alice)
-
-        // mine next block
-        await network.provider.send("evm_mine");
-        await network.provider.send("evm_setAutomine", [true]);
-
-        const markPriceNew = await amm.lastPrice()
-        // markPrice moved greater than 1%
-        expect(markPriceNew).to.gt(markPriceOld.mul(101).div(100))
-
-        let block = await ethers.provider.getBlockWithTransactions(tx.blockNumber+1)
-        // liquidation tx receipt
-        let receipt = await ethers.provider.getTransactionReceipt(block.transactions[1].hash)
-        // assert that liquidation tx failed, not allowed in same block
-        expect(receipt.status).to.eq(0)
-        expect((await clearingHouse.queryFilter('PositionLiquidated')).length).to.eq(0)
-
-        // liquidation goes through in the next block
-        await clearingHouse.connect(liquidator1).liquidate2(alice)
-        expect((await clearingHouse.queryFilter('PositionLiquidated')).length).to.eq(1)
-    })
-
-    it('cannot liquidate long position if markPrice moves >1%', async function() {
-        // alice longs
-        const baseAssetQuantity = _1e18.mul(5)
-        await clearingHouse.openPosition2(0, baseAssetQuantity, ethers.constants.MaxUint256)
-
-        // bob shorts
-        await addMargin(bob, _1e6.mul(80000))
-        let tx = await clearingHouse.connect(bob).openPosition2(0, _1e18.mul(-400), 0)
-        // alice is in liquidation zone
-        expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
-        const markPriceOld = await amm.lastPrice()
-
-        // set auto block mining to false
-        await network.provider.send("evm_setAutomine", [false]);
-        // liquidator1 shorts
-        await clearingHouse.connect(liquidator1).openPosition2(0, _1e18.mul(-30), 0)
-        // liquidator1 liquidates alice
-        await clearingHouse.connect(liquidator1).liquidate2(alice)
-
-        // mine next block
-        await network.provider.send("evm_mine");
-        await network.provider.send("evm_setAutomine", [true]);
-
-        const markPriceNew = await amm.lastPrice()
-        // markPrice moved greater than 1%
-        expect(markPriceNew).to.lt(markPriceOld.mul(99).div(100))
-
-        let block = await ethers.provider.getBlockWithTransactions(tx.blockNumber+1)
-        // liquidation tx receipt
-        let receipt = await ethers.provider.getTransactionReceipt(block.transactions[1].hash)
-        // assert that liquidation tx failed, not allowed in same block
-        expect(receipt.status).to.eq(0)
-        expect((await clearingHouse.queryFilter('PositionLiquidated')).length).to.eq(0)
-
-        // liquidation goes through in the next block
-        await clearingHouse.connect(liquidator1).liquidate2(alice)
-        expect((await clearingHouse.queryFilter('PositionLiquidated')).length).to.eq(1)
-    })
-
-    it('allow price change when there is no trade in the block (only liquidation)', async function() {
-        // set maintenanceMargin = minAllowableMargin
-        await setDefaultClearingHouseParams(clearingHouse)
-        // allow 100% position liquidation
-        await amm.setLiquidationParams(1e6, 1e4)
-
-        // alice shorts
-        let baseAssetQuantity = _1e18.mul(-105)
-        await addMargin(signers[0], _1e6.mul(10000))
-        await clearingHouse.openPosition2(0, baseAssetQuantity, 0)
-        // chalie also shorts
-        baseAssetQuantity = _1e18.mul(-10)
-        await addMargin(charlie, _1e6.mul(1010))
-        await clearingHouse.connect(charlie).openPosition2(0, baseAssetQuantity, 0)
-
-        // bob longs
-        await addMargin(bob, _1e6.mul(80000))
-        let tx = await clearingHouse.connect(bob).openPosition2(0, _1e18.mul(100), ethers.constants.MaxUint256)
-
-        // alice and charlie are in liquidation zone
-        expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
-        expect(await clearingHouse.isAboveMaintenanceMargin(charlie.address)).to.be.false
-        expect((await clearingHouse.queryFilter('PositionLiquidated')).length).to.eq(0)
-
-        const markPriceOld = await amm.lastPrice()
-        // set auto block mining to false
-        await network.provider.send("evm_setAutomine", [false]);
-        // liquidate alice and charlie
-        await clearingHouse.connect(liquidator1).liquidate2(alice)
-        await clearingHouse.connect(liquidator1).liquidate2(charlie.address)
-
-        // mine next block
-        await network.provider.send("evm_mine");
-        await network.provider.send("evm_setAutomine", [true]);
-
-        const markPriceNew = await amm.lastPrice()
-        // markPrice moved greater than 1%
-        expect(markPriceNew).to.gt(markPriceOld.mul(101).div(100))
-        expect((await clearingHouse.queryFilter('PositionLiquidated')).length).to.eq(2)
-    })
-})
-
 describe('Liquidation Price Safeguard', async function() {
     before(async function() {
         signers = await ethers.getSigners()
@@ -678,69 +543,36 @@ describe('Liquidation Price Safeguard', async function() {
 
         // bob increases the price
         const base = _1e18.mul(15)
-        const price = _1e6.mul(1130)
+        price = _1e6.mul(1130)
         await addMargin(bob, base.mul(price).div(_1e18))
         await clearingHouse.connect(bob).openPosition2(0, base, base.mul(price).div(_1e18))
 
         // since both the oracle price and mark price determine whether someone is above the maintenance margin, just increasing the mark price should not be enough
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.true
 
-        await oracle.setUnderlyingPrice(weth.address, price.mul(989).div(1000)) // 3rd test needs mark > 1% of index
+        await oracle.setUnderlyingPrice(weth.address, price.mul(989).div(1000)) // 1st test needs mark > 1% of index
         // alice is in liquidation zone
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
     })
 
-    it('cannot liquidate if trade in same block before it', async function() {
-        // set auto block mining to false
-        await network.provider.send("evm_setAutomine", [false]);
-        // liquidator1 long
-        await clearingHouse.connect(liquidator1).openPosition2(0, _1e18.mul(1), ethers.constants.MaxUint256)
-        // liquidator1 liquidates alice
-        await clearingHouse.connect(liquidator1).liquidate2(alice)
-
-        // mine next block
-        await network.provider.send("evm_mine");
-        await network.provider.send("evm_setAutomine", [true]);
-
-        expect((await amm.positions(alice)).size).to.eq(baseAssetQuantity)
-        expect((await clearingHouse.queryFilter('PositionLiquidated')).length).to.eq(0)
-    })
-
-    it('cannot liquidate if liquidation in same block before it', async function() {
-        // set auto block mining to false
-        await network.provider.send("evm_setAutomine", [false]);
-        // liquidator1 liquidates alice
-        await clearingHouse.connect(liquidator1).liquidate2(alice)
-        await clearingHouse.connect(liquidator1).liquidate2(alice)
-
-        // mine next block
-        await network.provider.send("evm_mine");
-        await network.provider.send("evm_setAutomine", [true]);
-
-        expect((await amm.positions(alice)).size).to.eq(baseAssetQuantity.mul(75).div(100).add(1))
-        expect((await clearingHouse.queryFilter('PositionLiquidated')).length).to.eq(1)
-    })
-
-    it('cannot liquidate if markPrice is >1% of indexPrice', async function() {
+    it('cannot liquidate if liquidationPrice > 1.01 * indexPrice', async function() {
         await amm.setLiquidationParams(25 * 1e4, 1e4)
-        const markPrice = await amm.lastPrice()
         const indexPrice = await oracle.getUnderlyingPrice(weth.address)
 
         expect(await amm.maxLiquidationPriceSpread()).to.eq(_1e6.div(100))
-        expect((markPrice.sub(indexPrice)).mul(1e8).div(indexPrice)).to.gt(_1e6)
-        await expect(clearingHouse.connect(liquidator1).liquidate2(alice)).to.be.revertedWith(
-            'AMM.spread_limit_exceeded_between_markPrice_and_indexPrice'
+        expect((price.sub(indexPrice)).mul(1e8).div(indexPrice)).to.gt(_1e6)
+        await expect(clearingHouse.connect(liquidator1).liquidate3(alice, price)).to.be.revertedWith(
+            'AMM.spread_limit_exceeded_between_liquidationPrice_and_indexPrice'
         )
     })
 
-    it('cannot liquidate if markPrice is <1% of indexPrice', async function() {
-        const markPrice = await amm.lastPrice()
+    it('cannot liquidate if liquidationPrice < 0.99 * indexPrice', async function() {
         await oracle.setUnderlyingPrice(weth.address, _1e6.mul(1150))
         const indexPrice = await oracle.getUnderlyingPrice(weth.address)
 
-        expect((markPrice.sub(indexPrice)).mul(1e8).div(indexPrice)).to.lt(_1e6.mul(-1))
-        await expect(clearingHouse.connect(liquidator1).liquidate2(alice)).to.be.revertedWith(
-            'AMM.spread_limit_exceeded_between_markPrice_and_indexPrice'
+        expect((price.sub(indexPrice)).mul(1e8).div(indexPrice)).to.lt(_1e6.mul(-1))
+        await expect(clearingHouse.connect(liquidator1).liquidate3(alice, price)).to.be.revertedWith(
+            'AMM.spread_limit_exceeded_between_liquidationPrice_and_indexPrice'
         )
     })
 
@@ -757,7 +589,7 @@ describe('Liquidation Price Safeguard', async function() {
         await network.provider.send("evm_mine");
         await network.provider.send("evm_setAutomine", [true]);
 
-        expect((await amm.positions(alice)).size).to.eq(baseAssetQuantity.div(2).add(2))
-        expect((await clearingHouse.queryFilter('PositionLiquidated')).length).to.eq(2)
+        expect((await amm.positions(alice)).size).to.eq(baseAssetQuantity.mul(3).div(4).add(1))
+        expect((await clearingHouse.queryFilter('PositionLiquidated')).length).to.eq(1)
     })
 })

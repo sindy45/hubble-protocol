@@ -154,8 +154,7 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         emit OrderCancelled(trader, orderHash, block.timestamp);
     }
 
-    // @todo onlyValidator modifier
-    function settleFunding() external whenNotPaused {
+    function settleFunding() external whenNotPaused onlyValidator {
         clearingHouse.settleFunding();
     }
 

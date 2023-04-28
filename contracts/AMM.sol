@@ -150,12 +150,8 @@ contract AMM is IAMM, Governable {
         returns (int realizedPnl, uint quoteAsset, int size, uint openNotional)
     {
         // liquidation price safeguard
-        // @todo validate liquidation price and markPrice are within X% of each other
-        // don't allow trade/liquidations before liquidation
-        require(reserveSnapshots[reserveSnapshots.length - 1].blockNumber != block.number, "AMM.liquidation_not_allowed_after_trade");
         int256 oraclePrice = oracle.getUnderlyingPrice(underlyingAsset);
-        int256 markPrice = lastPrice().toInt256();
-        require(abs(oraclePrice - markPrice) * 1e6 / oraclePrice < maxLiquidationPriceSpread.toInt256(), "AMM.spread_limit_exceeded_between_markPrice_and_indexPrice");
+        require(abs(oraclePrice - price.toInt256()) * 1e6 / oraclePrice < maxLiquidationPriceSpread.toInt256(), "AMM.spread_limit_exceeded_between_liquidationPrice_and_indexPrice");
 
         // don't need an ammState check because there should be no active positions
         Position memory position = positions[trader];
@@ -302,16 +298,13 @@ contract AMM is IAMM, Governable {
         view
         returns(uint256 notionalPosition, int256 unrealizedPnl, int256 size, uint256 openNotional)
     {
-        Position memory position = positions[trader];
-        size = position.size;
+        size = positions[trader].size;
         notionalPosition = uint(abs(size) * price.toInt256() / BASE_PRECISION);
-        // @todo redundant size and openNotional
-        openNotional = position.openNotional;
-        // @todo can convert open notional to int, so that unrealizedPnl = size * lastPrice - openNotional
+        openNotional = positions[trader].openNotional;
         if (size > 0) {
-            unrealizedPnl = notionalPosition.toInt256() - position.openNotional.toInt256();
+            unrealizedPnl = notionalPosition.toInt256() - openNotional.toInt256();
         } else if (size < 0) {
-            unrealizedPnl = position.openNotional.toInt256() - notionalPosition.toInt256();
+            unrealizedPnl = openNotional.toInt256() - notionalPosition.toInt256();
         }
     }
 
@@ -413,10 +406,7 @@ contract AMM is IAMM, Governable {
     */
     function _long(int256 baseAssetQuantity, uint price, bool isLiquidation) internal {
         require(baseAssetQuantity > 0, "AMM._long: baseAssetQuantity is <= 0");
-
         _addReserveSnapshot(price);
-        // @todo think about if this is required, commenting for testnet
-        // _checkMarkPriceSingleBlockSpread(price);
 
         // longs not allowed if market price > (1 + maxOracleSpreadRatio)*index price
         uint256 oraclePrice = uint(oracle.getUnderlyingPrice(underlyingAsset));
@@ -434,10 +424,7 @@ contract AMM is IAMM, Governable {
     */
     function _short(int256 baseAssetQuantity, uint price, bool isLiquidation) internal {
         require(baseAssetQuantity < 0, "AMM._short: baseAssetQuantity is >= 0");
-
         _addReserveSnapshot(price);
-        // @todo think about if this is required, commenting for testnet
-        // _checkMarkPriceSingleBlockSpread(price);
 
         // if maxOracleSpreadRatio >= 1e6 it means that 100% variation is allowed which means shorts at $0 will also pass.
         // so we don't need to check for that case
@@ -448,14 +435,6 @@ contract AMM is IAMM, Governable {
                 revert("AMM_price_decrease_not_allowed");
             }
         }
-    }
-
-    function _checkMarkPriceSingleBlockSpread(uint price) internal view {
-        // markPrice should not change more than X% in a single block
-        uint256 lastBlockTradePrice = _getLastBlockTradePrice();
-        uint upperBound = lastBlockTradePrice * (1e6 + maxPriceSpreadPerBlock) / 1e6;
-        uint lowerBound = lastBlockTradePrice * (1e6 - maxPriceSpreadPerBlock) / 1e6;
-        require(price < upperBound && price > lowerBound, "AMM.single_block_price_slippage");
     }
 
     function _getLastBlockTradePrice() internal view returns(uint256 lastBlockTradePrice) {

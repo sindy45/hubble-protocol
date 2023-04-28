@@ -40,6 +40,10 @@ contract TestClearingHouse is ClearingHouse {
 
     function liquidate2(address trader) external {
         uint price = amms[0].lastPrice();
+        liquidate3(trader, price);
+    }
+
+    function liquidate3(address trader, uint price) public {
         (int size,,, uint liquidationThreshold) = amms[0].positions(trader);
         liquidationThreshold = Math.min(liquidationThreshold, abs(size).toUint256());
 

@@ -427,32 +427,6 @@ describe('Oracle Price Spread Check', async function() {
     })
 })
 
-describe('Mark price spread check in single block', async function() {
-    before(async function() {
-        signers = await ethers.getSigners()
-        ;([ alice ] = signers.map(s => s.address))
-
-        contracts = await setupContracts()
-        ;({ marginAccount, oracle, clearingHouse, amm, vusd, weth } = contracts)
-        // addMargin
-        await addMargin(signers[0], _1e12)
-        await clearingHouse.openPosition2(0, _1e18.mul(-5), 0)
-
-        // set maxPriceSpreadPerBlock = 1%
-        await amm.setPriceSpreadParams(5 * 1e4, 1e4)
-    })
-
-    it.skip('does not allow trade if mark price move more than 1%', async function() {
-        await expect(clearingHouse.openPosition2(0, _1e18.mul(20), _1e6.mul(20200))).to.be.revertedWith('AMM.single_block_price_slippage') // price 1010
-        await expect(clearingHouse.openPosition2(0, _1e18.mul(-20), _1e6.mul(19800))).to.be.revertedWith('AMM.single_block_price_slippage') // price 990
-    })
-
-    it('allow trade if mark price movement is within 1%', async function() {
-        await clearingHouse.openPosition2(0, _1e18.mul(20), _1e6.mul(20199))
-        await clearingHouse.openPosition2(0, _1e18.mul(-20), _1e6.mul(20000))
-    })
-})
-
 async function increaseEvmTime(timeInSeconds) {
     await network.provider.send('evm_setNextBlockTimestamp', [timeInSeconds]);
 }

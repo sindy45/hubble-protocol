@@ -275,8 +275,6 @@ contract OrderBookTests is Utils {
         // liquidate bob
         address peter;
         {
-            // @todo allow multiple liquidations in a single block
-            vm.roll(block.number + 1); // to avoid AMM.liquidation_not_allowed_after_trade
             (peter, temp[3] /** peterKey */) = makeAddrAndKey("peter");
             addMargin(peter, stdMath.abs(size) * price / 1e18, 0, address(0));
             (order, signature, orderHash) = placeOrder(0, temp[3], -size, price, false);

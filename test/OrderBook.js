@@ -243,7 +243,7 @@ describe('Order Book - Error Handling', function () {
         order2Hash = await orderBook.getOrderHash(longOrder)
         signature2 = await bob._signTypedData(domain, orderType, longOrder)
         await orderBook.connect(bob).placeOrder(longOrder, signature2)
-        // reduce oracel price so that margin falls below minimum margin
+        // reduce oracle price so that margin falls below minimum margin
         await oracle.setUnderlyingPrice(wavax.address, _1e6.mul(5))
 
         const tx = await orderBook.executeMatchedOrders(

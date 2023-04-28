@@ -70,7 +70,7 @@ contract HubbleViewer is IHubbleViewer {
     }
 
     /**
-    * @notice Get information about all user positions
+    * @notice Get open position information for each AMM
     * @param trader Trader for which information is to be obtained
     * @return positions in order of amms
     *   positions[i].size - BaseAssetQuantity amount longed (+ve) or shorted (-ve)
@@ -154,16 +154,27 @@ contract HubbleViewer is IHubbleViewer {
         int256 unrealizedPnl,
         int256 marginFractionLiquidation
     ) {
-        int256 margin;
-        (margin, totalCollateral) = marginAccount.weightedAndSpotCollateral(trader);
         marginFraction = clearingHouse.calcMarginFraction(trader, true, IClearingHouse.Mode.Min_Allowable_Margin);
         marginFractionLiquidation = clearingHouse.calcMarginFraction(trader, true, IClearingHouse.Mode.Maintenance_Margin);
+        (notionalPosition, unrealizedPnl) = getMarkPriceBasedPnl(trader);
 
-        (notionalPosition, unrealizedPnl) = clearingHouse.getTotalNotionalPositionAndUnrealizedPnl(trader, margin, IClearingHouse.Mode.Min_Allowable_Margin);
-        int256 minAllowableMargin = clearingHouse.minAllowableMargin();
         int256 pendingFunding = clearingHouse.getTotalFunding(trader);
+        // marginAccount.getAvailableMargin(trader) assumes that there is no pending funding
+        freeMargin = marginAccount.getAvailableMargin(trader) - pendingFunding;
+        (,totalCollateral) = marginAccount.weightedAndSpotCollateral(trader);
         totalCollateral -= pendingFunding;
-        freeMargin = margin + unrealizedPnl - pendingFunding - notionalPosition.toInt256() * minAllowableMargin / PRECISION_INT;
+    }
+
+    function getMarkPriceBasedPnl(address trader) public view returns(uint notionalPosition, int unrealizedPnl) {
+        uint numAmms = clearingHouse.getAmmsLength();
+        uint256 _notionalPosition;
+        int256 _unrealizedPnl;
+        for (uint i; i < numAmms; i++) {
+            IAMM amm = clearingHouse.amms(i);
+            (_notionalPosition, _unrealizedPnl,,) = amm.getNotionalPositionAndUnrealizedPnl(trader);
+            notionalPosition += _notionalPosition;
+            unrealizedPnl += _unrealizedPnl;
+        }
     }
 
     /**
