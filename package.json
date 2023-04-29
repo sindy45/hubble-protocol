@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "compile": "npx hardhat compile && tsc",
+    "compile": "npx hardhat compile",
     "test": "npx hardhat test && forge test -vvv",
     "foundry-test": "forge test -vvv",
     "hardhat-test": "npx hardhat test",

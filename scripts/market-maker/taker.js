@@ -2,21 +2,19 @@ const ethers = require('ethers')
 
 const Exchange = require('./exchange')
 
-// const provider = new ethers.providers.JsonRpcProvider(process.env.RPC_URL)
-const provider = new ethers.providers.JsonRpcProvider('http://54.88.145.1:9650/ext/bc/2ErDhAugYgUSwpeejAsCBcHY4MzLYZ5Y13nDuNRtrSWjQN5SDM/rpc')
+const provider = new ethers.providers.JsonRpcProvider(process.env.RPC_URL)
 const signer = new ethers.Wallet(process.env.PRIVATE_KEY_TAKER, provider);
 const exchange = new Exchange(provider)
 const dryRun = false
 
 const market = 0;
 const updateFrequency = 1e3;
-const maxOrderSize = 19
+const maxOrderSize = 1.9
 
 const marketTaker = async () => {
     try {
         let { bids, asks } = await exchange.fetchOrderBook(market);
-        // filter all asks that are > 20 in price
-        asks = asks.filter(ask => ask.price < 20)
+        asks = asks.filter(ask => ask.price < 2400)
 
         if (asks.length) {
             const askIndex = Math.floor(Math.random() * asks.length/2);
@@ -97,6 +95,6 @@ function randomFloat(min, max) {
 }
 
 // Start the taker script
-// marketTaker();
+marketTaker();
 // showNonce();
-cancelAllOrders()
+// cancelAllOrders()

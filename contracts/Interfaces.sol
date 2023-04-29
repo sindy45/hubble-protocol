@@ -139,13 +139,12 @@ interface IAMM {
     function getNotionalPositionAndUnrealizedPnl(address trader)
         external
         view
-        returns(uint256 notionalPosition, int256 unrealizedPnl, int256 size, uint256 openNotional);
+        returns(uint256 notionalPosition, int256 unrealizedPnl);
     function updatePosition(address trader) external returns(int256 fundingPayment, int256 cumulativePremiumFraction);
     function liquidatePosition(address trader, uint price, int fillAmount) external returns (int realizedPnl, uint quoteAsset, int size, uint openNotional);
     function settleFunding() external returns (int256 premiumFraction, int256 underlyingPrice, int256 /* cumulativePremiumFraction */, uint256 /* nextFundingTime */);
     function underlyingAsset() external view returns (address);
     function positions(address trader) external view returns (int256,uint256,int256,uint256);
-    function getNotionalPosition(int256 baseAssetQuantity) external view returns(uint256 quoteAssetQuantity);
     function getPendingFundingPayment(address trader)
         external
         view

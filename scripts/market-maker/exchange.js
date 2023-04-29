@@ -18,6 +18,7 @@ const orderType = {
         { name: "baseAssetQuantity", type: "int256" },
         { name: "price", type: "uint256" },
         { name: "salt", type: "uint256" },
+        { name: "reduceOnly", type: "bool" },
     ]
 }
 
@@ -49,7 +50,6 @@ class Exchange {
 
     async fetchTicker() {
         const { bids, asks } = await this.fetchOrderBook(0)
-        console.log({ asks })
         return { bid: bids.length ? bids[0].price : 0, ask: asks.length ? asks[0].price : 20 }
     }
 
@@ -57,7 +57,7 @@ class Exchange {
         const order = {
             ammIndex: market,
             trader: signer.address,
-            baseAssetQuantity: ethers.utils.parseEther(baseAssetQuantity.toString()),
+            baseAssetQuantity: ethers.utils.parseEther(baseAssetQuantity.toFixed(18).toString()),
             price: ethers.utils.parseUnits(price.toFixed(6).toString(), 6),
             salt: BigNumber.from(Date.now())
         }

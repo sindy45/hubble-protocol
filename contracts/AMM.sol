@@ -12,9 +12,11 @@ contract AMM is IAMM, Governable {
     using SafeCast for uint256;
     using SafeCast for int256;
 
+    int256 constant BASE_PRECISION = 1e18;
+    uint256 constant BASE_PRECISION_UINT = 1e18;
+
     uint256 public constant spotPriceTwapInterval = 1 hours;
     uint256 public constant fundingPeriod = 1 hours;
-    int256 constant BASE_PRECISION = 1e18;
 
     address public immutable clearingHouse;
 
@@ -71,8 +73,6 @@ contract AMM is IAMM, Governable {
 
     // maximum hourly funding rate allowed in %
     int256 public maxFundingRate; // in hourly %,  scaled to 1e6
-    // maximum allowed % difference in mark price in a single block
-    uint256 public maxPriceSpreadPerBlock; // scaled 6 decimals
 
     uint256[50] private __gap;
 
@@ -106,7 +106,6 @@ contract AMM is IAMM, Governable {
         maxOracleSpreadRatio = 20 * 1e4; // 20%
         maxLiquidationRatio = 25 * 1e4; // 25%
         maxLiquidationPriceSpread = 1 * 1e4; // 1%
-        maxPriceSpreadPerBlock = 1 * 1e4; // 1%
         maxFundingRate = 50; // 0.005%
     }
 
@@ -286,26 +285,11 @@ contract AMM is IAMM, Governable {
     */
    function getNotionalPositionAndUnrealizedPnl(address trader)
         override
-        public
+        external
         view
-        returns(uint256 notionalPosition, int256 unrealizedPnl, int256 size, uint256 openNotional)
+        returns(uint256 notionalPosition, int256 unrealizedPnl)
     {
-        return _getNotionalPositionAndUnrealizedPnl(trader, lastPrice());
-    }
-
-    function _getNotionalPositionAndUnrealizedPnl(address trader, uint256 price)
-        internal
-        view
-        returns(uint256 notionalPosition, int256 unrealizedPnl, int256 size, uint256 openNotional)
-    {
-        size = positions[trader].size;
-        notionalPosition = uint(abs(size) * price.toInt256() / BASE_PRECISION);
-        openNotional = positions[trader].openNotional;
-        if (size > 0) {
-            unrealizedPnl = notionalPosition.toInt256() - openNotional.toInt256();
-        } else if (size < 0) {
-            unrealizedPnl = openNotional.toInt256() - notionalPosition.toInt256();
-        }
+        (notionalPosition, unrealizedPnl,) = _getPositionMetadata(lastPrice(), positions[trader].openNotional, positions[trader].size, 0 /* margin (unused) */);
     }
 
     /**
@@ -314,46 +298,51 @@ contract AMM is IAMM, Governable {
     * if mode = Min_Allowable_Margin, return values which have minimum margin fraction. We use this to determine whether user can take any more leverage
     */
     function getOptimalPnl(address trader, int256 margin, IClearingHouse.Mode mode) override external view returns (uint notionalPosition, int256 unrealizedPnl) {
-        int256 size;
-        uint openNotional;
-        (notionalPosition, unrealizedPnl, size, openNotional) = getNotionalPositionAndUnrealizedPnl(trader);
-
-        if (notionalPosition == 0) {
-            return (0, 0);
+        Position memory position = positions[trader];
+        if (position.size == 0) {
+            return (0,0);
         }
 
-        int256 marginFraction = (margin + unrealizedPnl) * 1e6 / notionalPosition.toInt256();
-        (int oracleBasedNotional, int256 oracleBasedUnrealizedPnl, int256 oracleBasedMF) = _getOracleBasedMarginFraction(
-            margin,
-            openNotional,
-            size
+        // based on last price
+        int256 lastPriceBasedMF;
+        (notionalPosition, unrealizedPnl, lastPriceBasedMF) = _getPositionMetadata(
+            lastPrice(),
+            position.openNotional,
+            position.size,
+            margin
         );
 
-        if (mode == IClearingHouse.Mode.Maintenance_Margin) {
-            if (oracleBasedMF > marginFraction) {
-                notionalPosition = oracleBasedNotional.toUint256();
-                unrealizedPnl = oracleBasedUnrealizedPnl;
-            }
-        } else if (oracleBasedMF < marginFraction) { // IClearingHouse.Mode.Min_Allowable_Margin
-            notionalPosition = oracleBasedNotional.toUint256();
-            unrealizedPnl = oracleBasedUnrealizedPnl;
+        // based on oracle price
+        (uint oracleBasedNotional, int256 oracleBasedUnrealizedPnl, int256 oracleBasedMF) = _getPositionMetadata(
+            oracle.getUnderlyingPrice(underlyingAsset).toUint256(),
+            position.openNotional,
+            position.size,
+            margin
+        );
+
+        // while evaluating margin for liquidation, we give the best deal to the user
+        if ((mode == IClearingHouse.Mode.Maintenance_Margin && oracleBasedMF > lastPriceBasedMF)
+        // when evaluating margin for leverage, we give the worst deal to the user
+            || (mode == IClearingHouse.Mode.Min_Allowable_Margin && oracleBasedMF < lastPriceBasedMF)) {
+            return (oracleBasedNotional, oracleBasedUnrealizedPnl);
         }
     }
 
-    function _getOracleBasedMarginFraction(int256 margin, uint256 openNotional, int256 size)
-        internal
-        view
-        returns (int oracleBasedNotional, int256 oracleBasedUnrealizedPnl, int256 marginFraction)
+    function _getPositionMetadata(uint256 price, uint256 openNotional, int256 size, int256 margin)
+        public
+        pure
+        returns (uint256 notionalPos, int256 uPnl, int256 marginFraction)
     {
-        int256 oraclePrice = oracle.getUnderlyingPrice(underlyingAsset);
-        oracleBasedNotional = oraclePrice * abs(size) / BASE_PRECISION;
-        if (size > 0) {
-            oracleBasedUnrealizedPnl = oracleBasedNotional - openNotional.toInt256();
-        } else if (size < 0) {
-            oracleBasedUnrealizedPnl = openNotional.toInt256() - oracleBasedNotional;
+        notionalPos = price * abs(size).toUint256() / BASE_PRECISION_UINT;
+        if (notionalPos == 0) {
+            return (0, 0, 0);
         }
-
-        marginFraction = (margin + oracleBasedUnrealizedPnl) * 1e6 / oracleBasedNotional;
+        if (size > 0) {
+            uPnl = notionalPos.toInt256() - openNotional.toInt256();
+        } else if (size < 0) {
+            uPnl = openNotional.toInt256() - notionalPos.toInt256();
+        }
+        marginFraction = (margin + uPnl) * 1e6 / notionalPos.toInt256();
     }
 
     function getPendingFundingPayment(address trader)
@@ -374,10 +363,6 @@ contract AMM is IAMM, Governable {
         takerFundingPayment = (latestCumulativePremiumFraction - taker.lastPremiumFraction)
             * taker.size
             / BASE_PRECISION;
-    }
-
-    function getNotionalPosition(int256 baseAssetQuantity) override public view returns(uint256 quoteAssetQuantity) {
-        return uint(lastPrice().toInt256() * abs(baseAssetQuantity) / BASE_PRECISION);
     }
 
     function lastPrice() public view returns(uint256) {
@@ -481,9 +466,9 @@ contract AMM is IAMM, Governable {
         internal
         returns (int realizedPnl)
     {
-        (, int256 unrealizedPnl,,) = _getNotionalPositionAndUnrealizedPnl(trader, price);
-
         Position storage position = positions[trader]; // storage because there are updates at the end
+        (,int256 unrealizedPnl,) = _getPositionMetadata(price, positions[trader].openNotional, positions[trader].size, 0 /* margin (unused) */);
+
         bool isLongPosition = position.size > 0 ? true : false;
 
         if (isLongPosition) {
@@ -602,12 +587,11 @@ contract AMM is IAMM, Governable {
         fundingBufferPeriod = _fundingBufferPeriod;
     }
 
-    function setPriceSpreadParams(uint _maxOracleSpreadRatio, uint _maxPriceSpreadPerBlock) external onlyGovernance {
+    function setPriceSpreadParams(uint _maxOracleSpreadRatio, uint /* dummy for backwards compatibility */) external onlyGovernance {
         maxOracleSpreadRatio = _maxOracleSpreadRatio;
-        maxPriceSpreadPerBlock = _maxPriceSpreadPerBlock;
     }
 
-    function setLiquidationParams (uint _maxLiquidationRatio, uint _maxLiquidationPriceSpread) external onlyGovernance {
+    function setLiquidationParams(uint _maxLiquidationRatio, uint _maxLiquidationPriceSpread) external onlyGovernance {
         maxLiquidationRatio = _maxLiquidationRatio;
         maxLiquidationPriceSpread = _maxLiquidationPriceSpread;
     }

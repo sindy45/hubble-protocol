@@ -389,12 +389,13 @@ function parseRawEvent2(events, emitter, name) {
 
 async function assertions(contracts, trader, vals, shouldLog) {
     const { amm, clearingHouse, marginAccount } = contracts
-    const [ position, { notionalPosition, unrealizedPnl, size, openNotional }, marginFraction, margin ] = await Promise.all([
+    const [ position, { notionalPosition, unrealizedPnl }, marginFraction, margin ] = await Promise.all([
         amm.positions(trader),
         amm.getNotionalPositionAndUnrealizedPnl(trader),
         clearingHouse.calcMarginFraction(trader, true, 1),
         marginAccount.getNormalizedMargin(trader)
     ])
+    const { size, openNotional } = position
 
     if (shouldLog) {
         console.log(position, notionalPosition, unrealizedPnl, marginFraction, size, openNotional)

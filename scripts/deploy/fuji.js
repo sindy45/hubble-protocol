@@ -1,11 +1,10 @@
 const utils = require('../../test/utils')
-const { addVUSDWithReserve, addMargin } = require('./deployUtils')
+const { addMargin } = require('./deployUtils')
 
 const {
     constants: { _1e6 },
     setupContracts,
     generateConfig,
-    getTxOptions,
     sleep,
     txOptions
 } = utils
@@ -20,7 +19,7 @@ const gasLimit = 5e6 // subnet genesis file only allows for this much
 async function main() {
     signers = await ethers.getSigners()
     governance = signers[0].address
-    ;([, alice, bob] = signers)
+    // ;([, alice, bob] = signers)
 
     // 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 0x70997970C51812dc3A010C7d01b50e0d17dc79C8 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC
     // console.log(signers[0].address, signers[1].address, signers[2].address)
@@ -38,20 +37,15 @@ async function main() {
         mockOrderBook: false,
         testClearingHouse: false,
         amm: {
-            initialRate: 10
+            initialRate: 2000
         }
     })
 
-    await addMargin(alice, _1e6.mul(40000), gasLimit)
-    await addMargin(bob, _1e6.mul(40000), gasLimit)
+    // await addMargin(alice, _1e6.mul(40000), gasLimit)
+    // await addMargin(bob, _1e6.mul(40000), gasLimit)
 
     // whitelist evm address for order execution transactions
-    await orderBook.setValidatorStatus(ethers.utils.getAddress('0x4Cf2eD3665F6bFA95cE6A11CFDb7A2EF5FC1C7E4'), true)
-    // set spread limit to higher value
-    const maxOracleSpreadRatio = 1e6 // 100%
-    const maxPriceSpreadPerBlock = 1 * 1e4 // 1% - not used for testnet as of now
-    await amm.setPriceSpreadParams(maxOracleSpreadRatio, maxPriceSpreadPerBlock)
-
+    await orderBook.setValidatorStatus(ethers.utils.getAddress('0x7baf9e291a0E676a3FC92b684c7198123e9e23e8'), true)
 
     await sleep(5)
     console.log(JSON.stringify(await generateConfig(leaderboard.address, marginAccountHelper.address), null, 0))

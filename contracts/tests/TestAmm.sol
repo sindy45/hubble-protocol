@@ -14,9 +14,8 @@ contract TestAmm is AMM {
     function getOracleBasedMarginFraction(address trader, int256 margin)
         external
         view
-        returns (int oracleBasedNotional, int256 oracleBasedUnrealizedPnl, int256 marginFraction)
+        returns (uint oracleBasedNotional, int256 oracleBasedUnrealizedPnl, int256 marginFraction)
     {
-        Position memory _taker = positions[trader];
-        return _getOracleBasedMarginFraction(margin, _taker.openNotional, _taker.size);
+        return _getPositionMetadata(getUnderlyingPrice(), positions[trader].openNotional, positions[trader].size, margin);
     }
 }

@@ -3,25 +3,23 @@ const ethers = require('ethers')
 const Exchange = require('./exchange')
 
 const market = 0;
-const spread = 0.1;
-const maxOrderSize = 6.9;
+const spread = 10;
+const maxOrderSize = 1.2;
 const updateFrequency = 2e3;
-const numOrders = 3;
+const numOrders = 1;
 
-// const provider = new ethers.providers.JsonRpcProvider('https://54.88.145.1:8080/ext/bc/2ErDhAugYgUSwpeejAsCBcHY4MzLYZ5Y13nDuNRtrSWjQN5SDM/rpc')
-const provider = new ethers.providers.JsonRpcProvider('http://54.88.145.1:9650/ext/bc/2ErDhAugYgUSwpeejAsCBcHY4MzLYZ5Y13nDuNRtrSWjQN5SDM/rpc')
-// const provider = new ethers.providers.JsonRpcProvider(process.env.RPC_URL)
+const provider = new ethers.providers.JsonRpcProvider(process.env.RPC_URL)
 const signer = new ethers.Wallet(process.env.PRIVATE_KEY_MAKER, provider);
 const exchange = new Exchange(provider)
-const dryRun = true
+const dryRun = false
 
 const submitOrders = async (bid, ask) => {
     console.log(`Bid: ${bid}, Ask: ${ask}`)
     const midPrice = (bid + ask) / 2;
 
     for (let i = 0; i < numOrders; i++) {
-        const randomBuyPrice = randomFloat(bid, midPrice - 0.01)
-        const randomSellPrice = randomFloat(midPrice + 0.01, ask)
+        const randomBuyPrice = randomFloat(bid, midPrice + spread)
+        const randomSellPrice = randomFloat(midPrice + spread, ask)
 
         let _orderSize = randomSize(maxOrderSize)
         console.log(`Placing a long for ${_orderSize} ETH at $${randomBuyPrice}`)
@@ -39,9 +37,9 @@ const marketMaker = async () => {
     // console.log(`Running on network: ${network.name}`);
 
     try {
-        const ticker = await exchange.fetchTicker(market);
-        // ticker = { bid: 20, ask: 10 }
-        // await submitOrders(ticker.bid, ticker.ask);
+        // const ticker = await exchange.fetchTicker(market);
+        ticker = { bid: 1900, ask: 2100 }
+        await submitOrders(ticker.bid, ticker.ask);
         console.log(`Submitted ${numOrders} buy and sell orders`);
     } catch (error) {
         console.error('Error in marketMaker function:', error);

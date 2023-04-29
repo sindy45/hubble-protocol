@@ -88,7 +88,7 @@ contract HubbleViewer is IHubbleViewer {
                 positions[i].unrealizedPnl = 0;
                 positions[i].avgOpen = 0;
             } else {
-                (,positions[i].unrealizedPnl,,) = amm.getNotionalPositionAndUnrealizedPnl(trader);
+                (,positions[i].unrealizedPnl) = amm.getNotionalPositionAndUnrealizedPnl(trader);
                 positions[i].avgOpen = positions[i].openNotional * 1e18 / _abs(positions[i].size).toUint256();
             }
         }
@@ -171,7 +171,7 @@ contract HubbleViewer is IHubbleViewer {
         int256 _unrealizedPnl;
         for (uint i; i < numAmms; i++) {
             IAMM amm = clearingHouse.amms(i);
-            (_notionalPosition, _unrealizedPnl,,) = amm.getNotionalPositionAndUnrealizedPnl(trader);
+            (_notionalPosition, _unrealizedPnl) = amm.getNotionalPositionAndUnrealizedPnl(trader);
             notionalPosition += _notionalPosition;
             unrealizedPnl += _unrealizedPnl;
         }

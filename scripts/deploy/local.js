@@ -38,7 +38,7 @@ async function main() {
         mockOrderBook: false,
         testClearingHouse: false,
         amm: {
-            initialRate: 10
+            initialRate: 2000
         }
     })
 
@@ -48,10 +48,8 @@ async function main() {
     // whitelist evm address for order execution transactions
     await orderBook.setValidatorStatus(ethers.utils.getAddress('0x4Cf2eD3665F6bFA95cE6A11CFDb7A2EF5FC1C7E4'), true)
     // set spread limit to higher value
-    const maxOracleSpreadRatio = 100 * 1e4 // 100%
-    const maxPriceSpreadPerBlock = 1 * 1e4 // 1% - not used for testnet as of now
-    await amm.setPriceSpreadParams(maxOracleSpreadRatio, maxPriceSpreadPerBlock)
-
+    const maxOracleSpreadRatio = 20 * 1e4 // 20%
+    await amm.setPriceSpreadParams(maxOracleSpreadRatio, 0)
 
     await sleep(5)
     console.log(JSON.stringify(await generateConfig(leaderboard.address, marginAccountHelper.address), null, 0))
