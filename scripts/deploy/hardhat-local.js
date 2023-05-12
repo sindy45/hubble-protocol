@@ -38,7 +38,8 @@ async function main() {
         mockOrderBook: false,
         testClearingHouse: false,
         amm: {
-            initialRate: 10
+            initialRate: 10,
+            minSize: 1e17
         }
     })
 

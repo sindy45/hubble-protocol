@@ -19,26 +19,26 @@ contract MarginAccountTests is Utils {
     }
 
     function testAvailableMargin(uint64 price, uint120 size_) public {
-        vm.assume(price != 0);
+        vm.assume(price > 10);
         oracle.setUnderlyingPrice(address(wavax), int(uint(price)));
-        int size = int(uint(size_) + amm.minSizeRequirement()); // to avoid min size error
+        int size = int(uint(size_)) / MIN_SIZE * MIN_SIZE +  10 * MIN_SIZE; // to avoid min size error
 
         // alice longs, bob shorts
         // deposit some weth margin, not necessarily needed for this test
         int quote = size * int(uint(price)) / 1e18;
-        int margin =  quote * 1e18 / defaultWethPrice / 10; // multiply by 1e18 because weth is in 18 decimals
+        int margin =  quote * 1e18 / defaultWethPrice / 5; // multiply by 1e18 because weth is in 18 decimals
         addMargin(alice, uint(margin), 1, address(weth));
         addMargin(bob, uint(margin), 1, address(weth));
         // next step deposits husd margin at 2x leverage
         placeAndExecuteOrder(0, aliceKey, bobKey, size, price, false, true, size, false);
-        int utilizedMargin  = quote / 5; // max leverage = 5x
+        int utilizedMargin  = quote / MAX_LEVERAGE; // max leverage = 5x
         assertAvailableMargin(alice, 0, 0, utilizedMargin);
         assertAvailableMargin(bob, 0, 0, utilizedMargin);
 
         // place another order to make reservedMargin non-zero
-        placeOrder(0, aliceKey, size + 1, price, false);
-        placeOrder(0, bobKey, size + 1, price, false);
-        uint reservedMargin = clearingHouse.getRequiredMargin(size + 1, price);
+        placeOrder(0, aliceKey, size + MIN_SIZE, price, false);
+        placeOrder(0, bobKey, size + MIN_SIZE, price, false);
+        uint reservedMargin = clearingHouse.getRequiredMargin(size + MIN_SIZE, price);
         assertAvailableMargin(alice, 0, int(reservedMargin), utilizedMargin);
         assertAvailableMargin(bob, 0, int(reservedMargin), utilizedMargin);
 
@@ -61,7 +61,7 @@ contract MarginAccountTests is Utils {
     function testRemoveMargin(uint64 price, uint120 size_) public {
         vm.assume(price > 10); // reducing price by 10% later in this test
         oracle.setUnderlyingPrice(address(wavax), int(uint(price)));
-        int size = int(uint(size_) + amm.minSizeRequirement()); // to avoid min size error
+        int size = int(uint(size_)) / MIN_SIZE * MIN_SIZE +  10 * MIN_SIZE; // to avoid min size error
 
         // alice longs, bob shorts
         int quote = size * int(uint(price)) / 1e18;

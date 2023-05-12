@@ -58,4 +58,8 @@ contract TestClearingHouse is ClearingHouse {
     function setAMM(uint idx, address amm) external {
         amms[idx] = IAMM(amm);
     }
+
+    function setMarginAccount(address _marginAccount) external {
+        marginAccount = IMarginAccount(_marginAccount);
+    }
 }

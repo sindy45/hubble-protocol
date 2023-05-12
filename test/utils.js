@@ -214,7 +214,7 @@ async function setupContracts(options = {}) {
         weth = await setupRestrictedTestToken('Hubble Ether', 'hWETH', 18)
         ;({ amm } = await setupAmm(
             governance,
-            [ 'ETH-PERP', weth.address, oracle.address, 1e8 /* min liquidity req */],
+            [ 'ETH-PERP', weth.address, oracle.address ],
             options.amm,
             options.genesisProxies
         ))
@@ -293,19 +293,19 @@ async function setupUpgradeableProxy(contract, admin, initArgs, deployArgs = [],
 async function setupAmm(governance, args, ammOptions, slowMode) {
     const options = Object.assign(
         {
-            index: 0,
             initialRate: 1000, // for ETH perp
-            whitelist: true
+            whitelist: true,
+            minSize: 1e8,
         },
         ammOptions
     )
-    const { initialRate, testAmm, whitelist  } = options
+    const { initialRate, testAmm, whitelist, minSize  } = options
 
     const ammImpl = await AMM.deploy(clearingHouse.address, getTxOptions())
     let constructorArguments = [
         ammImpl.address,
         proxyAdmin.address,
-        ammImpl.interface.encodeFunctionData('initialize', args.concat([ governance ]))
+        ammImpl.interface.encodeFunctionData('initialize', args.concat([ minSize, governance ]))
     ]
     const ammProxy = await TransparentUpgradeableProxy.deploy(...constructorArguments, getTxOptions())
     await ammProxy.deployTransaction.wait()
@@ -327,6 +327,7 @@ async function setupAmm(governance, args, ammOptions, slowMode) {
 
     if (whitelist) {
         await clearingHouse.whitelistAmm(amm.address, getTxOptions())
+        await orderBook.initializeMinSize(minSize, getTxOptions())
     }
 
     return { amm }

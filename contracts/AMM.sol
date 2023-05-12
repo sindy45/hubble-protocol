@@ -136,6 +136,7 @@ contract AMM is IAMM, Governable {
         uint totalPosSize = uint(abs(size));
         require(totalPosSize == 0 || totalPosSize >= minSizeRequirement, "position_less_than_minSize");
         // update liquidation threshold
+        // no need to make liquidationThreshold multiple of minSizeRequirement as its the max limit
         positions[order.trader].liquidationThreshold = Math.max(
             (totalPosSize * maxLiquidationRatio / 1e6) + 1,
             minSizeRequirement

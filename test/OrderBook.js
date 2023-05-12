@@ -166,7 +166,7 @@ describe('Order Book', function () {
         const { order, signature } = await placeOrder(size, markPrice, charlie)
 
         // liquidate
-        const toLiquidate = size.mul(25e4).div(1e6).add(1) // 1/4th position liquidated
+        const toLiquidate = size.mul(25e4).div(1e6) // 1/4th position liquidated (in multiple of minSize)
         await orderBook.liquidateAndExecuteOrder(alice.address, order, signature, toLiquidate.abs())
         const { size: sizeAfterLiquidation } = await amm.positions(alice.address)
         expect(sizeAfterLiquidation).to.eq(size.sub(toLiquidate))
@@ -304,7 +304,7 @@ describe('Order Book - Error Handling', function () {
     })
 
     it('generic errors are not caught and bubbled up', async function() {
-        await clearingHouse.setAMM(0, '0x0000000000000000000000000000000000000000')
+        await clearingHouse.setMarginAccount('0x0000000000000000000000000000000000000000')
         await expect(orderBook.executeMatchedOrders(
             [ longOrder, shortOrder ],
             [ signature2, signature1 ],
@@ -312,7 +312,7 @@ describe('Order Book - Error Handling', function () {
         // )).to.be.reverted
         )).to.be.revertedWith('without a reason string')
 
-        await clearingHouse.setAMM(0, amm.address) // reset
+        await clearingHouse.setMarginAccount(marginAccount.address) // reset
         await assertPosSize(0, 0)
     })
 
@@ -356,7 +356,7 @@ describe('Order Book - Error Handling', function () {
         ;({ order, signature } = await placeOrder(size, markPrice, charlie))
 
         // liquidate
-        toLiquidate = size.mul(25e4).div(1e6).add(1) // 1/4th position liquidated
+        toLiquidate = size.mul(25e4).div(1e6) // 1/4th position liquidated
         let tx = await orderBook.liquidateAndExecuteOrder(alice.address, order, signature, toLiquidate.abs())
 
         await expect(tx).to.emit(orderBook, 'LiquidationError').withArgs(
@@ -403,12 +403,12 @@ describe('Order Book - Error Handling', function () {
     })
 
     it('generic errors are not caught and bubbled up', async function() {
-        await clearingHouse.setAMM(0, '0x0000000000000000000000000000000000000000')
+        await clearingHouse.setMarginAccount('0x0000000000000000000000000000000000000000')
         await expect(orderBook.liquidateAndExecuteOrder(
             alice.address, order, signature, toLiquidate.abs())
         ).to.be.revertedWith('without a reason string')
 
-        await clearingHouse.setAMM(0, amm.address) // reset
+        await clearingHouse.setMarginAccount(marginAccount.address)
         await assertPosSize(shortOrder.baseAssetQuantity, longOrder.baseAssetQuantity)
         const charliePos = await hubbleViewer.userPositions(charlie.address)
         expect(charliePos[0].size).to.eq(0)

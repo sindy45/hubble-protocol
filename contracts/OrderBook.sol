@@ -20,6 +20,8 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
     IClearingHouse public immutable clearingHouse;
     IMarginAccount public immutable marginAccount;
 
+    int256[] public minSizes; // min size for each AMM, array index is the ammIndex
+
     mapping(bytes32 => OrderInfo) public orderInfo;
     mapping(address => bool) public isValidator;
 
@@ -27,6 +29,11 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
 
     modifier onlyValidator {
         require(isValidator[msg.sender], "OB.only_validator");
+        _;
+    }
+
+    modifier onlyClearingHouse {
+        require(msg.sender == address(clearingHouse), "OB.only_clearingHouse");
         _;
     }
 
@@ -50,7 +57,8 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
      * @param orders It is required that orders[0] is a LONG and orders[1] is a SHORT
      * @param signatures To verify authenticity of the order
      * @param fillAmount Amount to be filled for each order. This is to support partial fills.
-     *        Should be > 0 (validated in _verifyOrder) and min(unfilled amount in both orders)
+     *        Should be > 0 (validated in _verifyOrder)
+     *        Should be non-zero multiple of minSizeRequirement (validated in _verifyOrder)
     */
     function executeMatchedOrders(
         Order[2] memory orders,
@@ -66,12 +74,12 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         require(orders[1].baseAssetQuantity < 0, "OB_order_1_is_not_short");
         require(orders[0].price /* buy */ >= orders[1].price /* sell */, "OB_orders_do_not_match");
         require(orders[0].ammIndex == orders[1].ammIndex, "OB_orders_for_different_amms");
-        require(fillAmount != 0, "OB_fill_amount_0");
+        // fillAmount should be multiple of min size requirement and fillAmount should be non-zero
+        require(isMultiple(fillAmount, minSizes[orders[0].ammIndex]), "OB_fillAmount_not_multiple_of_minSizeRequirement");
 
         MatchInfo[2] memory matchInfo;
         (matchInfo[0].orderHash, matchInfo[0].blockPlaced) = _verifyOrder(orders[0], signatures[0], fillAmount);
         (matchInfo[1].orderHash, matchInfo[1].blockPlaced) = _verifyOrder(orders[1], signatures[1], -fillAmount);
-        // @todo min fillAmount and min order.baseAsset check
 
         // Interactions
         uint fulfillPrice;
@@ -116,7 +124,9 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
 
     function placeOrder(Order memory order, bytes memory signature) external whenNotPaused {
         require(msg.sender == order.trader, "OB_sender_is_not_trader");
-        require(abs(order.baseAssetQuantity).toUint256() >= IAMM(clearingHouse.amms(order.ammIndex)).minSizeRequirement(), "OB_order_size_too_small");
+        // order.baseAssetQuantity should be multiple of minSizeRequirement
+        require(isMultiple(order.baseAssetQuantity, minSizes[order.ammIndex]), "OB_order_size_not_multiple_of_minSizeRequirement");
+
         (, bytes32 orderHash) = verifySigner(order, signature);
         // order should not exist in the orderStatus map already
         require(orderInfo[orderHash].status == OrderStatus.Invalid, "OB_Order_already_exists");
@@ -181,6 +191,9 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         if (order.baseAssetQuantity < 0) { // order is short, so short position is being liquidated
             fillAmount *= -1;
         }
+        // fillAmount should be multiple of min size requirement and fillAmount should be non-zero
+        require(isMultiple(fillAmount, minSizes[order.ammIndex]), "OB_fillAmount_not_multiple_of_minSizeRequirement");
+
         MatchInfo memory matchInfo;
         (matchInfo.orderHash, matchInfo.blockPlaced) = _verifyOrder(order, signature, fillAmount);
         // execute matching order as maker order
@@ -257,12 +270,14 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         returns (bytes32 /* orderHash */, uint /* blockPlaced */)
     {
         (, bytes32 orderHash) = verifySigner(order, signature);
+
         // order should be in placed status
         require(orderInfo[orderHash].status == OrderStatus.Placed, "OB_invalid_order");
         // order.baseAssetQuantity and fillAmount should have same sign
         require(order.baseAssetQuantity * fillAmount > 0, "OB_fill_and_base_sign_not_match");
         // fillAmount[orderHash] should be strictly increasing or strictly decreasing
         require(orderInfo[orderHash].filledAmount * fillAmount >= 0, "OB_invalid_fillAmount");
+
         return (orderHash, orderInfo[orderHash].blockPlaced);
     }
 
@@ -307,6 +322,14 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         return x >= 0 ? x : -x;
     }
 
+    /**
+    * @notice returns true if x is multiple of y and abs(x) >= y
+    * @dev assumes y is positive
+    */
+    function isMultiple(int256 x, int256 y) internal pure returns (bool) {
+        return (x != 0 && x % y == 0);
+    }
+
     /* ****************** */
     /*     Governance     */
     /* ****************** */
@@ -321,5 +344,13 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
 
     function setValidatorStatus(address validator, bool status) external onlyGovernance whenNotPaused {
         isValidator[validator] = status;
+    }
+
+    function initializeMinSize(int minSize) external onlyGovernance whenNotPaused {
+        minSizes.push(minSize);
+    }
+
+    function updateMinSize(uint ammIndex, int minSize) external onlyGovernance whenNotPaused {
+        minSizes[ammIndex] = minSize;
     }
 }

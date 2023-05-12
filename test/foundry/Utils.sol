@@ -50,6 +50,7 @@ abstract contract Utils is Test {
     HGT public hgt;
     HGTRemote public hgtRemote;
     int public MAX_LEVERAGE = 5;
+    int public MIN_SIZE = 1e17; // 0.1
 
     uint public aliceKey;
     address public alice;
@@ -58,6 +59,7 @@ abstract contract Utils is Test {
 
     // used for temporary variables in test functions to avoid stack too deep
     uint256[50] public temp;
+    int256[50] public tempInt;
 
     function setupContracts() public {
         (alice, aliceKey) = makeAddrAndKey("alice");
@@ -218,8 +220,10 @@ abstract contract Utils is Test {
         amm_ = AMM(address(proxy));
 
         vm.startPrank(governance);
-        ClearingHouse(clearingHouse).whitelistAmm(address(amm_));
+        clearingHouse.whitelistAmm(address(amm_));
         amm_.setPriceSpreadParams(10 * 1e4 /* maxOracleSpreadRatio 10% */, 1 * 1e4 /* maxPriceSpreadPerBlock 1% */ );
+        amm_.setMinSizeRequirement(uint(MIN_SIZE));
+        orderBook.initializeMinSize(MIN_SIZE);
         vm.stopPrank();
     }
 
@@ -308,7 +312,7 @@ abstract contract Utils is Test {
         assertEq(positions[0].size, size);
         assertEq(positions[0].openNotional, openNotional);
         assertEq(positions[0].unrealizedPnl, unrealizedPnl);
-        assertApproxEqAbs(positions[0].avgOpen, avgOpen, 1);
+        assertEq(positions[0].avgOpen, avgOpen);
     }
 
     function mintVusd(address trader, uint amount) internal {

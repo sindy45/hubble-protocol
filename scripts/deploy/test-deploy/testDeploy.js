@@ -19,9 +19,6 @@ async function placeMultipleOrders(num) {
     const orderBook = await ethers.getContractAt('OrderBook', config.contracts.OrderBook)
     const marginAccount = await ethers.getContractAt('MarginAccount', config.contracts.MarginAccount)
 
-    console.log(await marginAccount.margin(0, alice.address))
-    console.log(await marginAccount.margin(0, bob.address))
-
     const domain = {
         name: 'Hubble',
         version: '2.0',
@@ -37,6 +34,7 @@ async function placeMultipleOrders(num) {
             { name: "baseAssetQuantity", type: "int256" },
             { name: "price", type: "uint256" },
             { name: "salt", type: "uint256" },
+            { name: "reduceOnly", type: "bool" },
         ]
     }
     let shortOrder = {
@@ -44,7 +42,8 @@ async function placeMultipleOrders(num) {
         trader: alice.address,
         baseAssetQuantity: ethers.utils.parseEther('-5'),
         price: ethers.utils.parseUnits('200', 6),
-        salt: BigNumber.from(Date.now())
+        salt: BigNumber.from(Date.now()),
+        reduceOnly: false
     }
 
     time = Date.now()
@@ -52,13 +51,15 @@ async function placeMultipleOrders(num) {
     let trader, price
     let size = 5
     // price: ethers.utils.parseUnits('1000', 6),
-    let longPrice = 10
-    let shortPrice = 10
+    let longPrice = 2000
+    let shortPrice = 2000
 
-    const indexArr = Array.from({ length: num }, (v, k) => k + 1)
-    await Bluebird.map(indexArr, async i => {
+    // const indexArr = Array.from({ length: num }, (v, k) => k + 1)
+    // await Bluebird.map(indexArr, async i => {
+    for (let i = 0; i < num; i++) {
         if (i % 20 == 0) {
-            // await sleep(2)
+            size *= -1
+            await utils.sleep(10)
         }
 
         if (i % 2 == 0) {
@@ -80,10 +81,12 @@ async function placeMultipleOrders(num) {
 
         signature = await trader._signTypedData(domain, orderType, order)
         // console.log({order, trader: trader.address});
-        tx = await orderBook.connect(trader).placeOrder(order, signature)
+        tx = await orderBook.connect(trader).placeOrder(order, signature, { gasLimit })
         // await tx.wait()
+        await utils.sleep(4)
         console.log({ i });
-    }, { concurrency: 1 })
+    }
+    // }, { concurrency: 1 })
 }
 
 async function logData() {
@@ -109,7 +112,7 @@ async function logData() {
     console.log({ alicePositions, bobPositions })
 }
 
-placeMultipleOrders(200)
+placeMultipleOrders(2)
 // logData()
     .then(() => process.exit(0))
     .catch(error => {

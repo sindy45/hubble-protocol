@@ -26,15 +26,30 @@ contract OrderBookTests is Utils {
     }
 
     function testPlaceOrder(uint128 traderKey, int size, uint price) public {
-        uint minSize = amm.minSizeRequirement();
-        vm.assume(traderKey != 0 && stdMath.abs(size) >= minSize && size != type(int).min /** abs(size) fails */ && price < type(uint).max / stdMath.abs(size) && price > 1e6);
-        (address trader, IOrderBook.Order memory order, bytes memory signature, bytes32 orderHash) = prepareOrder(0, traderKey, int(minSize - 1), price, false);
+        vm.assume(
+            traderKey != 0 &&
+            stdMath.abs(size) >= uint(MIN_SIZE) &&
+            size != type(int).min /** abs(size) fails */ &&
+            price < type(uint).max / stdMath.abs(size) &&
+            price > 1e6
+        );
+        // place order with size < minSize
+        (address trader, IOrderBook.Order memory order, bytes memory signature, bytes32 orderHash) = prepareOrder(0, traderKey, MIN_SIZE - 1, price, false);
 
         vm.expectRevert("OB_sender_is_not_trader");
         orderBook.placeOrder(order, signature);
 
         vm.startPrank(trader);
-        vm.expectRevert("OB_order_size_too_small");
+        vm.expectRevert("OB_order_size_not_multiple_of_minSizeRequirement");
+        orderBook.placeOrder(order, signature);
+        vm.stopPrank();
+
+        size = (size / MIN_SIZE) * MIN_SIZE;
+        // place order with size > minSize but not multiple of minSize
+        (trader, order, signature, orderHash) = prepareOrder(0, traderKey, size + 1234, price, false);
+
+        vm.startPrank(trader);
+        vm.expectRevert("OB_order_size_not_multiple_of_minSizeRequirement");
         orderBook.placeOrder(order, signature);
         vm.stopPrank();
 
@@ -108,21 +123,24 @@ contract OrderBookTests is Utils {
         bytes[2] memory signatures;
         bytes32[2] memory orderHashes;
 
-        int size = int(uint(size_) + amm.minSizeRequirement()); // to avoid min size error
+        int size = int(uint(size_)) / MIN_SIZE * MIN_SIZE + MIN_SIZE; // to avoid min size error
 
         uint quote = stdMath.abs(size) * price / 1e18;
-        addMargin(alice, quote / 2, 0, address(0)); // 2x leverage
-        addMargin(bob, quote / 2, 0, address(0));
+        addMargin(alice, quote, 0, address(0)); // 1x leverage
+        addMargin(bob, quote, 0, address(0));
 
         (orders[0], signatures[0], orderHashes[0]) = placeOrder(0, aliceKey, size, price, false);
         (orders[1], signatures[1], orderHashes[1]) = placeOrder(0, bobKey, -size, price, false);
 
         // assert reserved margin
-        uint marginRequired = quote / 5 + quote * uint(takerFee) / 1e6;
+        uint marginRequired = quote / uint(MAX_LEVERAGE) + quote * uint(takerFee) / 1e6;
         assertEq(marginAccount.reservedMargin(alice), marginRequired);
         assertEq(marginAccount.reservedMargin(bob), marginRequired);
 
         vm.expectRevert("OB_filled_amount_higher_than_order_base");
+        orderBook.executeMatchedOrders(orders, signatures, size + MIN_SIZE);
+
+        vm.expectRevert("OB_fillAmount_not_multiple_of_minSizeRequirement");
         orderBook.executeMatchedOrders(orders, signatures, size + 1);
 
         vm.expectEmit(true, true, false, true, address(orderBook));
@@ -154,15 +172,15 @@ contract OrderBookTests is Utils {
         vm.expectRevert("OB_invalid_order");
         orderBook.executeMatchedOrders(orders, signatures, size);
 
-        assertPositions(alice, size, quote, 0, price);
-        assertPositions(bob, -size, quote, 0, price);
+        assertPositions(alice, size, quote, 0, quote * 1e18 / stdMath.abs(size));
+        assertPositions(bob, -size, quote, 0, quote * 1e18 / stdMath.abs(size));
     }
 
     // assuming mark and index price move together and exactly match
     function testExecuteMatchedOrdersMovingIP(uint64 price, uint120 size_) public {
-        vm.assume(price != 0);
+        vm.assume(price > 10);
         oracle.setUnderlyingPrice(address(wavax), int(uint(price)));
-        int size = int(uint(size_) + 2 * amm.minSizeRequirement()); // to avoid min size error
+        int size = int(uint(size_)) / MIN_SIZE * MIN_SIZE + 2 * MIN_SIZE; // to avoid min size error
 
         IOrderBook.Order[2] memory orders;
         bytes[2] memory signatures;
@@ -176,11 +194,14 @@ contract OrderBookTests is Utils {
         (orders[1], signatures[1], orderHashes[1]) = placeOrder(0, bobKey, -size, price, false);
 
         // assert reserved margin
-        uint marginRequired = quote / 5 + quote * uint(takerFee) / 1e6;
+        uint marginRequired = quote / uint(MAX_LEVERAGE) + quote * uint(takerFee) / 1e6;
         assertEq(marginAccount.reservedMargin(alice), marginRequired);
         assertEq(marginAccount.reservedMargin(bob), marginRequired);
 
         vm.expectRevert("OB_filled_amount_higher_than_order_base");
+        orderBook.executeMatchedOrders(orders, signatures, size + MIN_SIZE);
+
+        vm.expectRevert("OB_fillAmount_not_multiple_of_minSizeRequirement");
         orderBook.executeMatchedOrders(orders, signatures, size + 1);
 
         vm.expectEmit(true, true, false, true, address(orderBook));
@@ -212,14 +233,14 @@ contract OrderBookTests is Utils {
         vm.expectRevert("OB_invalid_order");
         orderBook.executeMatchedOrders(orders, signatures, size);
 
-        assertPositions(alice, size, quote, 0, price);
-        assertPositions(bob, -size, quote, 0, price);
+        assertPositions(alice, size, quote, 0, quote * 1e18 / stdMath.abs(size));
+        assertPositions(bob, -size, quote, 0, quote * 1e18 / stdMath.abs(size));
     }
 
     function testLiquidateAndExecuteOrder(uint64 price, uint120 size_) public {
         vm.assume(price > 10 && size_ != 0);
         oracle.setUnderlyingPrice(address(wavax), int(uint(price)));
-        int size = int(uint(size_) + amm.minSizeRequirement()); // to avoid min size error
+        int size = int(uint(size_)) / MIN_SIZE * MIN_SIZE +  10 * MIN_SIZE; // to avoid min size error
 
         // add weth margin
         temp[0] = clearingHouse.getRequiredMargin(size, price) * 1e18 / uint(defaultWethPrice) + 1e10; // required weth margin in 1e18, add 1e10 for any precision loss
@@ -243,7 +264,11 @@ contract OrderBookTests is Utils {
             vm.roll(block.number + 1); // to avoid AMM.liquidation_not_allowed_after_trade
             (,,,uint liquidationThreshold) = amm.positions(alice);
             toLiquidate = Math.min(stdMath.abs(size), liquidationThreshold);
+            toLiquidate = toLiquidate / uint(MIN_SIZE) * uint(MIN_SIZE);
         }
+
+        vm.expectRevert("OB_fillAmount_not_multiple_of_minSizeRequirement");
+        orderBook.liquidateAndExecuteOrder(alice, order, signature, toLiquidate + 1);
 
         vm.expectEmit(true, true, false, true, address(orderBook));
         emit LiquidationOrderMatched(address(alice), orderHash, signature, toLiquidate, price, stdMath.abs(2 * size), address(this), block.timestamp);
@@ -308,7 +333,7 @@ contract OrderBookTests is Utils {
     function testOrderCancellationWhenNotEnoughMargin(uint64 price, uint120 size_) public {
         vm.assume(price > 10);
         oracle.setUnderlyingPrice(address(wavax), int(uint(price)));
-        int size = int(uint(size_) + amm.minSizeRequirement()); // to avoid min size error
+        int size = int(uint(size_)) / MIN_SIZE * MIN_SIZE +  5 * MIN_SIZE; // to avoid min size error
 
         // alice opens position
         // add weth margin scaled to 18 decimals
@@ -321,13 +346,13 @@ contract OrderBookTests is Utils {
         int utilizedMargin = quote / MAX_LEVERAGE; // 5x max leverage
 
         // alice places 2 open orders
-        (,,bytes32 orderHash1) = placeOrder(0, aliceKey, size + 1, price, false);
+        (,,bytes32 orderHash1) = placeOrder(0, aliceKey, size, uint(price) + 2, false);
         uint reservedMarginForOrder1 = marginAccount.reservedMargin(alice);
-        (,,bytes32 orderHash2) = placeOrder(0, aliceKey, size + 2, price, false);
+        (,,bytes32 orderHash2) = placeOrder(0, aliceKey, size, uint(price) + 1, false);
         uint totalReservedMargin = marginAccount.reservedMargin(alice);
 
         // collateral price decreases such that avaialble margin < 0
-        oracle.setUnderlyingPrice(address(weth), defaultWethPrice / 2);
+        oracle.setUnderlyingPrice(address(weth), defaultWethPrice / 3);
         assertTrue(marginAccount.getAvailableMargin(alice) < 0);
         assertAvailableMargin(alice, 0, int(totalReservedMargin), utilizedMargin);
 
@@ -351,6 +376,7 @@ contract OrderBookTests is Utils {
 
         {
             // alice avalable margin is > 0
+            oracle.setUnderlyingPrice(address(weth), defaultWethPrice);
             assertTrue(marginAccount.getAvailableMargin(alice) >= 0);
             assertAvailableMargin(alice, 0, int(totalReservedMargin - reservedMarginForOrder1), utilizedMargin);
         }
@@ -374,9 +400,9 @@ contract OrderBookTests is Utils {
     }
 
     function testCannotExecuteMatchedOrders(uint120 price, uint120 size_) public {
-        vm.assume(price != 0);
+        vm.assume(price > 20);
         oracle.setUnderlyingPrice(address(wavax), int(uint(price)));
-        int size = int(uint(size_) + amm.minSizeRequirement()); // to avoid min size error
+        int size = int(uint(size_)) / MIN_SIZE * MIN_SIZE +  MIN_SIZE; // to avoid min size error
 
         IOrderBook.Order[2] memory orders;
         bytes[2] memory signatures;
@@ -399,7 +425,7 @@ contract OrderBookTests is Utils {
         orderBook.executeMatchedOrders([orders[1], orders[0]], signatures, size);
         vm.expectRevert("OB_order_1_is_not_short");
         orderBook.executeMatchedOrders([orders[0], orders[0]], signatures, size);
-        vm.expectRevert("OB_fill_amount_0");
+        vm.expectRevert("OB_fillAmount_not_multiple_of_minSizeRequirement");
         orderBook.executeMatchedOrders(orders, signatures, 0);
 
         // reduce long order price

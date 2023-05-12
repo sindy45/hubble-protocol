@@ -30,6 +30,7 @@ contract DeployContracts is Utils {
         // orderBook
         assertEq(address(orderBook.clearingHouse()), address(clearingHouse));
         assertEq(orderBook.governance(), governance);
+        assertEq(orderBook.minSizes(0), MIN_SIZE);
 
         // clearingHouse
         assertEq(clearingHouse.governance(), governance);
@@ -50,7 +51,7 @@ contract DeployContracts is Utils {
         assertEq(amm.clearingHouse(), address(clearingHouse));
         assertEq(amm.underlyingAsset(), address(wavax));
         assertEq(address(amm.oracle()), address(oracle));
-        assertEq(amm.minSizeRequirement(), 5e18);
+        assertEq(amm.minSizeRequirement(), 1e17);
 
         // oracle
         assertEq(oracle.getUnderlyingPrice(address(wavax)), 20 * 1e6);

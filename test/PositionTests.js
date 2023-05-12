@@ -485,11 +485,10 @@ describe('Position Tests', async function() {
             const avax = await setupRestrictedTestToken('avax', 'avax', 6)
             const secondAmm = await utils.setupAmm(
                 alice,
-                [ 'AVAX-PERP', avax.address, oracle.address, _1e18 ],
+                [ 'AVAX-PERP', avax.address, oracle.address ],
                 {
-                    index: 1,
                     initialRate: 65,
-                    initialLiquidity: 1e4
+                    minSize: _1e18
                 }
             )
             const markets = await hubbleViewer.markets()
@@ -500,6 +499,7 @@ describe('Position Tests', async function() {
 
             amm = secondAmm.amm
             contracts.amm = amm
+            expect(await amm.minSizeRequirement()).to.eq(_1e18)
         })
 
         it('long', async () => {

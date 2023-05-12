@@ -25,13 +25,14 @@ contract ClearingHouseTests is Utils {
     function testReduceOnly(uint64 price, uint120 size_) public {
         vm.assume(price > 10);
         oracle.setUnderlyingPrice(address(wavax), int(uint(price)));
-        int size = int(uint(size_) + 2 * amm.minSizeRequirement()); // to avoid min size error
+        int size = int(uint(size_)) / MIN_SIZE * MIN_SIZE +  10 * MIN_SIZE; // to avoid min size error
 
         // alice longs, bob shorts, fillAmount = size / 2
+        int fillAmount = (size / 2) / MIN_SIZE * MIN_SIZE;
         uint requiredMargin = clearingHouse.getRequiredMargin(size, price);
-        placeAndExecuteOrder(0, aliceKey, bobKey, size, price, false, true, size / 2, false);
-        assertApproxEqAbs(marginAccount.reservedMargin(alice), requiredMargin / 2, 10 /** maxDelta */);
-        assertApproxEqAbs(marginAccount.reservedMargin(bob), requiredMargin / 2, 10);
+        placeAndExecuteOrder(0, aliceKey, bobKey, size, price, false, true, fillAmount, false);
+        assertEq(marginAccount.reservedMargin(alice), requiredMargin - requiredMargin * uint(fillAmount) / uint(size));
+        assertEq(marginAccount.reservedMargin(bob), requiredMargin - requiredMargin * uint(fillAmount) / uint(size));
 
         IOrderBook.Order[2] memory orders;
         bytes[2] memory signatures;
@@ -77,7 +78,7 @@ contract ClearingHouseTests is Utils {
         assertEq(marginAccount.reservedMargin(alice), reservedMargin[0]); // no new margin reserved
 
         // position can decrease for a reduce-only order
-        orderBook.executeMatchedOrders(orders, signatures, size / 2);
+        orderBook.executeMatchedOrders(orders, signatures, fillAmount);
         assertEq(marginAccount.reservedMargin(alice), reservedMargin[0]); // no new margin released
         assertEq(marginAccount.reservedMargin(bob), reservedMargin[1]); // no new margin released
         assertPositions(alice, 0, 0, 0, 0);
@@ -88,9 +89,9 @@ contract ClearingHouseTests is Utils {
         vm.assume(size_ != 0);
         int size;
         if (size_ > 0) {
-            size = size_ + int(amm.minSizeRequirement());
+            size = size_ / MIN_SIZE * MIN_SIZE + MIN_SIZE;
         } else {
-            size = size_ - int(amm.minSizeRequirement());
+            size = size_ / MIN_SIZE * MIN_SIZE - MIN_SIZE;
         }
 
         int _takerFee = 0.1 * 1e4; // 10 bps
@@ -146,9 +147,9 @@ contract ClearingHouseTests is Utils {
         vm.assume(size_ != 0);
         int size;
         if (size_ > 0) {
-            size = size_ + int(amm.minSizeRequirement());
+            size = size_ / MIN_SIZE * MIN_SIZE + MIN_SIZE;
         } else {
-            size = size_ - int(amm.minSizeRequirement());
+            size = size_ / MIN_SIZE * MIN_SIZE - MIN_SIZE;
         }
 
         int _takerFee = 0.05 * 1e4; // 5 bps
@@ -206,9 +207,9 @@ contract ClearingHouseTests is Utils {
         vm.assume(size_ != 0);
         int size;
         if (size_ > 0) {
-            size = size_ + int(amm.minSizeRequirement());
+            size = size_ / MIN_SIZE * MIN_SIZE + MIN_SIZE;
         } else {
-            size = size_ - int(amm.minSizeRequirement());
+            size = size_ / MIN_SIZE * MIN_SIZE - MIN_SIZE;
         }
 
         int _takerFee = 0.1 * 1e4; // 10 bps
@@ -261,7 +262,7 @@ contract ClearingHouseTests is Utils {
 
     function testLiquidationWithNegativeMakerFee(uint120 size_) public {
         vm.assume(size_ != 0);
-        int size = int(uint(size_) + amm.minSizeRequirement()); // to avoid min size error
+        int size = int(uint(size_)) / MIN_SIZE * MIN_SIZE +  10 * MIN_SIZE; // to avoid min size error
         uint price = 20 * 1e6;
 
         takerFee = 0.001 * 1e6; // 10 bps
@@ -300,6 +301,7 @@ contract ClearingHouseTests is Utils {
             vm.roll(block.number + 1); // to avoid AMM.liquidation_not_allowed_after_trade
             (,,,uint liquidationThreshold) = amm.positions(alice);
             toLiquidate = Math.min(stdMath.abs(size), liquidationThreshold);
+            toLiquidate = toLiquidate / uint(MIN_SIZE) * uint(MIN_SIZE);
         }
 
         vm.expectEmit(true, true, false, true, address(orderBook));

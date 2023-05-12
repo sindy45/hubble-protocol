@@ -181,14 +181,16 @@ describe('AMM unit tests', async function() {
         avax = await utils.setupRestrictedTestToken('avax', 'avax', 6)
         ;({ amm: avaxAmm } = await utils.setupAmm(
             alice,
-            [ 'AVAX-PERP', avax.address, oracle.address, _1e18 /* min size = 1 ether */ ],
+            [ 'AVAX-PERP', avax.address, oracle.address ],
             {
                 initialRate: 65,
-                whitelist: false
+                whitelist: false,
+                minSize: _1e18
             }
         ))
         // assert that AMM hasn't been whitelisted as yet
         expect(await clearingHouse.getAmmsLength()).to.eq(1)
+        expect(await avaxAmm.minSizeRequirement()).to.eq(_1e18)
     })
 
     it('other amms will work as usual when 1 amm is not whitelisted', async () => {

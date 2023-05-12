@@ -130,6 +130,7 @@ interface IOrderBook {
     function liquidateAndExecuteOrder(address trader, Order memory order, bytes memory signature, uint256 toLiquidate) external;
     function getLastTradePrices() external view returns(uint[] memory lastTradePrices);
     function cancelMultipleOrders(bytes32[] memory orderHashes) external;
+    function initializeMinSize(int256 minSize) external;
 }
 
 interface IAMM {
