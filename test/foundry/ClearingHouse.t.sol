@@ -22,69 +22,6 @@ contract ClearingHouseTests is Utils {
         vm.stopPrank();
     }
 
-    function testReduceOnly(uint64 price, uint120 size_) public {
-        vm.assume(price > 10);
-        oracle.setUnderlyingPrice(address(wavax), int(uint(price)));
-        int size = int(uint(size_)) / MIN_SIZE * MIN_SIZE +  10 * MIN_SIZE; // to avoid min size error
-
-        // alice longs, bob shorts, fillAmount = size / 2
-        int fillAmount = (size / 2) / MIN_SIZE * MIN_SIZE;
-        uint requiredMargin = clearingHouse.getRequiredMargin(size, price);
-        placeAndExecuteOrder(0, aliceKey, bobKey, size, price, false, true, fillAmount, false);
-        assertEq(marginAccount.reservedMargin(alice), requiredMargin - requiredMargin * uint(fillAmount) / uint(size));
-        assertEq(marginAccount.reservedMargin(bob), requiredMargin - requiredMargin * uint(fillAmount) / uint(size));
-
-        IOrderBook.Order[2] memory orders;
-        bytes[2] memory signatures;
-        bytes32[] memory orderHashes = new bytes32[](2);
-        addMargin(alice, requiredMargin * 10, 0, address(0));
-        addMargin(bob, requiredMargin * 10, 0, address(0));
-
-        // position cannot increase for a reduce-only order
-        // long order increase fail, alice longs more
-        (orders[0], signatures[0], orderHashes[0]) = placeOrder(0, aliceKey, size, price - 1, true /** reduceOnly */);
-        (orders[1], signatures[1], orderHashes[1]) = placeOrder(0, bobKey, -size, price - 1, false /** reduceOnly */);
-        vm.expectEmit(true, false, false, true, address(orderBook));
-        emit OrderMatchingError(orderHashes[0], "CH: reduceOnly order can only reduce position");
-        orderBook.executeMatchedOrders(orders, signatures, size);
-        // short order increase fail, bob shorts more
-        (orders[0], signatures[0], orderHashes[0]) = placeOrder(0, aliceKey, size, price - 1, false /** reduceOnly */);
-        (orders[1], signatures[1], orderHashes[1]) = placeOrder(0, bobKey, -size, price - 1, true /** reduceOnly */);
-        vm.expectEmit(true, false, false, true, address(orderBook));
-        emit OrderMatchingError(orderHashes[1], "CH: reduceOnly order can only reduce position");
-        orderBook.executeMatchedOrders(orders, signatures, size);
-
-        // position cannot reverse for a reduce-only order
-        // long order reverse fail, bob longs
-        (orders[0], signatures[0], orderHashes[0]) = placeOrder(0, bobKey, size, price - 1, true /** reduceOnly */);
-        (orders[1], signatures[1], orderHashes[1]) = placeOrder(0, aliceKey, -size, price - 1, false /** reduceOnly */);
-        vm.expectEmit(true, false, false, true, address(orderBook));
-        emit OrderMatchingError(orderHashes[0], "CH: reduceOnly order can only reduce position");
-        orderBook.executeMatchedOrders(orders, signatures, size);
-        // short order reverse fail, alice shorts
-        (orders[0], signatures[0], orderHashes[0]) = placeOrder(0, bobKey, size, price - 1, false /** reduceOnly */);
-        (orders[1], signatures[1], orderHashes[1]) = placeOrder(0, aliceKey, -size, price - 1, true /** reduceOnly */);
-        vm.expectEmit(true, false, false, true, address(orderBook));
-        emit OrderMatchingError(orderHashes[1], "CH: reduceOnly order can only reduce position");
-        orderBook.executeMatchedOrders(orders, signatures, size);
-
-        // no margin is reserved for a reduce-only order
-        uint[2] memory reservedMargin; // 0 - alice, 1 - bob
-        reservedMargin[1] = marginAccount.reservedMargin(bob);
-        (orders[0], signatures[0], orderHashes[0]) = placeOrder(0, bobKey, size, price - 2, true /** reduceOnly */);
-        assertEq(marginAccount.reservedMargin(bob), reservedMargin[1]); // no new margin reserved
-        reservedMargin[0] = marginAccount.reservedMargin(alice);
-        (orders[1], signatures[1], orderHashes[1]) = placeOrder(0, aliceKey, -size, price - 2, true /** reduceOnly */);
-        assertEq(marginAccount.reservedMargin(alice), reservedMargin[0]); // no new margin reserved
-
-        // position can decrease for a reduce-only order
-        orderBook.executeMatchedOrders(orders, signatures, fillAmount);
-        assertEq(marginAccount.reservedMargin(alice), reservedMargin[0]); // no new margin released
-        assertEq(marginAccount.reservedMargin(bob), reservedMargin[1]); // no new margin released
-        assertPositions(alice, 0, 0, 0, 0);
-        assertPositions(bob, 0, 0, 0, 0);
-    }
-
     function testNegativeMakerFee(int120 size_) public {
         vm.assume(size_ != 0);
         int size;

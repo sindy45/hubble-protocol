@@ -24,6 +24,11 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
 
     mapping(bytes32 => OrderInfo) public orderInfo;
     mapping(address => bool) public isValidator;
+    /**
+    * @notice maps the address of the trader to the amount of reduceOnlyAmount for each amm
+    * trader => ammIndex => reduceOnlyAmount
+    */
+    mapping(address => mapping(uint => int256)) public reduceOnlyAmount;
 
     uint256[50] private __gap;
 
@@ -132,7 +137,22 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         require(orderInfo[orderHash].status == OrderStatus.Invalid, "OB_Order_already_exists");
 
         uint reserveAmount;
-        if(!order.reduceOnly) {
+        IAMM amm = IAMM(clearingHouse.amms(order.ammIndex));
+        (int size,,,) = amm.positions(order.trader);
+        if(order.reduceOnly) {
+            require(isOppositeSign(size, order.baseAssetQuantity), "OB_reduce_only_order_must_close");
+            reduceOnlyAmount[order.trader][order.ammIndex] += abs(order.baseAssetQuantity);
+            require(abs(size) >= reduceOnlyAmount[order.trader][order.ammIndex], "OB_reduce_only_amount_exceeded");
+        } else {
+            /**
+            * Don't allow trade in opposite direction of existing position size if there is a reduceOnly order
+            * in case of liquidation, size == 0 && reduceOnlyAmount != 0 is possible
+            * in that case, we don't not allow placing a new order in any direction, must cancel reduceOnly order first
+            * in normal case, size = 0 => reduceOnlyAmount = 0
+            */
+            if (isOppositeSign(size, order.baseAssetQuantity) || size == 0) {
+                require(reduceOnlyAmount[order.trader][order.ammIndex] == 0, "OB_cancel_reduce_only_order_first");
+            }
             // reserve margin for the order
             reserveAmount = clearingHouse.getRequiredMargin(order.baseAssetQuantity, order.price);
             marginAccount.reserveMargin(order.trader, reserveAmount);
@@ -157,10 +177,16 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         }
 
         orderInfo[orderHash].status = OrderStatus.Cancelled;
-        // release margin
-        marginAccount.releaseMargin(trader, orderInfo[orderHash].reservedMargin);
-        _deleteOrderInfo(orderHash);
+        // update reduceOnlyAmount
+        if (orderInfo[orderHash].order.reduceOnly) {
+            int unfilledAmount = abs(orderInfo[orderHash].order.baseAssetQuantity - orderInfo[orderHash].filledAmount);
+            reduceOnlyAmount[trader][orderInfo[orderHash].order.ammIndex] -= unfilledAmount;
+        } else {
+            // release margin
+            marginAccount.releaseMargin(trader, orderInfo[orderHash].reservedMargin);
+        }
 
+        _deleteOrderInfo(orderHash);
         emit OrderCancelled(trader, orderHash, block.timestamp);
     }
 
@@ -274,9 +300,8 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         // order should be in placed status
         require(orderInfo[orderHash].status == OrderStatus.Placed, "OB_invalid_order");
         // order.baseAssetQuantity and fillAmount should have same sign
-        require(order.baseAssetQuantity * fillAmount > 0, "OB_fill_and_base_sign_not_match");
-        // fillAmount[orderHash] should be strictly increasing or strictly decreasing
-        require(orderInfo[orderHash].filledAmount * fillAmount >= 0, "OB_invalid_fillAmount");
+        // order.baseAssetQuantity != 0 and fillAmount != 0 is validated placeOrder and execute/liquidate order resepctively
+        require(isSameSign(order.baseAssetQuantity, fillAmount), "OB_fill_and_base_sign_not_match");
 
         return (orderHash, orderInfo[orderHash].blockPlaced);
     }
@@ -285,22 +310,26 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         orderInfo[orderHash].filledAmount += fillAmount;
         require(abs(orderInfo[orderHash].filledAmount) <= abs(baseAssetQuantity), "OB_filled_amount_higher_than_order_base");
 
-        uint reservedMargin = orderInfo[orderHash].reservedMargin;
         address trader = orderInfo[orderHash].order.trader;
-
         // update order status if filled and free up reserved margin
-        if (orderInfo[orderHash].filledAmount == baseAssetQuantity) {
-            orderInfo[orderHash].status = OrderStatus.Filled;
+        if (orderInfo[orderHash].order.reduceOnly) {
+            reduceOnlyAmount[trader][orderInfo[orderHash].order.ammIndex] -= abs(fillAmount);
 
-            if(!orderInfo[orderHash].order.reduceOnly) {
-                marginAccount.releaseMargin(trader, reservedMargin);
+            if (orderInfo[orderHash].filledAmount == baseAssetQuantity) {
+                orderInfo[orderHash].status = OrderStatus.Filled;
+                _deleteOrderInfo(orderHash);
             }
-            _deleteOrderInfo(orderHash);
-        } else if(!orderInfo[orderHash].order.reduceOnly) {
-            // update reserved margin
-            uint utilisedMargin = uint(abs(fillAmount)) * reservedMargin / uint(abs(baseAssetQuantity));
-            orderInfo[orderHash].reservedMargin -= utilisedMargin;
-            marginAccount.releaseMargin(trader, utilisedMargin);
+        } else {
+            uint reservedMargin = orderInfo[orderHash].reservedMargin;
+            if (orderInfo[orderHash].filledAmount == baseAssetQuantity) {
+                orderInfo[orderHash].status = OrderStatus.Filled;
+                marginAccount.releaseMargin(trader, reservedMargin);
+                _deleteOrderInfo(orderHash);
+            } else {
+                uint utilisedMargin = uint(abs(fillAmount)) * reservedMargin / uint(abs(baseAssetQuantity));
+                orderInfo[orderHash].reservedMargin -= utilisedMargin;
+                marginAccount.releaseMargin(trader, utilisedMargin);
+            }
         }
     }
 
@@ -320,6 +349,22 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
 
     function abs(int x) internal pure returns (int) {
         return x >= 0 ? x : -x;
+    }
+
+    /**
+    * @notice returns true if x and y have opposite signs
+    * @dev it considers 0 to have positive sign
+    */
+    function isOppositeSign(int256 x, int256 y) internal pure returns (bool) {
+        return (x ^ y) < 0;
+    }
+
+    /**
+    * @notice returns true if x and y have same signs
+    * @dev it considers 0 to have positive sign
+    */
+    function isSameSign(int256 x, int256 y) internal pure returns (bool) {
+        return (x ^ y) >= 0;
     }
 
     /**
