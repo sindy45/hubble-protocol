@@ -1,7 +1,7 @@
 const { expect } = require('chai')
 const utils = require('../utils')
 
-const { constants: { _1e6, ZERO, _1e18 }, setBalance } = utils
+const { constants: { _1e6, ZERO, _1e18 }, setBalance, calcGasPaid } = utils
 const defaultInitialBalance = _1e18.mul(10000)
 
 describe('vUSD Unit Tests', function() {
@@ -223,10 +223,5 @@ describe('vUSD Unit Tests', function() {
         const vusd = await VUSD.deploy()
         await vusd.initialize('Hubble USD', 'hUSD')
         return vusd
-    }
-
-    async function calcGasPaid(tx) {
-        const wait = await tx.wait()
-        return wait.cumulativeGasUsed.mul(wait.effectiveGasPrice)
     }
 })

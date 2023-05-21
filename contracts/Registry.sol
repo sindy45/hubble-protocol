@@ -9,6 +9,7 @@ contract Registry {
     address public immutable marginAccount;
     address public immutable vusd;
     address public immutable orderBook;
+    address public immutable marginAccountHelper;
 
     constructor(
         address _oracle,
@@ -16,7 +17,8 @@ contract Registry {
         address _insuranceFund,
         address _marginAccount,
         address _vusd,
-        address _orderBook
+        address _orderBook,
+        address _marginAccountHelper
     ) {
         oracle = _oracle;
         clearingHouse = _clearingHouse;
@@ -24,5 +26,6 @@ contract Registry {
         marginAccount = _marginAccount;
         vusd = _vusd;
         orderBook = _orderBook;
+        marginAccountHelper = _marginAccountHelper;
     }
 }

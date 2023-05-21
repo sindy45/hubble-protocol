@@ -43,9 +43,14 @@ contract VUSD is ERC20PresetMinterPauserUpgradeable, ReentrancyGuard, IVUSD {
     }
 
     function withdraw(uint amount) external override whenNotPaused {
-        require(amount >= 5 * (10 ** PRECISION), "min withdraw is 5 vusd");
-        burn(amount);
-        withdrawals.push(Withdrawal(msg.sender, amount * SCALING_FACTOR));
+        _withdrawTo(_msgSender(), amount);
+    }
+
+    /**
+    * @dev no need to add onlyMarginAccountHelper modifier as vusd is burned from caller and sent to specified address
+    */
+    function withdrawTo(address to, uint amount) external override whenNotPaused {
+        _withdrawTo(to, amount);
     }
 
     function processWithdrawals() external override whenNotPaused nonReentrant {
@@ -90,6 +95,12 @@ contract VUSD is ERC20PresetMinterPauserUpgradeable, ReentrancyGuard, IVUSD {
     function setMaxWithdrawalProcesses(uint _maxWithdrawalProcesses) external {
         require(hasRole(DEFAULT_ADMIN_ROLE, _msgSender()), "ERC20PresetMinterPauser: must have admin role");
         maxWithdrawalProcesses = _maxWithdrawalProcesses;
+    }
+
+    function _withdrawTo(address to, uint amount) internal {
+        require(amount >= 5 * (10 ** PRECISION), "min withdraw is 5 vusd");
+        burn(amount); // burn vusd from msg.sender
+        withdrawals.push(Withdrawal(to, amount * SCALING_FACTOR));
     }
 
     function _min(uint256 a, uint256 b) internal pure returns (uint256) {

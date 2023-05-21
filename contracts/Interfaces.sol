@@ -11,6 +11,7 @@ interface IRegistry {
     function insuranceFund() external view returns(address);
     function marginAccount() external view returns(address);
     function orderBook() external view returns(address);
+    function marginAccountHelper() external view returns(address);
 }
 
 interface IOracle {
@@ -78,6 +79,8 @@ interface IInsuranceFund {
     function startAuction(address token) external;
     function calcVusdAmountForAuction(address token, uint amount) external view returns(uint);
     function buyCollateralFromAuction(address token, uint amount) external;
+    function depositFor(address to, uint amount) external;
+    function withdrawFor(address to, uint shares) external returns(uint);
 }
 
 interface IOrderBook {
@@ -223,6 +226,7 @@ interface IMarginAccount {
     function addMargin(uint idx, uint amount) external;
     function addMarginFor(uint idx, uint amount, address to) external;
     function removeMargin(uint idx, uint256 amount) external;
+    function removeMarginFor(uint idx, uint256 amount, address trader) external;
     function getSpotCollateralValue(address trader) external view returns(int256 spot);
     function weightedAndSpotCollateral(address trader) external view returns(int256, int256);
     function getNormalizedMargin(address trader) external view returns(int256);
@@ -281,6 +285,7 @@ interface IVUSD {
 
     function mintWithReserve(address to, uint amount) external payable;
     function withdraw(uint amount) external;
+    function withdrawTo(address to, uint amount) external;
     function processWithdrawals() external;
 }
 
@@ -299,85 +304,9 @@ interface IHubbleReferral {
     function getTraderRefereeInfo(address trader) external view returns (address referrer);
 }
 
-interface IJoeRouter02 {
-    function swapExactTokensForTokens(
-        uint256 amountIn,
-        uint256 amountOutMin,
-        address[] calldata path,
-        address to,
-        uint256 deadline
-    ) external returns (uint256[] memory amounts);
-    function swapTokensForExactTokens(
-        uint256 amountOut,
-        uint256 amountInMax,
-        address[] calldata path,
-        address to,
-        uint256 deadline
-    ) external returns (uint256[] memory amounts);
-    function factory() external view returns(address);
-    function getAmountsIn(uint256 amountOut, address[] calldata path) external view returns (uint256[] memory amounts);
-    function getAmountsOut(uint256 amountOut, address[] calldata path) external view returns (uint256[] memory amounts);
-}
-
-interface IJoePair {
-    function swap(
-        uint256 amount0Out,
-        uint256 amount1Out,
-        address to,
-        bytes calldata data
-    ) external;
-}
-
-interface IJoeFactory {
-    function getPair(address tokenA, address tokenB) external view returns (address pair);
-}
-
 interface IWAVAX is IERC20 {
     function deposit() external payable;
     function withdraw(uint256) external;
-}
-
-interface IYakRouter {
-    struct Trade {
-        uint amountIn;
-        uint amountOut;
-        address[] path;
-        address[] adapters;
-    }
-
-    struct FormattedOfferWithGas {
-        uint[] amounts;
-        address[] adapters;
-        address[] path;
-        uint gasEstimate;
-    }
-
-    struct FormattedOffer {
-        uint[] amounts;
-        address[] adapters;
-        address[] path;
-    }
-
-    function swapNoSplit(
-        Trade calldata _trade,
-        address _to,
-        uint _fee
-    ) external;
-
-    function findBestPathWithGas(
-        uint256 _amountIn,
-        address _tokenIn,
-        address _tokenOut,
-        uint _maxSteps,
-        uint _gasPrice
-    ) external view returns(FormattedOfferWithGas memory);
-
-    function findBestPath(
-        uint256 _amountIn,
-        address _tokenIn,
-        address _tokenOut,
-        uint _maxSteps
-    ) external view returns(FormattedOffer memory);
 }
 
 interface IHGTCore {
@@ -392,8 +321,4 @@ interface IHGTCore {
      * `_nonce` is the inbound nonce.
      */
     event ReceiveFromChain(uint16 indexed _srcChainId, address indexed _to, uint _amount, uint64 _nonce);
-}
-
-interface IFeeSink {
-    function transferOutVusd(address recipient, uint amount) external;
 }

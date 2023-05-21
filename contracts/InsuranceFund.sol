@@ -8,9 +8,9 @@ import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 import { ERC20Upgradeable } from "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
 
 import { VanillaGovernable } from "./legos/Governable.sol";
-import { IRegistry, IOracle, IMarginAccount, ERC20Detailed } from "./Interfaces.sol";
+import { IRegistry, IOracle, IMarginAccount, ERC20Detailed, IInsuranceFund } from "./Interfaces.sol";
 
-contract InsuranceFund is VanillaGovernable, ERC20Upgradeable {
+contract InsuranceFund is VanillaGovernable, ERC20Upgradeable, IInsuranceFund {
     using SafeERC20 for IERC20;
 
     uint8 constant DECIMALS = 6;
@@ -18,6 +18,7 @@ contract InsuranceFund is VanillaGovernable, ERC20Upgradeable {
 
     IERC20 public vusd;
     address public marginAccount;
+    address public marginAccountHelper;
     IOracle public oracle;
     uint public pendingObligation;
     uint public startPriceMultiplier;
@@ -49,7 +50,12 @@ contract InsuranceFund is VanillaGovernable, ERC20Upgradeable {
     event BadDebtAccumulated(uint amount, uint timestamp);
 
     modifier onlyMarginAccount() {
-        require(msg.sender == address(marginAccount), "IF.only_margin_account");
+        require(_msgSender() == address(marginAccount), "IF.only_margin_account");
+        _;
+    }
+
+    modifier onlyMarginAccountHelper() {
+        require(_msgSender() == marginAccountHelper, "IF.only_margin_account_helper");
         _;
     }
 
@@ -64,7 +70,11 @@ contract InsuranceFund is VanillaGovernable, ERC20Upgradeable {
         auctionDuration = 2 hours;
     }
 
-    function deposit(uint _amount) external {
+    function deposit(uint amount) external {
+        depositFor(_msgSender(), amount);
+    }
+
+    function depositFor(address to, uint amount) override public {
         settlePendingObligation();
         // we want to protect new LPs, when the insurance fund is in deficit
         require(pendingObligation == 0, "IF.deposit.pending_obligations");
@@ -77,15 +87,15 @@ contract InsuranceFund is VanillaGovernable, ERC20Upgradeable {
             _pool = 0;
         }
 
-        vusd.safeTransferFrom(msg.sender, address(this), _amount);
+        vusd.safeTransferFrom(_msgSender(), address(this), amount);
         uint shares = 0;
         if (_pool == 0) {
-            shares = _amount;
+            shares = amount;
         } else {
-            shares = _amount * _totalSupply / _pool;
+            shares = amount * _totalSupply / _pool;
         }
-        _mint(msg.sender, shares);
-        emit FundsAdded(msg.sender, _amount, _blockTimestamp());
+        _mint(to, shares);
+        emit FundsAdded(to, amount, _blockTimestamp());
     }
 
     function unbondShares(uint shares) external {
@@ -98,26 +108,15 @@ contract InsuranceFund is VanillaGovernable, ERC20Upgradeable {
     }
 
     function withdraw(uint shares) external {
-        // Checks
-        address usr = _msgSender();
-        require(unbond[usr].shares >= shares, "withdrawing_more_than_unbond");
-        uint _now = _blockTimestamp();
-        require(_now >= unbond[usr].unbondTime, "still_unbonding");
-        require(!_hasWithdrawPeriodElapsed(_now, unbond[usr].unbondTime), "withdraw_period_over");
-
-        // Effects
-        settlePendingObligation();
-        require(pendingObligation == 0, "IF.withdraw.pending_obligations");
-        uint amount = balance() * shares / totalSupply();
-        unchecked { unbond[usr].shares -= shares; }
-        _burn(usr, shares);
-
-        // Interactions
-        vusd.safeTransfer(usr, amount);
-        emit FundsWithdrawn(usr, amount, _now);
+        address user = _msgSender();
+        _withdrawFor(user, shares, user);
     }
 
-    function seizeBadDebt(uint amount) external onlyMarginAccount {
+    function withdrawFor(address user, uint shares) override external onlyMarginAccountHelper returns (uint) {
+        return _withdrawFor(user, shares, marginAccountHelper);
+    }
+
+    function seizeBadDebt(uint amount) override external onlyMarginAccount {
         pendingObligation += amount;
         emit BadDebtAccumulated(amount, block.timestamp);
         settlePendingObligation();
@@ -133,7 +132,7 @@ contract InsuranceFund is VanillaGovernable, ERC20Upgradeable {
         }
     }
 
-    function startAuction(address token) external onlyMarginAccount {
+    function startAuction(address token) override external onlyMarginAccount {
         if(!_isAuctionOngoing(auctions[token].startedAt, auctions[token].expiryTime)) {
             uint currentPrice = uint(oracle.getUnderlyingPrice(token));
             uint currentTimestamp = _blockTimestamp();
@@ -150,7 +149,7 @@ contract InsuranceFund is VanillaGovernable, ERC20Upgradeable {
     * @param token token to buy
     * @param amount amount to buy
     */
-    function buyCollateralFromAuction(address token, uint amount) external {
+    function buyCollateralFromAuction(address token, uint amount) override external {
         Auction memory auction = auctions[token];
         // validate auction
         require(_isAuctionOngoing(auction.startedAt, auction.expiryTime), "IF.no_ongoing_auction");
@@ -165,6 +164,29 @@ contract InsuranceFund is VanillaGovernable, ERC20Upgradeable {
         if (IERC20(token).balanceOf(address(this)) == 0) {
             auctions[token].startedAt = 0;
         }
+    }
+
+    /* ****************** */
+    /*   Internal         */
+    /* ****************** */
+
+    function _withdrawFor(address user, uint shares, address to) internal returns (uint amount) {
+        // Checks
+        require(unbond[user].shares >= shares, "withdrawing_more_than_unbond");
+        uint _now = _blockTimestamp();
+        require(_now >= unbond[user].unbondTime, "still_unbonding");
+        require(!_hasWithdrawPeriodElapsed(_now, unbond[user].unbondTime), "withdraw_period_over");
+
+        // Effects
+        settlePendingObligation();
+        require(pendingObligation == 0, "IF.withdraw.pending_obligations");
+        amount = balance() * shares / totalSupply();
+        unchecked { unbond[user].shares -= shares; }
+        _burn(user, shares);
+
+        // Interactions
+        vusd.safeTransfer(to, amount);
+        emit FundsWithdrawn(user, amount, _now);
     }
 
     /* ****************** */
@@ -193,7 +215,7 @@ contract InsuranceFund is VanillaGovernable, ERC20Upgradeable {
         return 0;
     }
 
-    function calcVusdAmountForAuction(address token, uint amount) external view returns(uint) {
+    function calcVusdAmountForAuction(address token, uint amount) override external view returns(uint) {
         Auction memory auction = auctions[token];
         return _calcVusdAmountForAuction(auction, token, amount);
     }
@@ -269,5 +291,6 @@ contract InsuranceFund is VanillaGovernable, ERC20Upgradeable {
         vusd = IERC20(registry.vusd());
         marginAccount = registry.marginAccount();
         oracle = IOracle(registry.oracle());
+        marginAccountHelper = registry.marginAccountHelper();
     }
 }

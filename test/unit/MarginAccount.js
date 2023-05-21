@@ -16,12 +16,11 @@ describe('MarginAccount Unit Tests', function() {
 
     describe('Misc', function() {
         before(async function() {
-            ;({ marginAccount, vusd, oracle, clearingHouse, insuranceFund, weth } = await setupContracts({ amm: { initialLiquidity: 0 } }))
+            ;({ marginAccount, vusd, oracle, clearingHouse, insuranceFund, weth, marginAccountHelper } = await setupContracts({ amm: { initialLiquidity: 0 } }))
             await vusd.grantRole(await vusd.MINTER_ROLE(), admin.address)
         })
 
-        // @todo remove 'skip'
-        it.skip('reverts when initializing again', async function() {
+        it('reverts when initializing again', async function() {
             await expect(marginAccount.initialize(bob.address, vusd.address)).to.be.revertedWith('Initializable: contract is already initialized')
         })
 
@@ -71,6 +70,9 @@ describe('MarginAccount Unit Tests', function() {
             // but first we need to revert original clearingHouse, otherwise calls will revert
             await setClearingHouse(clearingHouse)
             expect(await vusd.balanceOf(alice)).to.eq(0)
+            await expect(
+                marginAccount.removeMarginFor(0, pnl, alice)
+            ).to.be.revertedWith('Only marginAccountHelper')
 
             await marginAccount.removeMargin(0, pnl)
 
@@ -201,6 +203,6 @@ describe('MarginAccount Unit Tests', function() {
 })
 
 async function setClearingHouse(clearingHouse) {
-    registry = await Registry.deploy(oracle.address, clearingHouse.address, insuranceFund.address, marginAccount.address, vusd.address, orderBook.address)
+    registry = await Registry.deploy(oracle.address, clearingHouse.address, insuranceFund.address, marginAccount.address, vusd.address, orderBook.address, marginAccountHelper.address)
     await marginAccount.syncDeps(registry.address, 5e4)
 }

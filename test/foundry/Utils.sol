@@ -86,12 +86,6 @@ abstract contract Utils is Test {
         marginAccount = MarginAccount(payable(address(proxy)));
         husd.grantRole(keccak256("MINTER_ROLE"), address(marginAccount));
 
-        marginAccountHelper = new MarginAccountHelper(
-            address(marginAccount),
-            address(husd),
-            address(usdc) // pass a dummy address that supports safeApprove
-        );
-
         InsuranceFund ifImpl = new InsuranceFund();
         proxy = new TransparentUpgradeableProxy(
             address(ifImpl),
@@ -99,6 +93,14 @@ abstract contract Utils is Test {
             abi.encodeWithSelector(InsuranceFund.initialize.selector, governance)
         );
         insuranceFund = InsuranceFund(address(proxy));
+
+        MarginAccountHelper mahImpl = new MarginAccountHelper();
+        proxy = new TransparentUpgradeableProxy(
+            address(mahImpl),
+            address(proxyAdmin),
+            abi.encodeWithSelector(MarginAccountHelper.initialize.selector, governance, address(husd), address(marginAccount), address(insuranceFund))
+        );
+        marginAccountHelper = MarginAccountHelper(address(proxy));
 
         TestOracle oracleImpl = new TestOracle();
         proxy = new TransparentUpgradeableProxy(
@@ -141,7 +143,7 @@ abstract contract Utils is Test {
         ));
         clearingHouse = ClearingHouse(address(clProxy));
 
-        registry = new Registry(address(oracle), address(clearingHouse), address(insuranceFund), address(marginAccount), address(husd), address(orderBook));
+        registry = new Registry(address(oracle), address(clearingHouse), address(insuranceFund), address(marginAccount), address(husd), address(orderBook), address(marginAccountHelper));
 
         hubbleViewer = new HubbleViewer(address(clearingHouse), address(marginAccount), address(registry));
 

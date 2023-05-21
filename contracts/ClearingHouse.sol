@@ -51,8 +51,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         address _vusd,
         address _hubbleReferral
     ) external
-      // commenting this out only for a bit for testing because it doesn't let us initialize repeatedly unless we run a fresh subnet
-      // initializer
+      initializer
     {
         _setGovernace(_governance);
 
@@ -61,9 +60,6 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         orderBook = IOrderBook(_orderBook);
         vusd = VUSD(_vusd);
         hubbleReferral = IHubbleReferral(_hubbleReferral);
-
-        // resetting to handle re-deployments using proxy contracts
-        delete amms;
     }
 
     /* ****************** */

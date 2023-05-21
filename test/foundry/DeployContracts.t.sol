@@ -21,11 +21,13 @@ contract DeployContracts is Utils {
         assertEq(address(marginAccount.clearingHouse()), address(clearingHouse));
         assertEq(address(marginAccount.oracle()), address(oracle));
         assertEq(address(marginAccount.insuranceFund()), address(insuranceFund));
+        assertEq(address(marginAccount.marginAccountHelper()), address(marginAccountHelper));
         assertEq(marginAccount.liquidationIncentive(), 5e4);
 
         // insuranceFund
         assertEq(insuranceFund.governance(), governance);
         assertEq(address(insuranceFund.vusd()), address(husd));
+        assertEq(address(insuranceFund.marginAccountHelper()), address(marginAccountHelper));
 
         // orderBook
         assertEq(address(orderBook.clearingHouse()), address(clearingHouse));

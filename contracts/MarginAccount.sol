@@ -64,6 +64,7 @@ contract MarginAccount is IMarginAccount, MetaHubbleBase, ReentrancyGuard {
     IOracle public oracle;
     IInsuranceFund public insuranceFund;
     IERC20FlexibleSupply public vusd;
+    address public marginAccountHelper;
     uint public credit;
 
     /// @notice Array of supported collateral
@@ -97,18 +98,19 @@ contract MarginAccount is IMarginAccount, MetaHubbleBase, ReentrancyGuard {
         _;
     }
 
+    modifier onlyMarginAccountHelper() {
+        require(_msgSender() == marginAccountHelper, "Only marginAccountHelper");
+        _;
+    }
+
     constructor(address _trustedForwarder) MetaHubbleBase(_trustedForwarder) {}
 
     function initialize(
         address _governance,
         address _vusd
     ) external
-      // commenting this out only for a bit for testing because it doesn't let us initialize repeatedly unless we run a fresh subnet
-      // initializer
+      initializer
     {
-        // resetting to handle re-deployments using proxy contracts
-        delete supportedCollateral;
-
         _setGovernace(_governance);
         _addCollateral(_vusd, PRECISION); // weight = 1 * PRECISION
         vusd = IERC20FlexibleSupply(_vusd);
@@ -159,28 +161,11 @@ contract MarginAccount is IMarginAccount, MetaHubbleBase, ReentrancyGuard {
     */
     function removeMargin(uint idx, uint256 amount) override external whenNotPaused {
         address trader = _msgSender();
-        _validateRemoveMargin(idx, amount, trader);
-
-        if (idx == VUSD_IDX) {
-            _transferOutVusd(trader, amount);
-        } else {
-            supportedCollateral[idx].token.safeTransfer(trader, amount);
-        }
-        emit MarginRemoved(trader, idx, amount, _blockTimestamp());
+        _removeMarginFor(idx, amount, trader, trader);
     }
 
-    /**
-    * @notice remove margin in Avax
-    * @param amount Amount to withdraw
-    */
-    function removeAvaxMargin(uint amount) external whenNotPaused {
-        address trader = _msgSender();
-        _validateRemoveMargin(WAVAX_IDX, amount, trader);
-
-        IWAVAX(address(supportedCollateral[WAVAX_IDX].token)).withdraw(amount);
-        safeTransferAVAX(trader, amount);
-
-        emit MarginRemoved(trader, WAVAX_IDX, amount, _blockTimestamp());
+    function removeMarginFor(uint idx, uint amount, address trader) override external whenNotPaused onlyMarginAccountHelper() {
+        _removeMarginFor(idx, amount, trader, marginAccountHelper);
     }
 
     /**
@@ -600,6 +585,17 @@ contract MarginAccount is IMarginAccount, MetaHubbleBase, ReentrancyGuard {
         return a < b ? a : b;
     }
 
+    function _removeMarginFor(uint idx, uint amount, address trader, address receiver) internal {
+        _validateRemoveMargin(idx, amount, trader);
+
+        if (idx == VUSD_IDX) {
+            _transferOutVusd(receiver, amount);
+        } else {
+            supportedCollateral[idx].token.safeTransfer(receiver, amount);
+        }
+        emit MarginRemoved(trader, idx, amount, _blockTimestamp());
+    }
+
     function _transferInVusd(address from, uint amount) internal {
         IERC20(address(vusd)).safeTransferFrom(from, address(this), amount);
         if (credit > 0) {
@@ -649,10 +645,6 @@ contract MarginAccount is IMarginAccount, MetaHubbleBase, ReentrancyGuard {
         clearingHouse.assertMarginRequirement(trader);
     }
 
-    function safeTransferAVAX(address to, uint256 value) internal nonReentrant {
-        (bool success, ) = to.call{value: value}(new bytes(0));
-        require(success, "MA: AVAX_TRANSFER_FAILED");
-    }
     /* ****************** */
     /*     Governance     */
     /* ****************** */
@@ -668,6 +660,7 @@ contract MarginAccount is IMarginAccount, MetaHubbleBase, ReentrancyGuard {
         oracle = IOracle(registry.oracle());
         insuranceFund = IInsuranceFund(registry.insuranceFund());
         liquidationIncentive = _liquidationIncentive;
+        marginAccountHelper = registry.marginAccountHelper();
     }
 
     function whitelistCollateral(address _coin, uint _weight) external onlyGovernance {

@@ -4,6 +4,7 @@ const {
     setupContracts,
     addMargin,
     setupRestrictedTestToken,
+    gotoNextIFUnbondEpoch,
     setDefaultClearingHouseParams
 } = utils
 const { constants: { _1e6, _1e18, ZERO } } = utils
@@ -13,7 +14,7 @@ describe('Insurance Fund Unit Tests', function() {
         signers = await ethers.getSigners()
         alice = signers[0].address
         ;([ bob, charlie, mockMarginAccount, admin ] = signers.slice(10))
-        ;({ marginAccount, vusd, oracle, clearingHouse, insuranceFund } = await setupContracts({ addLiquidity: false }))
+        ;({ marginAccount, vusd, oracle, clearingHouse, insuranceFund, marginAccountHelper } = await setupContracts())
         await vusd.grantRole(await vusd.MINTER_ROLE(), admin.address)
     })
 
@@ -58,6 +59,9 @@ describe('Insurance Fund Unit Tests', function() {
 
     it('partial withdraw', async function() {
         await gotoNextIFUnbondEpoch(insuranceFund, alice)
+        await expect(
+            insuranceFund.withdrawFor(alice, withdraw)
+        ).to.be.revertedWith('IF.only_margin_account_helper')
         await insuranceFund.withdraw(withdraw)
 
         // expect(await insuranceFund.balanceOf(alice)).to.eq(deposit.div(2))
@@ -277,15 +281,8 @@ describe('Insurance Fund Auction Tests', function() {
 })
 
 async function setMarginAccount(marginAccount) {
-    registry = await Registry.deploy(oracle.address, clearingHouse.address, insuranceFund.address, marginAccount.address, vusd.address, orderBook.address)
+    registry = await Registry.deploy(oracle.address, clearingHouse.address, insuranceFund.address, marginAccount.address, vusd.address, orderBook.address, marginAccountHelper.address)
     await insuranceFund.syncDeps(registry.address)
-}
-
-async function gotoNextIFUnbondEpoch(insuranceFund, usr) {
-    return network.provider.send(
-        'evm_setNextBlockTimestamp',
-        [(await insuranceFund.unbond(usr)).unbondTime.toNumber()]
-    );
 }
 
 async function validateAuction(token, auctionTimestamp, auctionDuration, oraclePrice) {

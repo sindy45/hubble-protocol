@@ -44,7 +44,6 @@ async function setupContracts(options = {}) {
     // })
 
     ;([
-        MarginAccountHelper,
         Registry,
         ERC20Mintable,
         AMM,
@@ -52,7 +51,6 @@ async function setupContracts(options = {}) {
         TransparentUpgradeableProxy,
         ProxyAdmin
     ] = await Promise.all([
-        ethers.getContractFactory('MarginAccountHelper'),
         ethers.getContractFactory('Registry'),
         ethers.getContractFactory('ERC20Mintable'),
         ethers.getContractFactory(options.amm && options.amm.testAmm ? 'TestAmm' : 'AMM'),
@@ -102,11 +100,10 @@ async function setupContracts(options = {}) {
         )
     }
 
-    let constructorArguments = [marginAccount.address, vusd.address, options.wavaxAddress || usdc.address /* pass a dummy address that supports safeApprove */]
-    marginAccountHelper = await MarginAccountHelper.deploy(...constructorArguments.concat(getTxOptions()))
-    verification.push({ name: 'MarginAccountHelper', address: marginAccountHelper.address, constructorArguments })
-
     insuranceFund = await setupUpgradeableProxy('InsuranceFund', proxyAdmin.address, [ governance ])
+
+    initArgs = [ governance, vusd.address, marginAccount.address, insuranceFund.address ]
+    marginAccountHelper = await setupUpgradeableProxy('MarginAccountHelper', proxyAdmin.address, initArgs)
 
     if (options.restrictedVUSD) {
         const transferRole = ethers.utils.id('TRANSFER_ROLE')
@@ -124,7 +121,7 @@ async function setupContracts(options = {}) {
     const hubbleReferral = await setupUpgradeableProxy('HubbleReferral', proxyAdmin.address)
 
     if (!clearingHouseProxy) { // a genesis proxy hasnt been setup
-        constructorArguments = [
+        let constructorArguments = [
             oracle.address /* random contract address */,
             proxyAdmin.address,
             '0x'
@@ -182,7 +179,7 @@ async function setupContracts(options = {}) {
 
     await vusd.grantRole(ethers.utils.id('MINTER_ROLE'), marginAccount.address, getTxOptions())
 
-    constructorArguments = [oracle.address, clearingHouse.address, insuranceFund.address, marginAccount.address, vusd.address, orderBook.address]
+    constructorArguments = [oracle.address, clearingHouse.address, insuranceFund.address, marginAccount.address, vusd.address, orderBook.address, marginAccountHelper.address]
     registry = await Registry.deploy(...constructorArguments.concat(getTxOptions()))
     await Promise.all([
         marginAccount.syncDeps(registry.address, 5e4, getTxOptions()), // liquidationIncentive = 5% = .05 scaled 6 decimals
@@ -667,26 +664,16 @@ async function setBalance(address, balance) {
     ]);
 }
 
-/**
- * solve x^2 - b * x + 1
- * x1 = (b - sqrt(b^2 - 4)) / 2, x2 = (b + sqrt(b^2 - 4)) / 2
- * longLiqPrice = x1^2 * initialPrice, shortLiqPrice = x2^2 * initialPrice
- */
-function calcMakerLiquidationPrice(liquidationPriceData) {
-    const b = bnToFloat(liquidationPriceData.coefficient)
-    const D = b ** 2 - 4
-    if (D < 0 || b < 0) { // already in liquidation zone or outside liquidation
-        return { longLiqPrice: 0, shortLiqPrice: 0 }
-    }
+async function calcGasPaid(tx) {
+    const wait = await tx.wait()
+    return wait.cumulativeGasUsed.mul(wait.effectiveGasPrice)
+}
 
-    let x1 = (b - Math.sqrt(D)) / 2
-    let x2 = (b + Math.sqrt(D)) / 2
-
-    const initialPrice = bnToFloat(liquidationPriceData.initialPrice)
-    return {
-        longLiqPrice: initialPrice * (x1 ** 2),
-        shortLiqPrice: initialPrice * (x2 ** 2)
-    }
+async function gotoNextIFUnbondEpoch(insuranceFund, usr) {
+    return network.provider.send(
+        'evm_setNextBlockTimestamp',
+        [(await insuranceFund.unbond(usr)).unbondTime.toNumber()]
+    );
 }
 
 module.exports = {
@@ -721,6 +708,7 @@ module.exports = {
     forkFuji,
     gotoNextUnbondEpoch,
     setBalance,
-    calcMakerLiquidationPrice,
-    setDefaultClearingHouseParams
+    setDefaultClearingHouseParams,
+    calcGasPaid,
+    gotoNextIFUnbondEpoch
 }

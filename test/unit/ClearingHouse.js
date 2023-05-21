@@ -13,9 +13,8 @@ describe('ClearingHouse Unit Tests', function() {
         ;({ marginAccount, vusd, oracle, clearingHouse, insuranceFund } = await setupContracts({ testClearingHouse: false }))
     })
 
-    // @todo remove 'skip'
-    it.skip('reverts when initializing again', async function() {
-        await expect(clearingHouse.initialize(alice, alice, alice, alice, alice, alice, 0, 0, 0, 0, 0, 0)).to.be.revertedWith('Initializable: contract is already initialized')
+    it('reverts when initializing again', async function() {
+        await expect(clearingHouse.initialize(alice, alice, alice, alice, alice, alice)).to.be.revertedWith('Initializable: contract is already initialized')
     })
 
     it('governance things', async function() {
