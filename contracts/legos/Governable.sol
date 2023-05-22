@@ -5,19 +5,23 @@ pragma solidity 0.8.9;
 import { Initializable } from "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 
 contract VanillaGovernable {
-    address public governance;
+    address private _governance;
 
     modifier onlyGovernance() {
-        require(msg.sender == governance, "ONLY_GOVERNANCE");
+        require(msg.sender == _governance, "ONLY_GOVERNANCE");
         _;
     }
 
-    function setGovernace(address _governance) external onlyGovernance {
-        _setGovernace(_governance);
+    function governance() public view returns (address) {
+        return _governance;
     }
 
-    function _setGovernace(address _governance) internal {
-        governance = _governance;
+    function setGovernace(address __governance) external onlyGovernance {
+        _setGovernace(__governance);
+    }
+
+    function _setGovernace(address __governance) internal {
+        _governance = __governance;
     }
 }
 

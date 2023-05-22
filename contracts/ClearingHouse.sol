@@ -7,6 +7,7 @@ import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import { HubbleBase } from "./legos/HubbleBase.sol";
 import { IAMM, IMarginAccount, IClearingHouse, IHubbleReferral, IOrderBook } from "./Interfaces.sol";
 import { VUSD } from "./VUSD.sol";
+import { IHubbleBibliophile } from "./interfaces/IHubbleBibliophile.sol";
 
 contract ClearingHouse is IClearingHouse, HubbleBase {
     using SafeCast for uint256;
@@ -38,8 +39,9 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     address override public feeSink;
     IMarginAccount public marginAccount;
     IOrderBook public orderBook;
-    IAMM[] override public amms;
+    IAMM[] override public amms; // SLOT_12 !!! used in precompile !!!
     IHubbleReferral public hubbleReferral;
+    IHubbleBibliophile public bibliophile;
 
     uint256[50] private __gap;
 
@@ -284,9 +286,6 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         uint numAmms = amms.length;
         for (uint i; i < numAmms; ++i) {
             (fundingPayment,) = amms[i].getPendingFundingPayment(trader);
-            if (fundingPayment < 0) {
-                fundingPayment -= fundingPayment / 1e3; // receivers charged 0.1% to account for rounding-offs
-            }
             totalFunding += fundingPayment;
         }
     }
@@ -309,6 +308,18 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
 
     function getNotionalPositionAndMargin(address trader, bool includeFundingPayments, Mode mode)
         override
+        public
+        view
+        returns(uint256 notionalPosition, int256 margin)
+    {
+        if (address(bibliophile) != address(0x0)) {
+            // precompile magic allows us to execute this for a fixed 5k gas
+            return bibliophile.getNotionalPositionAndMargin(trader, includeFundingPayments, uint8(mode));
+        }
+        return getNotionalPositionAndMarginVanilla(trader, includeFundingPayments, mode);
+    }
+
+    function getNotionalPositionAndMarginVanilla(address trader, bool includeFundingPayments, Mode mode)
         public
         view
         returns(uint256 notionalPosition, int256 margin)
@@ -456,5 +467,9 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         referralShare = _referralShare;
         tradingFeeDiscount = _tradingFeeDiscount;
         liquidationPenalty = _liquidationPenalty;
+    }
+
+    function setBibliophile(address _bibliophile) external onlyGovernance {
+        bibliophile = IHubbleBibliophile(_bibliophile);
     }
 }

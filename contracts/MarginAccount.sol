@@ -80,7 +80,8 @@ contract MarginAccount is IMarginAccount, MetaHubbleBase, ReentrancyGuard {
     * @notice Maps index in supportedCollateral => trader => balance
     * @dev equivalent to margin(uint idx, address user)
     */
-    mapping(uint => mapping(address => int)) override public margin;
+    mapping(uint => mapping(address => int)) override public margin; // SLOT_10 !!! used in precompile !!!
+
     /**
     * @notice Maps trader => reserved margin for open orders
     */

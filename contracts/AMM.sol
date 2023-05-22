@@ -12,6 +12,27 @@ contract AMM is IAMM, Governable {
     using SafeCast for uint256;
     using SafeCast for int256;
 
+    /* ****************** */
+    /*       Structs      */
+    /* ****************** */
+
+    struct Position {
+        int256 size;
+        uint256 openNotional;
+        int256 lastPremiumFraction;
+        uint liquidationThreshold;
+    }
+
+    struct ReserveSnapshot {
+        uint256 lastPrice;
+        uint256 timestamp;
+        uint256 blockNumber;
+    }
+
+    /* ****************** */
+    /*      Constants     */
+    /* ****************** */
+
     int256 constant BASE_PRECISION = 1e18;
     uint256 constant BASE_PRECISION_UINT = 1e18;
 
@@ -24,18 +45,18 @@ contract AMM is IAMM, Governable {
     /*       Storage      */
     /* ****************** */
 
-    // System-wide config
+    // vars needed in the precompiles should preferably come first and mention the SLOT_# to avoid any potential slot errors
+    uint256 public lastTradePrice; // SLOT_1 !!! used in precompile !!!
+    mapping(address => Position) override public positions;  // SLOT_2 !!! used in precompile !!!
+    int256 public cumulativePremiumFraction; // SLOT_3 !!! used in precompile !!!
 
     IOracle public oracle;
-
-    // AMM config
 
     address override public underlyingAsset;
     string public name;
 
     uint256 public fundingBufferPeriod;
     uint256 public nextFundingTime;
-    int256 public cumulativePremiumFraction;
 
     uint256 public longOpenInterestNotional;
     uint256 public shortOpenInterestNotional;
@@ -47,19 +68,7 @@ contract AMM is IAMM, Governable {
     uint256 public maxLiquidationPriceSpread; // scaled 6 decimals
 
     enum Side { LONG, SHORT }
-    struct Position {
-        int256 size;
-        uint256 openNotional;
-        int256 lastPremiumFraction;
-        uint liquidationThreshold;
-    }
-    mapping(address => Position) override public positions;
 
-    struct ReserveSnapshot {
-        uint256 lastPrice;
-        uint256 timestamp;
-        uint256 blockNumber;
-    }
     ReserveSnapshot[] public reserveSnapshots;
 
     /// @notice Min amount of base asset quantity to trade
@@ -77,8 +86,9 @@ contract AMM is IAMM, Governable {
     uint256[50] private __gap;
 
     /* ****************** */
-    /*       Events       */
+    /*    Storage Ends    */
     /* ****************** */
+
     modifier onlyClearingHouse() {
         require(msg.sender == clearingHouse, "Only clearingHouse");
         _;
@@ -371,7 +381,7 @@ contract AMM is IAMM, Governable {
         if (reserveSnapshots.length == 0) {
             return uint(oracle.getUnderlyingPrice(underlyingAsset));
         }
-        return reserveSnapshots[reserveSnapshots.length - 1].lastPrice;
+        return lastTradePrice;
     }
 
     function getUnderlyingPrice() public view returns(uint256) {
@@ -488,6 +498,7 @@ contract AMM is IAMM, Governable {
     {
         uint256 currentBlock = block.number;
         uint256 blockTimestamp = _blockTimestamp();
+        lastTradePrice = price;
 
         if (reserveSnapshots.length == 0) {
             reserveSnapshots.push(

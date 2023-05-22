@@ -323,6 +323,7 @@ async function setupAmm(governance, args, ammOptions, slowMode) {
     }
 
     if (whitelist) {
+        // console.log('whitelisting', amm.address)
         await clearingHouse.whitelistAmm(amm.address, getTxOptions())
         await orderBook.initializeMinSize(minSize, getTxOptions())
     }
@@ -581,12 +582,12 @@ async function generateConfig(leaderboardAddress, marginAccountHelperAddress, ex
     }
 
     // to find the genesis block, we will get the block in which the first amm was whitelisted
-    const marketAddedEvents = await clearingHouse.queryFilter('MarketAdded', startBlock)
-    genesisBlock = marketAddedEvents[0].blockNumber
+    // const marketAddedEvents = await clearingHouse.queryFilter('MarketAdded', startBlock)
+    // genesisBlock = marketAddedEvents[0].blockNumber
 
     const res = {
-        genesisBlock,
-        timestamp: (await ethers.provider.getBlock(genesisBlock)).timestamp,
+        // genesisBlock,
+        // timestamp: (await ethers.provider.getBlock(genesisBlock)).timestamp,
         contracts: {
             OrderBook: orderBook.address,
             ClearingHouse: clearingHouse.address,

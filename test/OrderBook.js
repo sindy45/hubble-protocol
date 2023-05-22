@@ -26,10 +26,11 @@ describe('Order Book', function () {
     before(async function () {
         signers = await ethers.getSigners()
         ;([, alice, bob] = signers)
-        ;({ orderBook, usdc, oracle, weth } = await setupContracts({mockOrderBook: false}))
+        ;({ orderBook, usdc, oracle, weth, marginAccount } = await setupContracts({mockOrderBook: false}))
         domain = await getDomain()
 
         await orderBook.setValidatorStatus(signers[0].address, true)
+
         await addMargin(alice, _1e6.mul(4000))
         await addMargin(bob, _1e6.mul(4000))
     })
@@ -43,7 +44,7 @@ describe('Order Book', function () {
             salt: BigNumber.from(Date.now()),
             reduceOnly: false
         }
-
+        tradeFee = shortOrder.baseAssetQuantity.mul(shortOrder.price).div(_1e18).mul(500).div(_1e6).abs()
         order1Hash = await orderBook.getOrderHash(shortOrder)
         signature1 = await alice._signTypedData(domain, orderType, shortOrder)
         const signer = (await orderBook.verifySigner(shortOrder, signature1))[0]
@@ -66,7 +67,7 @@ describe('Order Book', function () {
     })
 
     it('matches orders with same price and opposite base asset quantity', async function() {
-      // long order with same price and baseAssetQuantity
+        // long order with same price and baseAssetQuantity
         longOrder = {
             ammIndex: ZERO,
             trader: bob.address,
@@ -104,6 +105,66 @@ describe('Order Book', function () {
             [ signature2, signature1 ],
             longOrder.baseAssetQuantity
         )).to.revertedWith('OB_invalid_order')
+    })
+
+    it('storage slots are as expected', async function() {
+        const VAR_MARGIN_MAPPING_STORAGE_SLOT = 10 // !!! if you change this, it has to be changed in the precompile !!!
+        // gets margin[0][alice]
+        let storage = await ethers.provider.getStorageAt(
+            marginAccount.address,
+            ethers.utils.keccak256(ethers.utils.solidityPack(
+                ['bytes32', 'bytes32'],
+                [
+                    '0x' + '0'.repeat(24) + alice.address.slice(2),
+                    ethers.utils.keccak256(ethers.utils.solidityPack(['uint256', 'uint256'], [0, VAR_MARGIN_MAPPING_STORAGE_SLOT]))
+                ]
+            ))
+        )
+        expect(BigNumber.from(storage)).to.eq(_1e6.mul(4000).sub(tradeFee))
+
+        // gets isValidator[alice]
+        const VAR_IS_VALIDATOR_MAPPING_STORAGE_SLOT = 55 // this is not used in the precompile as yet
+        storage = await ethers.provider.getStorageAt(
+            orderBook.address,
+            ethers.utils.keccak256(ethers.utils.solidityPack(['bytes32', 'uint256'], ['0x' + '0'.repeat(24) + signers[0].address.slice(2), VAR_IS_VALIDATOR_MAPPING_STORAGE_SLOT]))
+        )
+        expect(BigNumber.from(storage)).to.eq(1) // true
+
+        const VAR_LAST_PRICE_SLOT = 1
+        storage = await ethers.provider.getStorageAt(
+            amm.address,
+            ethers.utils.solidityPack(['uint256'], [VAR_LAST_PRICE_SLOT])
+        )
+        expect(BigNumber.from(storage)).to.eq(longOrder.price)
+
+        const VAR_POSITIONS_SLOT = 2
+        let basePositionSlot = ethers.utils.keccak256(ethers.utils.solidityPack(['bytes32', 'uint256'], ['0x' + '0'.repeat(24) + bob.address.slice(2), VAR_POSITIONS_SLOT]))
+        storage = await ethers.provider.getStorageAt(amm.address, basePositionSlot) // size
+        expect(longOrder.baseAssetQuantity).to.eq(BigNumber.from(storage))
+        storage = await ethers.provider.getStorageAt(amm.address, BigNumber.from(basePositionSlot).add(1)) // open notional
+        expect(longOrder.baseAssetQuantity.mul(longOrder.price).div(_1e18)).to.eq(BigNumber.from(storage))
+
+        // alice which has a negative position
+        basePositionSlot = ethers.utils.keccak256(ethers.utils.solidityPack(['bytes32', 'uint256'], ['0x' + '0'.repeat(24) + alice.address.slice(2), VAR_POSITIONS_SLOT]))
+        storage = await ethers.provider.getStorageAt(amm.address, basePositionSlot) // size
+        console.log('storage', storage.toString())
+        expect(shortOrder.baseAssetQuantity).to.eq(BigNumber.from(storage).fromTwos(256))
+        storage = await ethers.provider.getStorageAt(amm.address, BigNumber.from(basePositionSlot).add(1)) // open notional
+        expect(shortOrder.baseAssetQuantity.mul(shortOrder.price).abs().div(_1e18)).to.eq(BigNumber.from(storage))
+
+        // ClearingHouse
+        const AMMS_SLOT = 12
+        storage = await ethers.provider.getStorageAt(
+            clearingHouse.address,
+            ethers.utils.solidityPack(['uint256'], [AMMS_SLOT])
+        )
+        expect(1).to.eq(BigNumber.from(storage)) // 1 amm
+
+        storage = await ethers.provider.getStorageAt(
+            clearingHouse.address,
+            ethers.utils.keccak256(ethers.utils.solidityPack(['uint256'], [AMMS_SLOT]))
+        )
+        expect(amm.address).to.eq(ethers.utils.getAddress('0x' + storage.slice(26)))
     })
 
     it('matches multiple long orders with same price and opposite base asset quantity with short orders', async function() {

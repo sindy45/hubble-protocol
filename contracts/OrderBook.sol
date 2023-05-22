@@ -23,7 +23,8 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
     int256[] public minSizes; // min size for each AMM, array index is the ammIndex
 
     mapping(bytes32 => OrderInfo) public orderInfo;
-    mapping(address => bool) public isValidator;
+    mapping(address => bool) public isValidator; // SLOT_55 (not used in precompile)
+
     /**
     * @notice maps the address of the trader to the amount of reduceOnlyAmount for each amm
     * trader => ammIndex => reduceOnlyAmount

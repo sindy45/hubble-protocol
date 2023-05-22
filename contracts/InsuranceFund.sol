@@ -83,7 +83,7 @@ contract InsuranceFund is VanillaGovernable, ERC20Upgradeable, IInsuranceFund {
         uint _totalSupply = totalSupply();
         uint vusdBalance = balance();
         if (_totalSupply == 0 && vusdBalance > 0) { // trading fee accumulated while there were no IF LPs
-            vusd.safeTransfer(governance, vusdBalance);
+            vusd.safeTransfer(governance(), vusdBalance);
             _pool = 0;
         }
 
