@@ -64,7 +64,6 @@ contract MarginAccount is IMarginAccount, MetaHubbleBase, ReentrancyGuard {
     IOracle public oracle;
     IInsuranceFund public insuranceFund;
     IERC20FlexibleSupply public vusd;
-    address public marginAccountHelper;
     uint public credit;
 
     /// @notice Array of supported collateral
@@ -86,8 +85,9 @@ contract MarginAccount is IMarginAccount, MetaHubbleBase, ReentrancyGuard {
     * @notice Maps trader => reserved margin for open orders
     */
     mapping(address => uint) public reservedMargin;
+    address public marginAccountHelper;
 
-    uint256[49] private __gap;
+    uint256[50] private __gap;
 
     modifier onlyClearingHouse() {
         require(_msgSender() == address(clearingHouse), "Only clearingHouse");

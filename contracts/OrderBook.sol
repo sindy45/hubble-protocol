@@ -141,7 +141,7 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         IAMM amm = IAMM(clearingHouse.amms(order.ammIndex));
         (int size,,,) = amm.positions(order.trader);
         if(order.reduceOnly) {
-            require(isOppositeSign(size, order.baseAssetQuantity), "OB_reduce_only_order_must_close");
+            require(isOppositeSign(size, order.baseAssetQuantity), "OB_reduce_only_order_must_reduce_position");
             reduceOnlyAmount[order.trader][order.ammIndex] += abs(order.baseAssetQuantity);
             require(abs(size) >= reduceOnlyAmount[order.trader][order.ammIndex], "OB_reduce_only_amount_exceeded");
         } else {

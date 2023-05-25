@@ -6,6 +6,7 @@ const {
     assertions,
     setupContracts,
     addMargin,
+    gotoNextFundingTime,
     setupRestrictedTestToken,
 } = utils
 
@@ -47,83 +48,82 @@ describe('Twap Price Tests', function() {
             983500000
     */
 
-    before('generate sample snapshots', async function() {
+    before(async function() {
         signers = await ethers.getSigners()
         alice = signers[0].address
-        ;({ amm } = await setupContracts({ tradeFee: TRADE_FEE }))
+        ;({ amm, oracle, clearingHouse, weth } = await setupContracts({ tradeFee: TRADE_FEE }))
         // add margin
-        margin = _1e6.mul(10000)
+        margin = _1e6.mul(20000)
         await addMargin(signers[0], margin)
 
-        baseAssetQuantity = _1e18.mul(5)
+        oracleTwap = _1e6.mul(999)
+        await oracle.setUnderlyingTwapPrice(weth.address, oracleTwap)
 
-        // spot price after long ~ 1003
-        // spot price after first short ~ 1002
-        // spot price after second short ~ 1001
-        let timestamp = Date.now()
+        baseAssetQuantity = _1e18.mul(5)
+        timestamp = parseInt(await amm.nextFundingTime())
+        await gotoNextFundingTime(amm) // for deterministic twap calculation
+    })
+
+    it('return oracle twap when no trades', async () => {
+        const twap = await amm.getMarkPriceTwap()
+        expect(twap).to.eq(oracleTwap)
+    })
+
+    it('get TWAP price', async () => {
+        // generate sample data
         for (let i = 0; i < 30; i++) {
             if (i % 3 == 0) {
                 let markPrice = await amm.lastPrice();
                 markPrice = markPrice.add(_1e6.mul(i).div(10))
                 const base = baseAssetQuantity.mul(2)
-                const quote = markPrice.mul(base).div(_1e18).abs()
 
-                await clearingHouse.openPosition2(0, base, quote)
+                await clearingHouse.openPosition3(0, base, markPrice)
                 timestamp += 14
                 await increaseEvmTime(timestamp)
             } else {
                 let markPrice = await amm.lastPrice();
                 markPrice = markPrice.sub(_1e6.mul(i).div(10))
                 const base = baseAssetQuantity.mul(-1)
-                const quote = markPrice.mul(base).div(_1e18).abs()
 
-                await clearingHouse.openPosition2(0, base, quote)
+                await clearingHouse.openPosition3(0, base, markPrice)
                 timestamp += 28
                 await increaseEvmTime(timestamp)
             }
         }
+        /**
+        * total time interval = 3600 seconds
+        * time interval where trades happened = 14*10 + 28*19 = 672 seconds
+        * time interval where no trades happened = 3600 - 672 = 2928 seconds
+        (
+            (1000000000+1000000000+999700000+999100000+998200000+997000000+995500000+993700000+991600000+989200000)*14 +
+            (999900000+999700000+999600000+999100000+999000000+998200000+998100000+997000000+996900000+995500000+995400000+993700000+993600000+991600000+991500000+989200000+989100000+986500000+986400000)*28 +
+            983500000 * 2928
+        ) / 3600 = 985662222 (scaled by 6 decimals)
+        */
+
+        timestamp += 3600 // calculate twap for last hour
+        await increaseEvmTime(timestamp)
+        await clearingHouse.updatePositions(alice) // dummy tx to set evm time
+
+        expect(await amm.getMarkPriceTwap()).to.eq(985662222)
     })
 
-    it('get TWAP price', async () => {
-        // latest spot price is not considered in the calcualtion as delta t is 0
-        // total snapshots in 420 seconds = 18
-        //  (
-        //    (997000000+998200000+995500000+993700000+991600000+989200000)*14 +
-        //    (997000000+996900000+995500000+995400000+993700000+993600000+991600000+991500000+989200000+989100000+986500000+986400000)*28
-        // ) / 420 = 992.60
-
-        const twap = await amm.getTwapPrice(420)
-        expect((twap.toNumber() / 1e6).toFixed(2)).to.eq('992.60')
+    it('return the last hour twap even if there are trades in current hour', async () => {
+        markPrice = _1e6.mul(1100)
+        for (let i = 0; i < 10; i++) {
+            await clearingHouse.openPosition3(0, baseAssetQuantity, markPrice)
+            timestamp += 14
+            await increaseEvmTime(timestamp)
+        }
+        expect(await amm.getMarkPriceTwap()).to.eq(985662222)
     })
 
-    it('the timestamp of latest snapshot=now, the latest snapshot wont have any effect', async () => {
-        await clearingHouse.openPosition2(0, baseAssetQuantity.mul(-1), ZERO)
+    it('return last trade price if there is no trade in last hour', async () => {
+        timestamp += 7200
+        await increaseEvmTime(timestamp)
+        await clearingHouse.updatePositions(alice) // dummy tx to set evm time
 
-        // Shaving off 20 secs from the 420s window would mean dropping the first 1003 snapshot and 6 secs off the 1002 reading.
-        // twap = (1003 * 5 snapshots * 14 sec + 1002 * 22 sec + 1002*5*28 + 1001*6*28)/400 = 1002.x
-        const twap = await amm.getTwapPrice(400)
-        expect((twap.toNumber() / 1e6).toFixed(2)).to.eq('991.39')
-    })
-
-    it('asking interval more than the snapshots', async () => {
-        // total 31 snapshots, out of which latest doesn't count
-        // twap = (1003 * 10 snapshots * 14 sec + 1002*10*28 + 1001*10*28)/700 ~ 1001.x
-
-        const twap = await amm.getTwapPrice(900)
-        expect((twap.toNumber() / 1e6).toFixed(2)).to.eq('995.82')
-    })
-
-    it('asking interval less than latest snapshot, return latest price directly', async () => {
-        // price is 1000.4
-        await increaseEvmTime(Date.now() + 500)
-        await clearingHouse.openPosition2(0, baseAssetQuantity.mul(-1), ZERO) // add a delay of 500 seconds
-
-        const twap = await amm.getTwapPrice(420)
-        expect((twap.toNumber() / 1e6).toFixed(2)).to.eq('983.50')
-    })
-
-    it('price with interval 0 should be the same as spot price', async () => {
-        expect(await amm.getTwapPrice(0)).to.eq(await amm.lastPrice())
+        expect(await amm.getMarkPriceTwap()).to.eq(markPrice)
     })
 })
 
@@ -166,6 +166,10 @@ describe('AMM unit tests', async function() {
     })
 
     it('openPosition work when amm whitelisted', async () => {
+        // make trade in next funding hour for deterministic funding rate
+        await utils.gotoNextFundingTime(amm)
+        await clearingHouse.settleFunding()
+
         const baseAssetQuantity = _1e18.mul(-1)
         await clearingHouse.openPosition2(0, _1e18.mul(-1), 0)
         const notionalPosition = baseAssetQuantity.mul(initialPrice).div(_1e18).abs()

@@ -5,7 +5,6 @@ const {
     assertions,
     gotoNextFundingTime,
     setupContracts,
-    getTwapPrice,
     parseRawEvent,
     addMargin,
     constants: { _1e6, _1e18, ZERO, feeSink }
@@ -28,9 +27,8 @@ describe('Funding Tests', function() {
             margin = _1e6.mul(2000)
             await addMargin(signers[0], margin)
 
-            await gotoNextFundingTime(amm)
             // don't cap funding rate
-            await amm.setMaxFundingRate(0)
+            await amm.setFundingParams(3600, 900, 0, 3600)
         })
 
         it('alice shorts and receives +ve funding', async () => {
@@ -38,16 +36,19 @@ describe('Funding Tests', function() {
             const shortPrice = _1e6.mul(980)
             let tx = await clearingHouse.openPosition3(0 /* amm index */, baseAssetQuantity, shortPrice)
             ;({ quoteAsset, fee } = await getTradeDetails(tx))
+            const tradeTimestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp;
 
             // underlying
             const oracleTwap = _1e6.mul(900)
             await oracle.setUnderlyingTwapPrice(weth.address, oracleTwap)
 
+            await gotoNextFundingTime(amm)
             tx = await clearingHouse.settleFunding()
             const fundingTimestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp;
 
             // mark price
-            const twap = await getTwapPrice(amm, 3600, fundingTimestamp)
+            const twap = shortPrice.mul(fundingTimestamp - tradeTimestamp).div(3600)
+            expect(twap).to.eq(await amm.getMarkPriceTwap())
             const premiumFraction = await amm.cumulativePremiumFraction()
             expect(premiumFraction).to.eq(twap.sub(oracleTwap).div(24))
 
@@ -79,16 +80,20 @@ describe('Funding Tests', function() {
 
         it('alice shorts and pays -ve funding', async () => {
             const baseAssetQuantity = _1e18.mul(-5)
-            let tx = await clearingHouse.openPosition2(0 /* amm index */, baseAssetQuantity, _1e6.mul(4975))
+            const price = _1e6.mul(995)
+            let tx = await clearingHouse.openPosition3(0 /* amm index */, baseAssetQuantity, price)
             ;({ quoteAsset, fee } = await getTradeDetails(tx))
+            const tradeTimestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp;
 
             const oracleTwap = _1e6.mul(1100)
             await oracle.setUnderlyingTwapPrice(weth.address, oracleTwap)
 
+            await gotoNextFundingTime(amm)
             tx = await clearingHouse.settleFunding()
             const fundingTimestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp;
 
-            const twap = await getTwapPrice(amm, 3600, fundingTimestamp)
+            const twap = price.mul(fundingTimestamp - tradeTimestamp).div(3600)
+            expect(twap).to.eq(await amm.getMarkPriceTwap())
             const premiumFraction = await amm.cumulativePremiumFraction()
             expect(premiumFraction).to.eq(twap.sub(oracleTwap).div(24))
 
@@ -110,15 +115,20 @@ describe('Funding Tests', function() {
 
         it('alice longs and pays +ve funding', async () => {
             const baseAssetQuantity = _1e18.mul(5)
-            let tx = await clearingHouse.openPosition2(0 /* amm index */, baseAssetQuantity, _1e6.mul(5100))
+            const price = _1e6.mul(1020)
+            let tx = await clearingHouse.openPosition3(0 /* amm index */, baseAssetQuantity, price)
             ;({ quoteAsset, fee } = await getTradeDetails(tx))
+            const tradeTimestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp;
 
             const oracleTwap = _1e6.mul(900)
             await oracle.setUnderlyingTwapPrice(weth.address, oracleTwap)
+
+            await gotoNextFundingTime(amm)
             tx = await clearingHouse.settleFunding()
             const fundingTimestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp;
 
-            const twap = await getTwapPrice(amm, 3600, fundingTimestamp)
+            const twap = price.mul(fundingTimestamp - tradeTimestamp).div(3600)
+            expect(twap).to.eq(await amm.getMarkPriceTwap())
             const premiumFraction = await amm.cumulativePremiumFraction()
             expect(premiumFraction).to.eq(twap.sub(oracleTwap).div(24))
 
@@ -153,13 +163,17 @@ describe('Funding Tests', function() {
             const longPrice = _1e6.mul(1020)
             let tx = await clearingHouse.openPosition3(0 /* amm index */, baseAssetQuantity, longPrice)
             ;({ quoteAsset, fee } = await getTradeDetails(tx))
+            const tradeTimestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp;
 
             const oracleTwap = _1e6.mul(1100)
             await oracle.setUnderlyingTwapPrice(weth.address, oracleTwap)
+
+            await gotoNextFundingTime(amm)
             tx = await clearingHouse.settleFunding()
             const fundingTimestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp;
 
-            const twap = await getTwapPrice(amm, 3600, fundingTimestamp)
+            const twap = longPrice.mul(fundingTimestamp - tradeTimestamp).div(3600)
+            expect(twap).to.eq(await amm.getMarkPriceTwap())
             const premiumFraction = await amm.cumulativePremiumFraction()
             expect(premiumFraction).to.eq(twap.sub(oracleTwap).div(24))
 
@@ -183,16 +197,21 @@ describe('Funding Tests', function() {
             await amm.setLiquidationParams(1e6, 1e4)
 
             const baseAssetQuantity = _1e18.mul(-5)
-            let tx = await clearingHouse.openPosition2(0 /* amm index */, baseAssetQuantity, _1e6.mul(5000))
+            const price = _1e6.mul(1000)
+            let tx = await clearingHouse.openPosition3(0 /* amm index */, baseAssetQuantity, price)
             ;({ quoteAsset, fee } = await getTradeDetails(tx))
+            const tradeTimestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp;
 
             // $2k margin, ~$5k in notional position, < $500 margin will put them underwater => $300 funding/unit
             const oracleTwap = _1e6.mul(8200)
             await oracle.setUnderlyingTwapPrice(weth.address, oracleTwap)
+
+            await gotoNextFundingTime(amm)
             tx = await clearingHouse.settleFunding()
             const fundingTimestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp;
 
-            const twap = await getTwapPrice(amm, 3600, fundingTimestamp)
+            const twap = price.mul(fundingTimestamp - tradeTimestamp).div(3600)
+            expect(twap).to.eq(await amm.getMarkPriceTwap())
             const premiumFraction = await amm.cumulativePremiumFraction()
             expect(premiumFraction).to.eq(twap.sub(oracleTwap).div(24))
 
@@ -239,7 +258,10 @@ describe('Funding Tests', function() {
 
     it('alice is in liquidation zone but saved by positive funding payment', async () => {
         ;({ swap, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, oracle, weth, insuranceFund } = await setupContracts())
-        await amm.setMaxFundingRate(0)
+        await gotoNextFundingTime(amm)
+        await clearingHouse.settleFunding()
+
+        await amm.setFundingParams(3600, 900, 0, 3600)
         await marginAccount.whitelistCollateral(weth.address, 0.7 * 1e6) // weight = 0.7
         wethAmount = _1e18.mul(2)
         await weth.mint(alice, wethAmount)
@@ -282,7 +304,10 @@ describe('Funding Tests', function() {
             await addMargin(signers[0], margin)
             // set maxFunding rate = 50% annual = 0.00570776% hourly
             maxFundingRate = 57
-            await amm.setMaxFundingRate(maxFundingRate)
+            await amm.setFundingParams(3600, 900, maxFundingRate, 3600)
+            // start trading in next funding hour for deterministic mark price twap
+            await gotoNextFundingTime(amm)
+            await clearingHouse.settleFunding()
         })
 
         it('fundingRate positive and greater than maxFundingRate', async () => {
@@ -292,7 +317,7 @@ describe('Funding Tests', function() {
             await gotoNextFundingTime(amm)
             const oracleTwap = _1e6.mul(990)
             await oracle.setUnderlyingTwapPrice(weth.address, oracleTwap)
-            const ammTwap = await amm.getTwapPrice(3600) // 999
+            const ammTwap = await amm.getMarkPriceTwap() // 999
 
             const tx = await clearingHouse.settleFunding()
             const premiumFraction = (await parseRawEvent(tx, clearingHouse, 'FundingRateUpdated')).args.premiumFraction
@@ -311,7 +336,7 @@ describe('Funding Tests', function() {
             await gotoNextFundingTime(amm)
             const oracleTwap = _1e6.mul(1010)
             await oracle.setUnderlyingTwapPrice(weth.address, oracleTwap)
-            const ammTwap = await amm.getTwapPrice(3600) // 999
+            const ammTwap = await amm.getMarkPriceTwap() // 999
 
             const tx = await clearingHouse.settleFunding()
             const premiumFraction = (await parseRawEvent(tx, clearingHouse, 'FundingRateUpdated')).args.premiumFraction
@@ -330,7 +355,7 @@ describe('Funding Tests', function() {
             await gotoNextFundingTime(amm)
             const oracleTwap = _1e6.mul(999)
             await oracle.setUnderlyingTwapPrice(weth.address, oracleTwap)
-            const ammTwap = await amm.getTwapPrice(3600) // 999
+            const ammTwap = await amm.getMarkPriceTwap() // 999
 
             const tx = await clearingHouse.settleFunding()
             const premiumFraction = (await parseRawEvent(tx, clearingHouse, 'FundingRateUpdated')).args.premiumFraction
@@ -349,7 +374,7 @@ describe('Funding Tests', function() {
             await gotoNextFundingTime(amm)
             const oracleTwap = _1e6.mul(1000)
             await oracle.setUnderlyingTwapPrice(weth.address, oracleTwap)
-            const ammTwap = await amm.getTwapPrice(3600) // 999
+            const ammTwap = await amm.getMarkPriceTwap() // 999
 
             const tx = await clearingHouse.settleFunding()
             const premiumFraction = (await parseRawEvent(tx, clearingHouse, 'FundingRateUpdated')).args.premiumFraction

@@ -41,6 +41,9 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     IOrderBook public orderBook;
     IAMM[] override public amms; // SLOT_12 !!! used in precompile !!!
     IHubbleReferral public hubbleReferral;
+    uint public lastFundingTime;
+    // trader => lastFundingPaid timestamp
+    mapping(address => uint) public lastFundingPaid;
     IHubbleBibliophile public bibliophile;
 
     uint256[50] private __gap;
@@ -99,23 +102,32 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
 
     function updatePositions(address trader) override public whenNotPaused {
         require(address(trader) != address(0), 'CH: 0x0 trader Address');
-        int256 fundingPayment;
-        uint numAmms = amms.length;
-        for (uint i; i < numAmms; ++i) {
-            (int256 _fundingPayment, int256 cumulativePremiumFraction) = amms[i].updatePosition(trader);
-            if (_fundingPayment != 0) {
-                fundingPayment += _fundingPayment;
-                emit FundingPaid(trader, i, _fundingPayment, cumulativePremiumFraction);
+        // lastFundingTime will always be >= lastFundingPaid[trader]
+        if (lastFundingPaid[trader] != lastFundingTime) {
+            int256 fundingPayment;
+            uint numAmms = amms.length;
+            for (uint i; i < numAmms; ++i) {
+                (int256 _fundingPayment, int256 cumulativePremiumFraction) = amms[i].updatePosition(trader);
+                if (_fundingPayment != 0) {
+                    fundingPayment += _fundingPayment;
+                    emit FundingPaid(trader, i, _fundingPayment, cumulativePremiumFraction);
+                }
             }
+            // -ve fundingPayment means trader should receive funds
+            marginAccount.realizePnL(trader, -fundingPayment);
+
+            lastFundingPaid[trader] = lastFundingTime;
         }
-        // -ve fundingPayment means trader should receive funds
-        marginAccount.realizePnL(trader, -fundingPayment);
     }
 
     function settleFunding() override external onlyOrderBook {
         uint numAmms = amms.length;
+        uint _nextFundingTime;
         for (uint i; i < numAmms; ++i) {
-            (int _premiumFraction, int _underlyingPrice, int _cumulativePremiumFraction, uint _nextFundingTime) = amms[i].settleFunding();
+            int _premiumFraction;
+            int _underlyingPrice;
+            int _cumulativePremiumFraction;
+            (_premiumFraction, _underlyingPrice, _cumulativePremiumFraction, _nextFundingTime) = amms[i].settleFunding();
             if (_nextFundingTime != 0) {
                 emit FundingRateUpdated(
                     i,
@@ -127,6 +139,10 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
                     block.number
                 );
             }
+        }
+        // nextFundingTime will be same for all amms
+        if (_nextFundingTime != 0) {
+            lastFundingTime = _blockTimestamp();
         }
     }
 

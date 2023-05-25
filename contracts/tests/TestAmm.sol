@@ -16,6 +16,6 @@ contract TestAmm is AMM {
         view
         returns (uint oracleBasedNotional, int256 oracleBasedUnrealizedPnl, int256 marginFraction)
     {
-        return _getPositionMetadata(getUnderlyingPrice(), positions[trader].openNotional, positions[trader].size, margin);
+        return getPositionMetadata(getUnderlyingPrice(), positions[trader].openNotional, positions[trader].size, margin);
     }
 }

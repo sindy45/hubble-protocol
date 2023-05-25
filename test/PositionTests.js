@@ -59,9 +59,12 @@ describe('Position Tests', async function() {
             expect(pos.unrealizedPnl).eq(ZERO)
             expect(pos.avgOpen).to.eq(quoteAsset.mul(_1e18).div(baseAssetQuantity))
 
-            expect(await amm.getSnapshotLen()).to.eq(1)
-            const latestSnapshot = await amm.reserveSnapshots(0)
-            expect(latestSnapshot.lastPrice).to.eq(await amm.lastPrice())
+            const markPriceTwapData = await amm.markPriceTwapData()
+            const tradeTimestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp;
+            expect(markPriceTwapData.lastPrice).to.eq(amount.mul(_1e18).div(baseAssetQuantity).abs())
+            expect(markPriceTwapData.lastTimestamp).to.eq(tradeTimestamp)
+            expect(markPriceTwapData.accumulator).to.eq(ZERO)
+            expect(markPriceTwapData.lastPeriodAccumulator).to.eq(ZERO)
         })
 
         it('two longs', async () => {
@@ -124,9 +127,12 @@ describe('Position Tests', async function() {
             expect(pos.unrealizedPnl).eq(ZERO)
             expect(pos.avgOpen).to.eq(quoteAsset.mul(_1e18).div(baseAssetQuantity.mul(-1)))
 
-            expect(await amm.getSnapshotLen()).to.eq(1)
-            const latestSnapshot = await amm.reserveSnapshots(0)
-            expect(latestSnapshot.lastPrice).to.eq(await amm.lastPrice())
+            const markPriceTwapData = await amm.markPriceTwapData()
+            const tradeTimestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp;
+            expect(markPriceTwapData.lastPrice).to.eq(amount.mul(_1e18).div(baseAssetQuantity).abs())
+            expect(markPriceTwapData.lastTimestamp).to.eq(tradeTimestamp)
+            expect(markPriceTwapData.accumulator).to.eq(ZERO)
+            expect(markPriceTwapData.lastPeriodAccumulator).to.eq(ZERO)
         })
 
         it('two shorts', async () => {

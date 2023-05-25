@@ -425,38 +425,6 @@ async function assertions(contracts, trader, vals, shouldLog) {
     return { position, notionalPosition, unrealizedPnl, marginFraction }
 }
 
-async function getTwapPrice(amm, intervalInSeconds, blockTimestamp) {
-    const len = await amm.getSnapshotLen()
-    let snapshotIndex = len.sub(1)
-    let currentSnapshot = await amm.reserveSnapshots(snapshotIndex)
-    let currentPrice = currentSnapshot.lastPrice
-    const baseTimestamp = blockTimestamp - intervalInSeconds
-    let previousTimestamp = currentSnapshot.timestamp
-    if (intervalInSeconds == 0 || len == 1 || previousTimestamp <= baseTimestamp) {
-        return currentPrice
-    }
-    let period = BigNumber.from(blockTimestamp).sub(previousTimestamp)
-    let weightedPrice = currentPrice.mul(period)
-    let timeFraction = 0
-    while (true) {
-        if (snapshotIndex == 0) {
-            return weightedPrice.div(period)
-        }
-        snapshotIndex = snapshotIndex.sub(1)
-        currentSnapshot = await amm.reserveSnapshots(snapshotIndex)
-        currentPrice = currentSnapshot.lastPrice
-        if (currentSnapshot.timestamp <= baseTimestamp) {
-            weightedPrice = weightedPrice.add(currentPrice.mul(previousTimestamp.sub(baseTimestamp)))
-            break
-        }
-        timeFraction = previousTimestamp.sub(currentSnapshot.timestamp)
-        weightedPrice = weightedPrice.add(currentPrice.mul(timeFraction))
-        period = period.add(timeFraction)
-        previousTimestamp = currentSnapshot.timestamp
-    }
-    return weightedPrice.div(intervalInSeconds);
-}
-
 async function impersonateAccount(address) {
     await hre.network.provider.request({
         method: "hardhat_impersonateAccount",
@@ -688,7 +656,6 @@ module.exports = {
     filterEvent,
     getTradeDetails,
     assertions,
-    getTwapPrice,
     impersonateAccount,
     stopImpersonateAccount,
     gotoNextFundingTime,

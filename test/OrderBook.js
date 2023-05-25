@@ -147,7 +147,7 @@ describe('Order Book', function () {
         // alice which has a negative position
         basePositionSlot = ethers.utils.keccak256(ethers.utils.solidityPack(['bytes32', 'uint256'], ['0x' + '0'.repeat(24) + alice.address.slice(2), VAR_POSITIONS_SLOT]))
         storage = await ethers.provider.getStorageAt(amm.address, basePositionSlot) // size
-        console.log('storage', storage.toString())
+        // console.log('storage', storage.toString())
         expect(shortOrder.baseAssetQuantity).to.eq(BigNumber.from(storage).fromTwos(256))
         storage = await ethers.provider.getStorageAt(amm.address, BigNumber.from(basePositionSlot).add(1)) // open notional
         expect(shortOrder.baseAssetQuantity.mul(shortOrder.price).abs().div(_1e18)).to.eq(BigNumber.from(storage))

@@ -23,10 +23,17 @@ contract AMM is IAMM, Governable {
         uint liquidationThreshold;
     }
 
-    struct ReserveSnapshot {
+    struct TWAPData {
         uint256 lastPrice;
-        uint256 timestamp;
-        uint256 blockNumber;
+        uint256 lastTimestamp;
+        uint256 accumulator;
+        uint256 lastPeriodAccumulator;
+    }
+
+    struct VarGroup1 {
+        uint minQuote;
+        uint minBase;
+        bool isLiquidation;
     }
 
     /* ****************** */
@@ -35,10 +42,6 @@ contract AMM is IAMM, Governable {
 
     int256 constant BASE_PRECISION = 1e18;
     uint256 constant BASE_PRECISION_UINT = 1e18;
-
-    uint256 public constant spotPriceTwapInterval = 1 hours;
-    uint256 public constant fundingPeriod = 1 hours;
-
     address public immutable clearingHouse;
 
     /* ****************** */
@@ -67,19 +70,14 @@ contract AMM is IAMM, Governable {
     // maximum allowed % difference between mark price and index price before liquidation
     uint256 public maxLiquidationPriceSpread; // scaled 6 decimals
 
-    enum Side { LONG, SHORT }
+    uint256 public spotPriceTwapInterval;
+    uint256 public fundingPeriod;
+    TWAPData public markPriceTwapData;
 
-    ReserveSnapshot[] public reserveSnapshots;
+    enum Side { LONG, SHORT }
 
     /// @notice Min amount of base asset quantity to trade
     uint256 public minSizeRequirement;
-
-    struct VarGroup1 {
-        uint minQuote;
-        uint minBase;
-        bool isLiquidation;
-    }
-
     // maximum hourly funding rate allowed in %
     int256 public maxFundingRate; // in hourly %,  scaled to 1e6
 
@@ -117,10 +115,13 @@ contract AMM is IAMM, Governable {
         maxLiquidationRatio = 25 * 1e4; // 25%
         maxLiquidationPriceSpread = 1 * 1e4; // 1%
         maxFundingRate = 50; // 0.005%
+
+        fundingPeriod = 1 hours;
+        spotPriceTwapInterval = 1 hours;
     }
 
     /**
-    * @dev baseAssetQuantity != 0 has been validated in clearingHouse._openPosition()
+    * @dev fillAmount != 0 has been validated in orderBook.executeMatchedOrders/liquidateAndExecuteOrder
     */
     function openPosition(IOrderBook.Order memory order, int256 fillAmount, uint256 fulfillPrice)
         override
@@ -240,8 +241,9 @@ contract AMM is IAMM, Governable {
         // premium = twapMarketPrice - twapIndexPrice
         // timeFraction = fundingPeriod(1 hour) / 1 day
         // premiumFraction = premium * timeFraction
+        // @todo calculate oracle twap for exact funding period
         underlyingPrice = getUnderlyingTwapPrice(spotPriceTwapInterval);
-        int256 premium = getTwapPrice(spotPriceTwapInterval) - underlyingPrice;
+        int256 premium = getMarkPriceTwap() - underlyingPrice;
         premiumFraction = (premium * int256(fundingPeriod)) / 1 days;
         // funding rate cap
         // if premiumFraction > 0, premiumFraction = min(premiumFraction, maxFundingRate * indexTwap)
@@ -262,7 +264,7 @@ contract AMM is IAMM, Governable {
         uint256 minNextValidFundingTime = _blockTimestamp() + fundingBufferPeriod;
 
         // floor((nextFundingTime + fundingPeriod) / 3600) * 3600
-        uint256 nextFundingTimeOnHourStart = ((nextFundingTime + fundingPeriod) / 1 hours) * 1 hours;
+        uint256 nextFundingTimeOnHourStart = ((nextFundingTime + fundingPeriod) / fundingPeriod) * fundingPeriod;
 
         // max(nextFundingTimeOnHourStart, minNextValidFundingTime)
         nextFundingTime = nextFundingTimeOnHourStart > minNextValidFundingTime
@@ -273,34 +275,32 @@ contract AMM is IAMM, Governable {
     }
 
     function startFunding() external onlyClearingHouse returns (uint256) {
-        nextFundingTime = ((_blockTimestamp() + fundingPeriod) / 1 hours) * 1 hours;
+        nextFundingTime = ((_blockTimestamp() + fundingPeriod) / fundingPeriod) * fundingPeriod;
         return nextFundingTime;
     }
 
-    // View
-
-    function getSnapshotLen() external view returns (uint256) {
-        return reserveSnapshots.length;
-    }
+    /* ****************** */
+    /*       View         */
+    /* ****************** */
 
     function getUnderlyingTwapPrice(uint256 _intervalInSeconds) public view returns (int256) {
         return oracle.getUnderlyingTwapPrice(underlyingAsset, _intervalInSeconds);
     }
 
-    function getTwapPrice(uint256 _intervalInSeconds) public view returns (int256) {
-        return _calcTwap(_intervalInSeconds).toInt256();
+    function getMarkPriceTwap() public view returns (int256) {
+        return _calcTwap().toInt256();
     }
 
     /**
      * @notice Get notional postion and unrealized PnL at the last trade price
     */
-   function getNotionalPositionAndUnrealizedPnl(address trader)
+    function getNotionalPositionAndUnrealizedPnl(address trader)
         override
         external
         view
         returns(uint256 notionalPosition, int256 unrealizedPnl)
     {
-        (notionalPosition, unrealizedPnl,) = _getPositionMetadata(lastPrice(), positions[trader].openNotional, positions[trader].size, 0 /* margin (unused) */);
+        (notionalPosition, unrealizedPnl,) = getPositionMetadata(lastPrice(), positions[trader].openNotional, positions[trader].size, 0 /* margin (unused) */);
     }
 
     /**
@@ -316,7 +316,7 @@ contract AMM is IAMM, Governable {
 
         // based on last price
         int256 lastPriceBasedMF;
-        (notionalPosition, unrealizedPnl, lastPriceBasedMF) = _getPositionMetadata(
+        (notionalPosition, unrealizedPnl, lastPriceBasedMF) = getPositionMetadata(
             lastPrice(),
             position.openNotional,
             position.size,
@@ -324,7 +324,7 @@ contract AMM is IAMM, Governable {
         );
 
         // based on oracle price
-        (uint oracleBasedNotional, int256 oracleBasedUnrealizedPnl, int256 oracleBasedMF) = _getPositionMetadata(
+        (uint oracleBasedNotional, int256 oracleBasedUnrealizedPnl, int256 oracleBasedMF) = getPositionMetadata(
             oracle.getUnderlyingPrice(underlyingAsset).toUint256(),
             position.openNotional,
             position.size,
@@ -339,7 +339,7 @@ contract AMM is IAMM, Governable {
         }
     }
 
-    function _getPositionMetadata(uint256 price, uint256 openNotional, int256 size, int256 margin)
+    function getPositionMetadata(uint256 price, uint256 openNotional, int256 size, int256 margin)
         public
         pure
         returns (uint256 notionalPos, int256 uPnl, int256 marginFraction)
@@ -378,10 +378,10 @@ contract AMM is IAMM, Governable {
 
     function lastPrice() public view returns(uint256) {
         // return oracle price at the start of amm
-        if (reserveSnapshots.length == 0) {
+        if (markPriceTwapData.lastTimestamp == 0) {
             return uint(oracle.getUnderlyingPrice(underlyingAsset));
         }
-        return lastTradePrice;
+        return markPriceTwapData.lastPrice;
     }
 
     function getUnderlyingPrice() public view returns(uint256) {
@@ -392,7 +392,9 @@ contract AMM is IAMM, Governable {
         return longOpenInterestNotional + shortOpenInterestNotional;
     }
 
-    // internal
+    /* ****************** */
+    /*       Internal     */
+    /* ****************** */
 
     /**
     * @dev Go long on an asset
@@ -402,7 +404,7 @@ contract AMM is IAMM, Governable {
     */
     function _long(int256 baseAssetQuantity, uint price, bool isLiquidation) internal {
         require(baseAssetQuantity > 0, "AMM._long: baseAssetQuantity is <= 0");
-        _addReserveSnapshot(price);
+        _updateTWAP(price);
 
         // longs not allowed if market price > (1 + maxOracleSpreadRatio)*index price
         uint256 oraclePrice = uint(oracle.getUnderlyingPrice(underlyingAsset));
@@ -420,7 +422,7 @@ contract AMM is IAMM, Governable {
     */
     function _short(int256 baseAssetQuantity, uint price, bool isLiquidation) internal {
         require(baseAssetQuantity < 0, "AMM._short: baseAssetQuantity is >= 0");
-        _addReserveSnapshot(price);
+        _updateTWAP(price);
 
         // if maxOracleSpreadRatio >= 1e6 it means that 100% variation is allowed which means shorts at $0 will also pass.
         // so we don't need to check for that case
@@ -430,15 +432,6 @@ contract AMM is IAMM, Governable {
             if (!isLiquidation && price < oraclePrice) {
                 revert("AMM_price_decrease_not_allowed");
             }
-        }
-    }
-
-    function _getLastBlockTradePrice() internal view returns(uint256 lastBlockTradePrice) {
-        uint index = reserveSnapshots.length - 1;
-        if (reserveSnapshots[index].blockNumber == block.number && index != 0) {
-            lastBlockTradePrice = reserveSnapshots[index - 1].lastPrice;
-        } else {
-            lastBlockTradePrice = reserveSnapshots[index].lastPrice;
         }
     }
 
@@ -478,7 +471,7 @@ contract AMM is IAMM, Governable {
         returns (int realizedPnl)
     {
         Position storage position = positions[trader]; // storage because there are updates at the end
-        (,int256 unrealizedPnl,) = _getPositionMetadata(price, positions[trader].openNotional, positions[trader].size, 0 /* margin (unused) */);
+        (,int256 unrealizedPnl,) = getPositionMetadata(price, positions[trader].openNotional, positions[trader].size, 0 /* margin (unused) */);
 
         bool isLongPosition = position.size > 0 ? true : false;
 
@@ -493,89 +486,78 @@ contract AMM is IAMM, Governable {
         position.size += baseAssetQuantity;
     }
 
-    function _addReserveSnapshot(uint256 price)
-        internal
-    {
-        uint256 currentBlock = block.number;
-        uint256 blockTimestamp = _blockTimestamp();
+    function _updateTWAP(uint256 price) internal {
         lastTradePrice = price;
+        uint256 currentTimestamp = _blockTimestamp();
+        uint256 currentPeriodStart = (currentTimestamp / spotPriceTwapInterval) * spotPriceTwapInterval;
+        uint256 lastPeriodStart = currentPeriodStart - spotPriceTwapInterval;
+        uint256 deltaTime;
 
-        if (reserveSnapshots.length == 0) {
-            reserveSnapshots.push(
-                ReserveSnapshot(price, blockTimestamp, currentBlock)
-            );
-            return;
-        }
-
-        ReserveSnapshot storage latestSnapshot = reserveSnapshots[reserveSnapshots.length - 1];
-        // update values in snapshot if in the same block
-        if (currentBlock == latestSnapshot.blockNumber) {
-            latestSnapshot.lastPrice = price;
+        // If its the first trade in the current period, reset the accumulator, and set the lastPeriod accumulator
+        if (markPriceTwapData.lastTimestamp < currentPeriodStart) {
+            /**
+            * check if there was a trade in the last period
+            * though this is not required as we return lastPrice in _calcTwap if there is no trade in last hour
+            * keeping it to have correct accumulator values
+            */
+            if (markPriceTwapData.lastTimestamp > lastPeriodStart) {
+                deltaTime = currentPeriodStart - markPriceTwapData.lastTimestamp;
+                markPriceTwapData.lastPeriodAccumulator = markPriceTwapData.accumulator + markPriceTwapData.lastPrice * deltaTime;
+            } else {
+                markPriceTwapData.lastPeriodAccumulator = markPriceTwapData.lastPrice * spotPriceTwapInterval;
+            }
+            markPriceTwapData.accumulator = (currentTimestamp - currentPeriodStart) * markPriceTwapData.lastPrice;
         } else {
-            reserveSnapshots.push(
-                ReserveSnapshot(price, blockTimestamp, currentBlock)
-            );
+            // Update the accumulator
+            deltaTime = currentTimestamp - markPriceTwapData.lastTimestamp;
+            markPriceTwapData.accumulator += markPriceTwapData.lastPrice * deltaTime;
         }
+
+        // Update the last price and timestamp
+        markPriceTwapData.lastPrice = price;
+        markPriceTwapData.lastTimestamp = currentTimestamp;
     }
 
     function _blockTimestamp() internal view virtual returns (uint256) {
         return block.timestamp;
     }
 
-    function _calcTwap(uint256 _intervalInSeconds)
-        internal
-        view
-        returns (uint256)
-    {
-        if (reserveSnapshots.length == 0) {
-            return getUnderlyingTwapPrice(_intervalInSeconds).toUint256();
-        }
-        uint256 snapshotIndex = reserveSnapshots.length - 1;
-        uint256 currentPrice = reserveSnapshots[snapshotIndex].lastPrice;
-        if (_intervalInSeconds == 0) {
-            return currentPrice;
-        }
+    /**
+    * @notice Calculates the TWAP price from the last hour start to the current block timestamp
+    */
+    function _calcTwap() internal view returns (uint256 twap) {
+        uint256 currentPeriodStart = (_blockTimestamp() / spotPriceTwapInterval) * spotPriceTwapInterval;
+        uint256 lastPeriodStart = currentPeriodStart - spotPriceTwapInterval;
 
-        uint256 baseTimestamp = _blockTimestamp() - _intervalInSeconds;
-        ReserveSnapshot memory currentSnapshot = reserveSnapshots[snapshotIndex];
-        // return the latest snapshot price directly
-        // if only one snapshot or the timestamp of latest snapshot is earlier than asking for
-        if (reserveSnapshots.length == 1 || currentSnapshot.timestamp <= baseTimestamp) {
-            return currentPrice;
+        // If there is no trade at all, return oracle price twap
+        if (markPriceTwapData.lastTimestamp == 0) {
+            // @todo calculate oracle twap for exact funding period
+            return getUnderlyingTwapPrice(spotPriceTwapInterval).toUint256();
         }
 
-        uint256 previousTimestamp = currentSnapshot.timestamp;
-        uint256 period = _blockTimestamp() - previousTimestamp;
-        uint256 weightedPrice = currentPrice * period;
-        while (true) {
-            // if snapshot history is too short
-            if (snapshotIndex == 0) {
-                return weightedPrice / period;
-            }
-
-            snapshotIndex = snapshotIndex - 1;
-            currentSnapshot = reserveSnapshots[snapshotIndex];
-            currentPrice = reserveSnapshots[snapshotIndex].lastPrice;
-
-            // check if current round timestamp is earlier than target timestamp
-            if (currentSnapshot.timestamp <= baseTimestamp) {
-                // weighted time period will be (target timestamp - previous timestamp). For example,
-                // now is 1000, _interval is 100, then target timestamp is 900. If timestamp of current round is 970,
-                // and timestamp of NEXT round is 880, then the weighted time period will be (970 - 900) = 70,
-                // instead of (970 - 880)
-                weightedPrice = weightedPrice + (currentPrice * (previousTimestamp - baseTimestamp));
-                break;
-            }
-
-            uint256 timeFraction = previousTimestamp - currentSnapshot.timestamp;
-            weightedPrice = weightedPrice + (currentPrice * timeFraction);
-            period = period + timeFraction;
-            previousTimestamp = currentSnapshot.timestamp;
+        // If there is no trade in the last period, return the last trade price
+        if (markPriceTwapData.lastTimestamp <= lastPeriodStart) {
+            return markPriceTwapData.lastPrice;
         }
-        return weightedPrice / _intervalInSeconds;
+
+        /**
+        * check if there is any trade after currentPeriodStart
+        * since this function will not be called before the nextFundingTime,
+        * we can use the lastPeriodAccumulator to calculate the twap if there is a trade after currentPeriodStart
+        */
+        if (markPriceTwapData.lastTimestamp >= currentPeriodStart) {
+            // use the lastPeriodAccumulator to calculate the twap
+            twap = markPriceTwapData.lastPeriodAccumulator / spotPriceTwapInterval;
+        } else {
+            // use the accumulator to calculate the twap
+            uint256 currentAccumulator = markPriceTwapData.accumulator + (currentPeriodStart - markPriceTwapData.lastTimestamp) * markPriceTwapData.lastPrice;
+            twap = currentAccumulator / spotPriceTwapInterval;
+        }
     }
 
-    // Pure
+    /* ****************** */
+    /*       Pure         */
+    /* ****************** */
 
     function abs(int x) internal pure returns (int) {
         return x >= 0 ? x : -x;
@@ -589,14 +571,12 @@ contract AMM is IAMM, Governable {
         return x < y ? x : y;
     }
 
-    // Governance
+    /* ****************** */
+    /*       Governance   */
+    /* ****************** */
 
     function changeOracle(address _oracle) public onlyGovernance {
         oracle = IOracle(_oracle);
-    }
-
-    function setFundingBufferPeriod(uint _fundingBufferPeriod) external onlyGovernance {
-        fundingBufferPeriod = _fundingBufferPeriod;
     }
 
     function setPriceSpreadParams(uint _maxOracleSpreadRatio, uint /* dummy for backwards compatibility */) external onlyGovernance {
@@ -612,7 +592,15 @@ contract AMM is IAMM, Governable {
         minSizeRequirement = _minSizeRequirement;
     }
 
-    function setMaxFundingRate(int256 _maxFundingRate) external onlyGovernance {
+    function setFundingParams(
+        uint _fundingPeriod,
+        uint _fundingBufferPeriod,
+        int256 _maxFundingRate,
+        uint _spotPriceTwapInterval
+    ) external onlyGovernance {
+        fundingPeriod = _fundingPeriod;
+        fundingBufferPeriod = _fundingBufferPeriod;
         maxFundingRate = _maxFundingRate;
+        spotPriceTwapInterval = _spotPriceTwapInterval;
     }
 }

@@ -62,6 +62,8 @@ abstract contract Utils is Test {
     int256[50] public tempInt;
 
     function setupContracts() public {
+        // set default block.timestamp
+        vm.warp(1684947600);
         (alice, aliceKey) = makeAddrAndKey("alice");
         (bob, bobKey) = makeAddrAndKey("bob");
 

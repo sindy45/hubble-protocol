@@ -455,12 +455,12 @@ contract OrderBookTests is Utils {
         // position cannot increase for a reduce-only order
         // long order increase fail, alice longs more
         (, orders[0], signatures[0], orderHashes[0]) = prepareOrder(0, aliceKey, size, price - 1, true /** reduceOnly */);
-        vm.expectRevert('OB_reduce_only_order_must_close');
+        vm.expectRevert('OB_reduce_only_order_must_reduce_position');
         vm.prank(alice);
         orderBook.placeOrder(orders[0], signatures[0]);
         // short order increase fail, bob shorts more
         (, orders[0], signatures[0], orderHashes[0]) = prepareOrder(0, bobKey, -size, price - 1, true /** reduceOnly */);
-        vm.expectRevert('OB_reduce_only_order_must_close');
+        vm.expectRevert('OB_reduce_only_order_must_reduce_position');
         vm.prank(bob);
         orderBook.placeOrder(orders[0], signatures[0]);
 
