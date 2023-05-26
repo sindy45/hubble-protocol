@@ -1,4 +1,5 @@
 const { expect } = require('chai');
+const { BigNumber } = require('ethers')
 const utils = require('../utils')
 
 const {
@@ -142,6 +143,35 @@ describe('AMM unit tests', async function() {
         await addMargin(signers[0], margin)
         // set min size to 0.5
         await amm.setMinSizeRequirement(_1e18.div(2))
+    })
+
+    it('storage slots are as expected', async () => {
+        // Test fixed slot for maxOracleSpreadRatio
+        const VAR_MAX_ORACLE_SPREAD_RATIO_SLOT = 4
+        storage = await ethers.provider.getStorageAt(
+            amm.address,
+            ethers.utils.solidityPack(['uint256'], [VAR_MAX_ORACLE_SPREAD_RATIO_SLOT])
+        )
+        maxOracleSpreadRatio = await amm.maxOracleSpreadRatio()
+        expect(BigNumber.from(storage)).to.eq(maxOracleSpreadRatio)
+
+        // Test fixed slot for maxLiquidationRatio
+        const VAR_MAX_LIQUIDATION_RATIO_SLOT = 5
+        storage = await ethers.provider.getStorageAt(
+            amm.address,
+            ethers.utils.solidityPack(['uint256'], [VAR_MAX_LIQUIDATION_RATIO_SLOT])
+        )
+        maxLiquidationRatio = await amm.maxLiquidationRatio()
+        expect(BigNumber.from(storage)).to.eq(maxLiquidationRatio)
+
+        // Test fixed slot for minSizeRequirement
+        const VAR_MIN_SIZE_REQUIREMENT_SLOT = 6
+        storage = await ethers.provider.getStorageAt(
+            amm.address,
+            ethers.utils.solidityPack(['uint256'], [VAR_MIN_SIZE_REQUIREMENT_SLOT])
+        )
+        minSizeRequirement = await amm.minSizeRequirement()
+        expect(BigNumber.from(storage)).to.eq(minSizeRequirement)
     })
 
     it('openPosition fails when amm not whitelisted', async () => {

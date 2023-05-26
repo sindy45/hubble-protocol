@@ -52,6 +52,12 @@ contract AMM is IAMM, Governable {
     uint256 public lastTradePrice; // SLOT_1 !!! used in precompile !!!
     mapping(address => Position) override public positions;  // SLOT_2 !!! used in precompile !!!
     int256 public cumulativePremiumFraction; // SLOT_3 !!! used in precompile !!!
+    // maximum allowed % difference between mark price and index price. scaled 6 decimals
+    uint256 public maxOracleSpreadRatio; // SLOT_4 !!! used in precompile !!!
+    // maximum allowd % size which can be liquidated in one tx scaled 6 decimals
+    uint256 public maxLiquidationRatio; // SLOT_5 !!! used in precompile !!!
+    /// @notice Min amount of base asset quantity to trade
+    uint256 public minSizeRequirement; // SLOT_6 !!! used in precompile !!!
 
     IOracle public oracle;
 
@@ -63,10 +69,6 @@ contract AMM is IAMM, Governable {
 
     uint256 public longOpenInterestNotional;
     uint256 public shortOpenInterestNotional;
-    // maximum allowed % difference between mark price and index price
-    uint256 public maxOracleSpreadRatio; // scaled 6 decimals
-    // maximum allowd % size which can be liquidated in one tx
-    uint256 public maxLiquidationRatio; // scaled 6 decimals
     // maximum allowed % difference between mark price and index price before liquidation
     uint256 public maxLiquidationPriceSpread; // scaled 6 decimals
 
@@ -76,8 +78,6 @@ contract AMM is IAMM, Governable {
 
     enum Side { LONG, SHORT }
 
-    /// @notice Min amount of base asset quantity to trade
-    uint256 public minSizeRequirement;
     // maximum hourly funding rate allowed in %
     int256 public maxFundingRate; // in hourly %,  scaled to 1e6
 

@@ -27,11 +27,11 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     bytes32 constant public LIQUIDATION_FAILED = keccak256("LIQUIDATION_FAILED");
     int256 constant PRECISION_INT = 1e6;
 
-    int256 override public maintenanceMargin;
+    int256 override public maintenanceMargin; // SLOT_1 !!! used in precompile !!!
+    int256 public minAllowableMargin; // SLOT_2 !!! used in precompile !!!
     int256 override public takerFee; // defining as int for consistency with makerFee
     int256 override public makerFee;
     uint override public liquidationPenalty;
-    int256 public minAllowableMargin;
     uint public referralShare;
     uint public tradingFeeDiscount;
 

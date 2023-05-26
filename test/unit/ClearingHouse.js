@@ -1,4 +1,5 @@
 const { expect } = require('chai')
+const { BigNumber } = require('ethers')
 const utils = require('../utils')
 const {
     setupContracts
@@ -11,6 +12,26 @@ describe('ClearingHouse Unit Tests', function() {
         alice = signers[0].address
         ;([ bob, mockClearingHouse, admin ] = signers.slice(10))
         ;({ marginAccount, vusd, oracle, clearingHouse, insuranceFund } = await setupContracts({ testClearingHouse: false }))
+    })
+
+    it('storage slots are as expected', async function() {
+        // Test fixed slot for maintenanceMargin
+        const VAR_MAINTENANCE_MARGIN_SLOT = 1
+        storage = await ethers.provider.getStorageAt(
+            clearingHouse.address,
+            ethers.utils.solidityPack(['uint256'], [VAR_MAINTENANCE_MARGIN_SLOT])
+        )
+        maintenanceMargin = await clearingHouse.maintenanceMargin()
+        expect(BigNumber.from(storage)).to.eq(maintenanceMargin)
+
+        // Test fixed slot for minAllowableMargin
+        const VAR_MIN_ALLOWABLE_MARGIN_SLOT = 2
+        storage = await ethers.provider.getStorageAt(
+            clearingHouse.address,
+            ethers.utils.solidityPack(['uint256'], [VAR_MIN_ALLOWABLE_MARGIN_SLOT])
+        )
+        minAllowableMargin = await clearingHouse.minAllowableMargin()
+        expect(BigNumber.from(storage)).to.eq(minAllowableMargin)
     })
 
     it('reverts when initializing again', async function() {
