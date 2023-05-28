@@ -7,7 +7,7 @@ contract ClearingHouseTests is Utils {
     RestrictedErc20 public weth;
     int public constant defaultWethPrice = 1000 * 1e6;
 
-    event LiquidationOrderMatched(address indexed trader, bytes32 indexed orderHash, bytes signature, uint256 fillAmount, uint price, uint openInterestNotional, address relayer, uint timestamp);
+    event LiquidationOrderMatched(address indexed trader, bytes32 indexed orderHash, uint256 fillAmount, uint price, uint openInterestNotional, address relayer, uint timestamp);
     event OrderMatchingError(bytes32 indexed orderHash, string err);
 
     function setUp() public {
@@ -216,7 +216,7 @@ contract ClearingHouseTests is Utils {
         );
 
         // add weth margin
-        temp[0] = clearingHouse.getRequiredMargin(size, price) * 1e18 / uint(defaultWethPrice) + 1e12; // required weth margin in 1e18, add 1e12 for any precision loss
+        temp[0] = orderBook.getRequiredMargin(size, price) * 1e18 / uint(defaultWethPrice) + 1e12; // required weth margin in 1e18, add 1e12 for any precision loss
         addMargin(alice, temp[0], 1, address(weth));
         addMargin(bob, temp[0], 1, address(weth));
         placeAndExecuteOrder(0, aliceKey, bobKey, size, price, true, false, size, false);
@@ -230,7 +230,7 @@ contract ClearingHouseTests is Utils {
         (charlie, temp[0] /**charlieKey */) = makeAddrAndKey("charlie");
         uint charlieMargin = stdMath.abs(size) * price / 1e18;
         addMargin(charlie, charlieMargin, 0, address(0));
-        (IOrderBook.Order memory order, bytes memory signature, bytes32 orderHash) = placeOrder(0, temp[0], size, price, false);
+        (,,bytes32 orderHash) = placeOrder(0, temp[0], size, price, false);
 
         // liquidate alice
         uint toLiquidate;
@@ -242,8 +242,8 @@ contract ClearingHouseTests is Utils {
         }
 
         vm.expectEmit(true, true, false, true, address(orderBook));
-        emit LiquidationOrderMatched(address(alice), orderHash, signature, toLiquidate, price, stdMath.abs(2 * size), address(this), block.timestamp);
-        orderBook.liquidateAndExecuteOrder(alice, order, signature, toLiquidate);
+        emit LiquidationOrderMatched(address(alice), orderHash, toLiquidate, price, stdMath.abs(2 * size), address(this), block.timestamp);
+        orderBook.liquidateAndExecuteOrder(alice, orderHash, toLiquidate);
 
         {
             (,,int filledAmount, uint reservedMargin, OrderBook.OrderStatus status) = orderBook.orderInfo(orderHash);

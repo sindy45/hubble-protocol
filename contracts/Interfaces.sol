@@ -22,7 +22,7 @@ interface IOracle {
 interface IClearingHouse {
     enum Mode { Maintenance_Margin, Min_Allowable_Margin }
 
-    event PositionModified(address indexed trader, uint indexed idx, int256 baseAsset, uint price, int256 realizedPnl, int256 size, uint256 openNotional, int256 fee, uint256 timestamp);
+    event PositionModified(address indexed trader, uint indexed idx, int256 baseAsset, uint price, int256 realizedPnl, int256 size, uint256 openNotional, int256 fee, IOrderBook.OrderExecutionMode mode, uint256 timestamp);
     event PositionLiquidated(address indexed trader, uint indexed idx, int256 baseAsset, uint256 price, int256 realizedPnl, int256 size, uint256 openNotional, int256 fee, uint256 timestamp);
     event MarketAdded(uint indexed idx, address indexed amm);
     event ReferralBonusAdded(address indexed referrer, uint referralBonus);
@@ -30,7 +30,6 @@ interface IClearingHouse {
     event FundingRateUpdated(uint indexed idx, int256 premiumFraction, uint256 underlyingPrice, int256 cumulativePremiumFraction, uint256 nextFundingTime, uint256 timestamp, uint256 blockNumber);
 
     function orderBook() external view returns(IOrderBook);
-    function getRequiredMargin(int256 baseAssetQuantity, uint256 price) external view returns(uint marginRequired);
     function openComplementaryPositions(
         IOrderBook.Order[2] memory orders,
         IOrderBook.MatchInfo[2] memory matchInfo,
@@ -68,6 +67,8 @@ interface IClearingHouse {
     function feeSink() external view returns(address);
     function calcMarginFraction(address trader, bool includeFundingPayments, Mode mode) external view returns(int256);
     function getUnderlyingPrice() external view returns(uint[] memory prices);
+    function getPositionSizes(address trader) external view returns(int[] memory posSizes);
+    function getPositionSize(address trader, uint ammIndex) external view returns(int posSizes);
 }
 
 interface ERC20Detailed {
@@ -121,19 +122,20 @@ interface IOrderBook {
         OrderStatus status;
     }
 
-    event OrderPlaced(address indexed trader, bytes32 indexed orderHash, Order order, bytes signature, uint timestamp);
+    event OrderPlaced(address indexed trader, bytes32 indexed orderHash, Order order, uint timestamp);
     event OrderCancelled(address indexed trader, bytes32 indexed orderHash, uint timestamp);
     event OrdersMatched(bytes32 indexed orderHash0, bytes32 indexed orderHash1, uint256 fillAmount, uint price, uint openInterestNotional, address relayer, uint timestamp);
-    event LiquidationOrderMatched(address indexed trader, bytes32 indexed orderHash, bytes signature, uint256 fillAmount, uint price, uint openInterestNotional, address relayer, uint timestamp);
+    event LiquidationOrderMatched(address indexed trader, bytes32 indexed orderHash, uint256 fillAmount, uint price, uint openInterestNotional, address relayer, uint timestamp);
     event OrderMatchingError(bytes32 indexed orderHash, string err);
     event LiquidationError(address indexed trader, bytes32 indexed orderHash, string err, uint256 toLiquidate);
 
-    function executeMatchedOrders(Order[2] memory orders, bytes[2] memory signatures, int256 fillAmount) external;
+    function executeMatchedOrders(bytes32 orderHash0, bytes32 orderHash1, int256 fillAmount) external;
     function settleFunding() external;
-    function liquidateAndExecuteOrder(address trader, Order memory order, bytes memory signature, uint256 toLiquidate) external;
+    function liquidateAndExecuteOrder(address trader, bytes32 orderHash, uint256 toLiquidate) external;
     function getLastTradePrices() external view returns(uint[] memory lastTradePrices);
     function cancelMultipleOrders(bytes32[] memory orderHashes) external;
     function initializeMinSize(int256 minSize) external;
+    function updateParams(uint minAllowableMargin, uint takerFee) external;
 }
 
 interface IAMM {
@@ -242,6 +244,7 @@ interface IMarginAccount {
     function releaseMargin(address trader, uint amount) external;
     function reservedMargin(address trader) external view returns(uint);
     function getAvailableMargin(address trader) external view returns (int availableMargin);
+    function updateParams(uint _minAllowableMargin) external;
 }
 
 interface AggregatorV3Interface {

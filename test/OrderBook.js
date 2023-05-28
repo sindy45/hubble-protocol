@@ -18,7 +18,7 @@ const orderType = {
         { name: "baseAssetQuantity", type: "int256" },
         { name: "price", type: "uint256" },
         { name: "salt", type: "uint256" },
-        { name: "reduceOnly", type: "bool" },
+        { name: "reduceOnly", type: "bool" }
     ]
 }
 
@@ -52,22 +52,63 @@ describe('Order Book', function () {
     })
 
     it('place an order', async function() {
-        await expect(orderBook.placeOrder(shortOrder, signature1)).to.revertedWith('OB_sender_is_not_trader')
-        const tx = await orderBook.connect(alice).placeOrder(shortOrder, signature1)
+        await expect(orderBook.placeOrder(shortOrder)).to.revertedWith('OB_sender_is_not_trader')
+        const shortOrder2 = JSON.parse(JSON.stringify(shortOrder))
+        shortOrder2.salt = shortOrder.salt.add(1)
+        shortOrder2Hash = await orderBook.getOrderHash(shortOrder2)
+
+        const shortOrder3 = JSON.parse(JSON.stringify(shortOrder))
+        shortOrder3.salt = shortOrder.salt.add(2)
+        shortOrder3Hash = await orderBook.getOrderHash(shortOrder3)
+
+        const tx = await orderBook.connect(alice).placeOrders([shortOrder, shortOrder2, shortOrder3])
         const _timestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp
+
         await expect(tx).to.emit(orderBook, "OrderPlaced").withArgs(
             shortOrder.trader,
             order1Hash,
             Object.values(shortOrder),
-            signature1,
             _timestamp
         )
-        await expect(orderBook.connect(alice).placeOrder(shortOrder, signature1)).to.revertedWith('OB_Order_already_exists')
+        await expect(tx).to.emit(orderBook, "OrderPlaced").withArgs(
+            shortOrder2.trader,
+            shortOrder2Hash,
+            Object.values(shortOrder2),
+            _timestamp
+        )
+        await expect(tx).to.emit(orderBook, "OrderPlaced").withArgs(
+            shortOrder3.trader,
+            shortOrder3Hash,
+            Object.values(shortOrder3),
+            _timestamp
+        )
+
+        await expect(orderBook.connect(alice).placeOrder(shortOrder)).to.revertedWith('OB_Order_already_exists')
         expect((await orderBook.orderInfo(order1Hash)).status).to.eq(1) // placed
+        expect((await orderBook.orderInfo(shortOrder2Hash)).status).to.eq(1) // placed
+        expect((await orderBook.orderInfo(shortOrder3Hash)).status).to.eq(1) // placed
+    })
+
+    it('cancel multiple orders', async function() {
+        const tx = await orderBook.connect(alice).cancelMultipleOrders([shortOrder2Hash, shortOrder3Hash])
+        const _timestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp
+        await expect(tx).to.emit(orderBook, "OrderCancelled").withArgs(
+            alice.address,
+            shortOrder2Hash,
+            _timestamp
+        )
+        await expect(tx).to.emit(orderBook, "OrderCancelled").withArgs(
+            alice.address,
+            shortOrder3Hash,
+            _timestamp
+        )
+
+        expect((await orderBook.orderInfo(shortOrder2Hash)).status).to.eq(3) // cancelled
+        expect((await orderBook.orderInfo(shortOrder3Hash)).status).to.eq(3) // cancelled
     })
 
     it('matches orders with same price and opposite base asset quantity', async function() {
-        // long order with same price and baseAssetQuantity
+       // long order with same price and baseAssetQuantity
         longOrder = {
             ammIndex: ZERO,
             trader: bob.address,
@@ -76,16 +117,9 @@ describe('Order Book', function () {
             salt: BigNumber.from(Date.now()),
             reduceOnly: false
         }
-        signature2 = await bob._signTypedData(domain, orderType, longOrder)
-        await orderBook.connect(bob).placeOrder(longOrder, signature2)
-
-        const tx = await orderBook.executeMatchedOrders(
-            [ longOrder, shortOrder ],
-            [ signature2, signature1 ],
-            longOrder.baseAssetQuantity
-        )
-
+        await orderBook.connect(bob).placeOrder(longOrder)
         order2Hash = await orderBook.getOrderHash(longOrder)
+        const tx = await orderBook.executeMatchedOrders(order2Hash, order1Hash, longOrder.baseAssetQuantity)
 
         const _timestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp
         await expect(tx).to.emit(orderBook, 'OrdersMatched').withArgs(
@@ -100,11 +134,7 @@ describe('Order Book', function () {
 
         expect((await orderBook.orderInfo(order1Hash)).status).to.eq(2) // filled
         expect((await orderBook.orderInfo(order2Hash)).status).to.eq(2) // filled
-        await expect(orderBook.executeMatchedOrders(
-            [ longOrder, shortOrder ],
-            [ signature2, signature1 ],
-            longOrder.baseAssetQuantity
-        )).to.revertedWith('OB_invalid_order')
+        await expect(orderBook.executeMatchedOrders(order2Hash, order1Hash, longOrder.baseAssetQuantity)).to.revertedWith('OB_invalid_order')
     })
 
     it('storage slots are as expected', async function() {
@@ -120,10 +150,10 @@ describe('Order Book', function () {
                 ]
             ))
         )
-        expect(BigNumber.from(storage)).to.eq(_1e6.mul(4000).sub(tradeFee))
+        expect(_1e6.mul(4000).sub(tradeFee)).to.eq(BigNumber.from(storage))
 
         // gets isValidator[alice]
-        const VAR_IS_VALIDATOR_MAPPING_STORAGE_SLOT = 55 // this is not used in the precompile as yet
+        const VAR_IS_VALIDATOR_MAPPING_STORAGE_SLOT = 54 // this is not used in the precompile as yet
         storage = await ethers.provider.getStorageAt(
             orderBook.address,
             ethers.utils.keccak256(ethers.utils.solidityPack(['bytes32', 'uint256'], ['0x' + '0'.repeat(24) + signers[0].address.slice(2), VAR_IS_VALIDATOR_MAPPING_STORAGE_SLOT]))
@@ -147,7 +177,6 @@ describe('Order Book', function () {
         // alice which has a negative position
         basePositionSlot = ethers.utils.keccak256(ethers.utils.solidityPack(['bytes32', 'uint256'], ['0x' + '0'.repeat(24) + alice.address.slice(2), VAR_POSITIONS_SLOT]))
         storage = await ethers.provider.getStorageAt(amm.address, basePositionSlot) // size
-        // console.log('storage', storage.toString())
         expect(shortOrder.baseAssetQuantity).to.eq(BigNumber.from(storage).fromTwos(256))
         storage = await ethers.provider.getStorageAt(amm.address, BigNumber.from(basePositionSlot).add(1)) // open notional
         expect(shortOrder.baseAssetQuantity.mul(shortOrder.price).abs().div(_1e18)).to.eq(BigNumber.from(storage))
@@ -170,23 +199,21 @@ describe('Order Book', function () {
     it('matches multiple long orders with same price and opposite base asset quantity with short orders', async function() {
         longOrder.salt = Date.now()
         const longOrder1 = JSON.parse(JSON.stringify(longOrder))
-        longSignature1 = await bob._signTypedData(domain, orderType, longOrder)
-        await orderBook.connect(bob).placeOrder(longOrder, longSignature1)
+        const longOrder1Hash = await orderBook.getOrderHash(longOrder1)
 
         longOrder.salt = Date.now()
         const longOrder2 = JSON.parse(JSON.stringify(longOrder))
-        longSignature2 = await bob._signTypedData(domain, orderType, longOrder)
-        await orderBook.connect(bob).placeOrder(longOrder, longSignature2)
+        const longOrder2Hash = await orderBook.getOrderHash(longOrder2)
+        await orderBook.connect(bob).placeOrders([longOrder1, longOrder2])
 
         shortOrder.salt = Date.now()
         const shortOrder1 = JSON.parse(JSON.stringify(shortOrder))
-        shortSignature1 = await alice._signTypedData(domain, orderType, shortOrder)
-        await orderBook.connect(alice).placeOrder(shortOrder, shortSignature1)
+        const shortOrder1Hash = await orderBook.getOrderHash(shortOrder1)
 
         shortOrder.salt = Date.now()
         const shortOrder2 = JSON.parse(JSON.stringify(shortOrder))
-        shortSignature2 = await alice._signTypedData(domain, orderType, shortOrder)
-        await orderBook.connect(alice).placeOrder(shortOrder, shortSignature2)
+        const shortOrder2Hash = await orderBook.getOrderHash(shortOrder2)
+        await orderBook.connect(alice).placeOrders([shortOrder1, shortOrder2])
 
         const filter = orderBook.filters
         let events = await orderBook.queryFilter(filter)
@@ -197,19 +224,11 @@ describe('Order Book', function () {
         expect(events[events.length - 4].event).to.eq('OrderPlaced')
 
         // match 1
-        let tx = await orderBook.executeMatchedOrders(
-            [ longOrder1, shortOrder1 ],
-            [ longSignature1, shortSignature1 ],
-            longOrder1.baseAssetQuantity
-        )
+        let tx = await orderBook.executeMatchedOrders(longOrder1Hash, shortOrder1Hash, longOrder1.baseAssetQuantity)
         await expect(tx).to.emit(orderBook, 'OrdersMatched')
 
         // match 2
-        tx = await orderBook.executeMatchedOrders(
-            [ longOrder2, shortOrder2 ],
-            [ longSignature2, shortSignature2 ],
-            longOrder2.baseAssetQuantity
-        )
+        tx = await orderBook.executeMatchedOrders(longOrder2Hash, shortOrder2Hash, longOrder2.baseAssetQuantity)
         await expect(tx).to.emit(orderBook, 'OrdersMatched')
     })
 
@@ -224,18 +243,18 @@ describe('Order Book', function () {
 
         const charlie = signers[7]
         await addMargin(charlie, _1e6.mul(4000))
-        const { order, signature } = await placeOrder(size, markPrice, charlie)
+        const { orderHash } = await placeOrder(size, markPrice, charlie)
 
         // liquidate
         const toLiquidate = size.mul(25e4).div(1e6) // 1/4th position liquidated (in multiple of minSize)
-        await orderBook.liquidateAndExecuteOrder(alice.address, order, signature, toLiquidate.abs())
+        await orderBook.liquidateAndExecuteOrder(alice.address, orderHash, toLiquidate.abs())
         const { size: sizeAfterLiquidation } = await amm.positions(alice.address)
         expect(sizeAfterLiquidation).to.eq(size.sub(toLiquidate))
         let position = await amm.positions(charlie.address)
         expect(position.size).to.eq(size.sub(sizeAfterLiquidation))
 
         const fillAmount = _1e18.div(-10) // 0.1
-        await orderBook.liquidateAndExecuteOrder(alice.address, order, signature, fillAmount.abs())
+        await orderBook.liquidateAndExecuteOrder(alice.address, orderHash, fillAmount.abs())
         const { size: sizeAfter2ndLiquidation } = await amm.positions(alice.address)
         expect(sizeAfter2ndLiquidation).to.eq(sizeAfterLiquidation.sub(fillAmount)) // only fill amount liquidated
         position = await amm.positions(charlie.address)
@@ -275,19 +294,17 @@ describe('Order Book - Error Handling', function () {
             reduceOnly: false
         }
         order1Hash = await orderBook.getOrderHash(shortOrder)
-        signature1 = await alice._signTypedData(domain, orderType, shortOrder)
 
-        await expect(orderBook.placeOrder(shortOrder, signature1)).to.revertedWith('OB_sender_is_not_trader')
-        const tx = await orderBook.connect(alice).placeOrder(shortOrder, signature1)
+        await expect(orderBook.placeOrder(shortOrder)).to.revertedWith('OB_sender_is_not_trader')
+        const tx = await orderBook.connect(alice).placeOrder(shortOrder)
         const _timestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp
         await expect(tx).to.emit(orderBook, "OrderPlaced").withArgs(
             shortOrder.trader,
             order1Hash,
             Object.values(shortOrder),
-            signature1,
             _timestamp
         )
-        await expect(orderBook.connect(alice).placeOrder(shortOrder, signature1)).to.revertedWith('OB_Order_already_exists')
+        await expect(orderBook.connect(alice).placeOrder(shortOrder)).to.revertedWith('OB_Order_already_exists')
         expect((await orderBook.orderInfo(order1Hash)).status).to.eq(1) // placed
     })
 
@@ -302,16 +319,11 @@ describe('Order Book - Error Handling', function () {
             reduceOnly: false
         }
         order2Hash = await orderBook.getOrderHash(longOrder)
-        signature2 = await bob._signTypedData(domain, orderType, longOrder)
-        await orderBook.connect(bob).placeOrder(longOrder, signature2)
+        await orderBook.connect(bob).placeOrder(longOrder)
         // reduce oracle price so that margin falls below minimum margin
         await oracle.setUnderlyingPrice(wavax.address, _1e6.mul(5))
 
-        const tx = await orderBook.executeMatchedOrders(
-            [ longOrder, shortOrder ],
-            [ signature2, signature1 ],
-            longOrder.baseAssetQuantity
-        )
+        const tx = await orderBook.executeMatchedOrders(order2Hash, order1Hash, longOrder.baseAssetQuantity)
 
         await expect(tx).to.emit(orderBook, 'OrderMatchingError')
         const event = await filterEvent(tx, 'OrderMatchingError')
@@ -323,11 +335,7 @@ describe('Order Book - Error Handling', function () {
     it('ch.openPosition fails for short order', async function() {
         // now bob deposits enough margin so that open position for them doesn't fail
         await addMargin(bob, _1e6.mul(4000))
-        const tx = await orderBook.executeMatchedOrders(
-            [ longOrder, shortOrder ],
-            [ signature2, signature1 ],
-            longOrder.baseAssetQuantity
-        )
+        const tx = await orderBook.executeMatchedOrders(order2Hash, order1Hash, longOrder.baseAssetQuantity)
 
         await expect(tx).to.emit(orderBook, 'OrderMatchingError')
         const event = await filterEvent(tx, 'OrderMatchingError')
@@ -339,23 +347,18 @@ describe('Order Book - Error Handling', function () {
     it('try with another err msg', async function() {
         const badShortOrder = JSON.parse(JSON.stringify(shortOrder))
         badShortOrder.price = ethers.utils.parseUnits('2000', 6)
-        // signature1, order2Hash, signature2 are declared locally so they don't affect the vars in global scope
-        const signature1 = await alice._signTypedData(domain, orderType, badShortOrder)
+        // order1Hash, order2Hash are declared locally so they don't affect the vars in global scope
+        const order1Hash = await orderBook.getOrderHash(badShortOrder)
 
         await oracle.setUnderlyingPrice(wavax.address, initialAvaxPrice * 4)
-        await orderBook.connect(alice).placeOrder(badShortOrder, signature1)
+        await orderBook.connect(alice).placeOrder(badShortOrder)
 
         const badLongOrder = JSON.parse(JSON.stringify(longOrder))
         badLongOrder.price = ethers.utils.parseUnits('2000', 6)
         const order2Hash = await orderBook.getOrderHash(badLongOrder)
-        const signature2 = await bob._signTypedData(domain, orderType, badLongOrder)
-        await orderBook.connect(bob).placeOrder(badLongOrder, signature2)
+        await orderBook.connect(bob).placeOrder(badLongOrder)
 
-        const tx = await orderBook.executeMatchedOrders(
-            [ badLongOrder, badShortOrder ],
-            [ signature2, signature1 ],
-            longOrder.baseAssetQuantity
-        )
+        const tx = await orderBook.executeMatchedOrders(order2Hash, order1Hash, longOrder.baseAssetQuantity)
 
         await expect(tx).to.emit(orderBook, 'OrderMatchingError')
         const event = await filterEvent(tx, 'OrderMatchingError')
@@ -367,10 +370,9 @@ describe('Order Book - Error Handling', function () {
     it('generic errors are not caught and bubbled up', async function() {
         await clearingHouse.setMarginAccount('0x0000000000000000000000000000000000000000')
         await expect(orderBook.executeMatchedOrders(
-            [ longOrder, shortOrder ],
-            [ signature2, signature1 ],
+            order2Hash,
+            order1Hash,
             longOrder.baseAssetQuantity
-        // )).to.be.reverted
         )).to.be.revertedWith('without a reason string')
 
         await clearingHouse.setMarginAccount(marginAccount.address) // reset
@@ -379,8 +381,8 @@ describe('Order Book - Error Handling', function () {
 
     it('orders match when conditions are met', async function() {
         const tx = await orderBook.executeMatchedOrders(
-            [ longOrder, shortOrder ],
-            [ signature2, signature1 ],
+            order2Hash,
+            order1Hash,
             longOrder.baseAssetQuantity
         )
 
@@ -414,11 +416,11 @@ describe('Order Book - Error Handling', function () {
         await oracle.setUnderlyingPrice(wavax.address, initialAvaxPrice)
         await wavax.mint(charlie.address, wavaxMargin)
         await addMargin(charlie, wavaxMargin, wavax, 1)
-        ;({ order, signature } = await placeOrder(size, markPrice, charlie))
+        ;({ order, orderHash } = await placeOrder(size, markPrice, charlie))
 
         // liquidate
         toLiquidate = size.mul(25e4).div(1e6) // 1/4th position liquidated
-        let tx = await orderBook.liquidateAndExecuteOrder(alice.address, order, signature, toLiquidate.abs())
+        let tx = await orderBook.liquidateAndExecuteOrder(alice.address, orderHash, toLiquidate.abs())
 
         await expect(tx).to.emit(orderBook, 'LiquidationError').withArgs(
             alice.address,
@@ -435,7 +437,7 @@ describe('Order Book - Error Handling', function () {
         await oracle.setUnderlyingPrice(weth.address, markPrice)
         expect(await clearingHouse.isAboveMaintenanceMargin(alice.address)).to.eq(false)
 
-        let tx = await orderBook.liquidateAndExecuteOrder(alice.address, order, signature, toLiquidate.mul(2).abs())
+        let tx = await orderBook.liquidateAndExecuteOrder(alice.address, orderHash, toLiquidate.mul(2).abs())
         await expect(tx).to.emit(orderBook, 'LiquidationError').withArgs(
             alice.address,
             ethers.utils.solidityKeccak256(['string'], ['LIQUIDATION_FAILED']),
@@ -447,8 +449,7 @@ describe('Order Book - Error Handling', function () {
 
     it('ch.openPosition fails in liquidation', async function() {
         await oracle.setUnderlyingPrice(wavax.address, initialAvaxPrice / 10)
-        let tx = await orderBook.liquidateAndExecuteOrder(alice.address, order, signature, toLiquidate.abs())
-        orderHash = await orderBook.getOrderHash(order)
+        let tx = await orderBook.liquidateAndExecuteOrder(alice.address, orderHash, toLiquidate.abs())
         await expect(tx).to.emit(orderBook, 'LiquidationError').withArgs(
             alice.address,
             orderHash,
@@ -466,7 +467,7 @@ describe('Order Book - Error Handling', function () {
     it('generic errors are not caught and bubbled up', async function() {
         await clearingHouse.setMarginAccount('0x0000000000000000000000000000000000000000')
         await expect(orderBook.liquidateAndExecuteOrder(
-            alice.address, order, signature, toLiquidate.abs())
+            alice.address, orderHash, toLiquidate.abs())
         ).to.be.revertedWith('without a reason string')
 
         await clearingHouse.setMarginAccount(marginAccount.address)
@@ -477,12 +478,11 @@ describe('Order Book - Error Handling', function () {
 
     it('liquidations when all conditions met', async function() {
         await addMargin(charlie, _1e6.mul(2000))
-        let tx = await orderBook.liquidateAndExecuteOrder(alice.address, order, signature, toLiquidate.abs())
+        let tx = await orderBook.liquidateAndExecuteOrder(alice.address, orderHash, toLiquidate.abs())
         const _timestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp
         await expect(tx).to.emit(orderBook, 'LiquidationOrderMatched').withArgs(
             alice.address,
             orderHash,
-            signature,
             toLiquidate.abs(),
             order.price,
             longOrder.baseAssetQuantity.mul(4),
@@ -511,14 +511,10 @@ async function placeAndExecuteTrade(size, price) {
         await addMargin(signer1, _1e6.mul(_1e6))
         await addMargin(signer2, _1e6.mul(_1e6))
 
-        const { order: order1, signature: signature1} = await placeOrder(size, price, signer1)
-        const { order: order2, signature: signature2} = await placeOrder(size.mul(-1), price, signer2)
+        const { orderHash: order1Hash } = await placeOrder(size, price, signer1)
+        const { orderHash: order2Hash } = await placeOrder(size.mul(-1), price, signer2)
 
-        await orderBook.executeMatchedOrders(
-            [ order1, order2 ],
-            [signature1, signature2],
-            size.abs()
-        )
+        await orderBook.executeMatchedOrders(order1Hash, order2Hash, size.abs())
 }
 
 async function placeOrder(size, price, signer) {
@@ -536,9 +532,10 @@ async function placeOrder(size, price, signer) {
         reduceOnly: false
     }
 
-    const signature = await signer._signTypedData(domain, orderType, order)
-    await orderBook.connect(signer).placeOrder(order, signature)
-    return { order, signature }
+    await orderBook.connect(signer).placeOrder(order)
+    const orderHash = await orderBook.getOrderHash(order)
+
+    return { order, orderHash }
 }
 
 async function getDomain() {

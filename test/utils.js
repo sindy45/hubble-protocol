@@ -150,10 +150,6 @@ async function setupContracts(options = {}) {
         hubbleReferral.address,
     ]
 
-    if (options.mockOrderBook) {
-        initArgs[3] = signers[0].address
-    }
-
     deployArgs = []
     if (options.genesisProxies) {
         clearingHouse = await setupGenesisProxy('ClearingHouse', proxyAdmin, initArgs, deployArgs, clearingHouseProxy)
@@ -166,6 +162,16 @@ async function setupContracts(options = {}) {
             clearingHouseProxy
         )
     }
+
+    await vusd.grantRole(ethers.utils.id('MINTER_ROLE'), marginAccount.address, getTxOptions())
+
+    constructorArguments = [oracle.address, clearingHouse.address, insuranceFund.address, marginAccount.address, vusd.address, orderBook.address, marginAccountHelper.address]
+    registry = await Registry.deploy(...constructorArguments.concat(getTxOptions()))
+    await Promise.all([
+        marginAccount.syncDeps(registry.address, 5e4, getTxOptions()), // liquidationIncentive = 5% = .05 scaled 6 decimals
+        insuranceFund.syncDeps(registry.address, getTxOptions()),
+    ])
+
     await clearingHouse.setParams(
         0.1 * 1e6, // 10% maintenance margin, 10x
         0.2 * 1e6, // 20% minimum allowable margin, 5x
@@ -177,14 +183,10 @@ async function setupContracts(options = {}) {
         getTxOptions()
     )
 
-    await vusd.grantRole(ethers.utils.id('MINTER_ROLE'), marginAccount.address, getTxOptions())
+    if (options.mockOrderBook) {
+        await clearingHouse.setOrderBook(signers[0].address)
+    }
 
-    constructorArguments = [oracle.address, clearingHouse.address, insuranceFund.address, marginAccount.address, vusd.address, orderBook.address, marginAccountHelper.address]
-    registry = await Registry.deploy(...constructorArguments.concat(getTxOptions()))
-    await Promise.all([
-        marginAccount.syncDeps(registry.address, 5e4, getTxOptions()), // liquidationIncentive = 5% = .05 scaled 6 decimals
-        insuranceFund.syncDeps(registry.address, getTxOptions())
-    ])
     const HubbleViewer = await ethers.getContractFactory('HubbleViewer')
     hubbleViewer = await HubbleViewer.deploy(clearingHouse.address, marginAccount.address, registry.address, getTxOptions())
 

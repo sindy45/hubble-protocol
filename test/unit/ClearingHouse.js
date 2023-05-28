@@ -11,7 +11,7 @@ describe('ClearingHouse Unit Tests', function() {
         signers = await ethers.getSigners()
         alice = signers[0].address
         ;([ bob, mockClearingHouse, admin ] = signers.slice(10))
-        ;({ marginAccount, vusd, oracle, clearingHouse, insuranceFund } = await setupContracts({ testClearingHouse: false }))
+        ;({ marginAccount, vusd, oracle, clearingHouse, insuranceFund } = await setupContracts({ testClearingHouse: false, mockOrderBook: false }))
     })
 
     it('storage slots are as expected', async function() {

@@ -62,4 +62,8 @@ contract TestClearingHouse is ClearingHouse {
     function setMarginAccount(address _marginAccount) external {
         marginAccount = IMarginAccount(_marginAccount);
     }
+
+    function setOrderBook(address _orderBook) external {
+        defaultOrderBook = IOrderBook(_orderBook);
+    }
 }

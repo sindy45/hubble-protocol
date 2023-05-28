@@ -7,8 +7,8 @@ import { EIP712Upgradeable } from "@openzeppelin/contracts-upgradeable/utils/cry
 import { Pausable } from "@openzeppelin/contracts/security/Pausable.sol";
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
-import { VanillaGovernable } from "./legos/Governable.sol";
-import { IClearingHouse, IOrderBook, IAMM, IMarginAccount } from "./Interfaces.sol";
+import { VanillaGovernable } from "../legos/Governable.sol";
+import { IClearingHouse, IOrderBook, IAMM, IMarginAccount } from "../Interfaces.sol";
 
 contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable {
     using SafeCast for uint256;
@@ -20,16 +20,19 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
     IClearingHouse public immutable clearingHouse;
     IMarginAccount public immutable marginAccount;
 
-    int256[] public minSizes; // min size for each AMM, array index is the ammIndex
-
     mapping(bytes32 => OrderInfo) public orderInfo;
-    mapping(address => bool) public isValidator; // SLOT_55 (not used in precompile)
+    mapping(address => bool) public isValidator; // SLOT_54 (not used in precompile)
 
     /**
     * @notice maps the address of the trader to the amount of reduceOnlyAmount for each amm
     * trader => ammIndex => reduceOnlyAmount
     */
     mapping(address => mapping(uint => int256)) public reduceOnlyAmount;
+
+    // cache some variables for quick assertions
+    int256[] public minSizes; // min size for each AMM, array index is the ammIndex
+    uint public minAllowableMargin;
+    uint public takerFee;
 
     uint256[50] private __gap;
 
@@ -58,22 +61,45 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         _setGovernace(_governance);
     }
 
-    /**
-     * Execute matched orders
-     * @param orders It is required that orders[0] is a LONG and orders[1] is a SHORT
-     * @param signatures To verify authenticity of the order
-     * @param fillAmount Amount to be filled for each order. This is to support partial fills.
-     *        Should be > 0 (validated in _verifyOrder)
-     *        Should be non-zero multiple of minSizeRequirement (validated in _verifyOrder)
-    */
     function executeMatchedOrders(
-        Order[2] memory orders,
-        bytes[2] memory signatures,
+        bytes32 orderHash0,
+        bytes32 orderHash1,
         int256 fillAmount
     )   override
         external
         whenNotPaused
         onlyValidator
+    {
+        _validateOrder(orderHash0);
+        _validateOrder(orderHash1);
+
+        Order[2] memory orders = [
+            orderInfo[orderHash0].order,
+            orderInfo[orderHash1].order
+        ];
+        MatchInfo[2] memory matchInfo;
+        matchInfo[0].orderHash = orderHash0;
+        matchInfo[0].blockPlaced = orderInfo[orderHash0].blockPlaced;
+        matchInfo[1].orderHash = orderHash1;
+        matchInfo[1].blockPlaced = orderInfo[orderHash1].blockPlaced;
+        _executeMatchedOrders(orders, matchInfo, fillAmount);
+    }
+
+    function _validateOrder(bytes32 orderHash) internal view {
+        require(orderInfo[orderHash].status == OrderStatus.Placed, "OB_invalid_order");
+    }
+
+    /**
+     * Execute matched orders
+     * @param orders It is required that orders[0] is a LONG and orders[1] is a SHORT
+     * @param fillAmount Amount to be filled for each order. This is to support partial fills.
+     *        Should be non-zero multiple of minSizeRequirement (validated in _verifyOrder)
+    */
+    function _executeMatchedOrders(
+        Order[2] memory orders,
+        MatchInfo[2] memory matchInfo,
+        int256 fillAmount
+    )   internal
     {
         // Checks and Effects
         require(orders[0].baseAssetQuantity > 0, "OB_order_0_is_not_long");
@@ -82,10 +108,6 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         require(orders[0].ammIndex == orders[1].ammIndex, "OB_orders_for_different_amms");
         // fillAmount should be multiple of min size requirement and fillAmount should be non-zero
         require(isMultiple(fillAmount, minSizes[orders[0].ammIndex]), "OB_fillAmount_not_multiple_of_minSizeRequirement");
-
-        MatchInfo[2] memory matchInfo;
-        (matchInfo[0].orderHash, matchInfo[0].blockPlaced) = _verifyOrder(orders[0], signatures[0], fillAmount);
-        (matchInfo[1].orderHash, matchInfo[1].blockPlaced) = _verifyOrder(orders[1], signatures[1], -fillAmount);
 
         // Interactions
         uint fulfillPrice;
@@ -109,7 +131,7 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
             // get openInterestNotional for indexing
             IAMM amm = clearingHouse.amms(orders[0].ammIndex);
             uint openInterestNotional = amm.openInterestNotional();
-            emit OrdersMatched(matchInfo[0].orderHash, matchInfo[1].orderHash, fillAmount.toUint256(), fulfillPrice, openInterestNotional, msg.sender, block.timestamp);
+            emit OrdersMatched(matchInfo[0].orderHash, matchInfo[1].orderHash, fillAmount.toUint256() /* asserts fillAmount is +ve */, fulfillPrice, openInterestNotional, msg.sender, block.timestamp);
         } catch Error(string memory err) { // catches errors emitted from "revert/require"
             try this.parseMatchingError(err) returns(bytes32 orderHash, string memory reason) {
                 emit OrderMatchingError(orderHash, reason);
@@ -128,19 +150,38 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         (orderHash, reason) = abi.decode(bytes(err), (bytes32, string));
     }
 
-    function placeOrder(Order memory order, bytes memory signature) external whenNotPaused {
+    function placeOrder(Order memory order) external whenNotPaused {
+        int posSize = clearingHouse.getPositionSize(order.trader, order.ammIndex);
+        uint reserveAmount = _placeOrder(order, posSize);
+        if (reserveAmount != 0) {
+            marginAccount.reserveMargin(order.trader, reserveAmount);
+        }
+    }
+
+    function placeOrders(Order[] memory orders) external whenNotPaused {
+        address trader = orders[0].trader;
+        int[] memory posSizes = clearingHouse.getPositionSizes(trader);
+        uint reserveAmount;
+        for (uint i = 0; i < orders.length; i++) {
+            require(orders[i].trader == trader, "OB_trader_mismatch");
+            reserveAmount += _placeOrder(orders[i], posSizes[orders[i].ammIndex]);
+        }
+        if (reserveAmount != 0) {
+            marginAccount.reserveMargin(trader, reserveAmount);
+        }
+    }
+
+    function _placeOrder(Order memory order, int size) internal returns (uint reserveAmount) {
         require(msg.sender == order.trader, "OB_sender_is_not_trader");
+        // require(order.validUntil == 0, "OB_expiring_orders_not_supported");
         // order.baseAssetQuantity should be multiple of minSizeRequirement
         require(isMultiple(order.baseAssetQuantity, minSizes[order.ammIndex]), "OB_order_size_not_multiple_of_minSizeRequirement");
 
-        (, bytes32 orderHash) = verifySigner(order, signature);
+        bytes32 orderHash = getOrderHash(order);
         // order should not exist in the orderStatus map already
         require(orderInfo[orderHash].status == OrderStatus.Invalid, "OB_Order_already_exists");
 
-        uint reserveAmount;
-        IAMM amm = IAMM(clearingHouse.amms(order.ammIndex));
-        (int size,,,) = amm.positions(order.trader);
-        if(order.reduceOnly) {
+        if (order.reduceOnly) {
             require(isOppositeSign(size, order.baseAssetQuantity), "OB_reduce_only_order_must_reduce_position");
             reduceOnlyAmount[order.trader][order.ammIndex] += abs(order.baseAssetQuantity);
             require(abs(size) >= reduceOnlyAmount[order.trader][order.ammIndex], "OB_reduce_only_amount_exceeded");
@@ -155,13 +196,12 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
                 require(reduceOnlyAmount[order.trader][order.ammIndex] == 0, "OB_cancel_reduce_only_order_first");
             }
             // reserve margin for the order
-            reserveAmount = clearingHouse.getRequiredMargin(order.baseAssetQuantity, order.price);
-            marginAccount.reserveMargin(order.trader, reserveAmount);
+            reserveAmount = getRequiredMargin(order.baseAssetQuantity, order.price);
         }
 
         // add orderInfo for the corresponding orderHash
         orderInfo[orderHash] = OrderInfo(order, block.number, 0, reserveAmount, OrderStatus.Placed);
-        emit OrderPlaced(order.trader, orderHash, order, signature, block.timestamp);
+        emit OrderPlaced(order.trader, orderHash, order, block.timestamp);
     }
 
     function cancelOrder(bytes32 orderHash) public {
@@ -191,6 +231,12 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         emit OrderCancelled(trader, orderHash, block.timestamp);
     }
 
+    function cancelMultipleOrders(bytes32[] memory orderHashes) external {
+        for (uint i; i < orderHashes.length; i++) {
+            cancelOrder(orderHashes[i]);
+        }
+    }
+
     function settleFunding() external whenNotPaused onlyValidator {
         clearingHouse.settleFunding();
     }
@@ -199,21 +245,21 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
      * @dev assuming one order is in liquidation zone and other is out of it
      * @notice liquidate trader
      * @param trader trader to liquidate
-     * @param order order to match when liuidating for a particular amm
-     * @param signature signature corresponding to order
+     * @param orderHash order to match when liquidating for a particular amm
      * @param liquidationAmount baseAsset amount being traded/liquidated.
      *        liquidationAmount!=0 is validated in amm.liquidatePosition
     */
     function liquidateAndExecuteOrder(
         address trader,
-        Order memory order,
-        bytes memory signature,
+        bytes32 orderHash,
         uint256 liquidationAmount
     )   override
         external
         whenNotPaused
         onlyValidator
     {
+        _validateOrder(orderHash);
+        Order memory order = orderInfo[orderHash].order;
         int256 fillAmount = liquidationAmount.toInt256();
         if (order.baseAssetQuantity < 0) { // order is short, so short position is being liquidated
             fillAmount *= -1;
@@ -221,17 +267,18 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         // fillAmount should be multiple of min size requirement and fillAmount should be non-zero
         require(isMultiple(fillAmount, minSizes[order.ammIndex]), "OB_fillAmount_not_multiple_of_minSizeRequirement");
 
-        MatchInfo memory matchInfo;
-        (matchInfo.orderHash, matchInfo.blockPlaced) = _verifyOrder(order, signature, fillAmount);
-        // execute matching order as maker order
-        matchInfo.mode = OrderExecutionMode.Maker;
+        MatchInfo memory matchInfo = MatchInfo({
+            orderHash: orderHash,
+            blockPlaced: orderInfo[orderHash].blockPlaced,
+            mode: OrderExecutionMode.Maker // execute matching order as maker order
+        });
 
         try clearingHouse.liquidate(order, matchInfo, fillAmount, order.price, trader) {
             _updateOrder(matchInfo.orderHash, fillAmount, order.baseAssetQuantity);
             // get openInterestNotional for indexing
             IAMM amm = clearingHouse.amms(order.ammIndex);
             uint openInterestNotional = amm.openInterestNotional();
-            emit LiquidationOrderMatched(trader, matchInfo.orderHash, signature, liquidationAmount, order.price, openInterestNotional, msg.sender, block.timestamp);
+            emit LiquidationOrderMatched(trader, matchInfo.orderHash, liquidationAmount, order.price, openInterestNotional, msg.sender, block.timestamp);
         } catch Error(string memory err) { // catches errors emitted from "revert/require"
             try this.parseMatchingError(err) returns(bytes32 _orderHash, string memory reason) {
                 if (matchInfo.orderHash == _orderHash) { // err in openPosition for the order
@@ -277,35 +324,19 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         return _hashTypedDataV4(keccak256(abi.encode(ORDER_TYPEHASH, order)));
     }
 
-    /* ****************** */
-    /*   Test/UI Helpers  */
-    /* ****************** */
-
-    function cancelMultipleOrders(bytes32[] memory orderHashes) external {
-        for (uint i; i < orderHashes.length; i++) {
-            cancelOrder(orderHashes[i]);
-        }
+    /**
+    * @notice Get the margin required to place an order
+    * @dev includes trade fee (taker fee)
+    */
+    function getRequiredMargin(int256 baseAssetQuantity, uint256 price) public view returns(uint256 requiredMargin) {
+        uint quoteAsset = abs(baseAssetQuantity).toUint256() * price / 1e18;
+        requiredMargin = quoteAsset * minAllowableMargin / 1e6;
+        requiredMargin += quoteAsset * takerFee / 1e6;
     }
 
     /* ****************** */
     /*      Internal      */
     /* ****************** */
-
-    function _verifyOrder(Order memory order, bytes memory signature, int256 fillAmount)
-        internal
-        view
-        returns (bytes32 /* orderHash */, uint /* blockPlaced */)
-    {
-        (, bytes32 orderHash) = verifySigner(order, signature);
-
-        // order should be in placed status
-        require(orderInfo[orderHash].status == OrderStatus.Placed, "OB_invalid_order");
-        // order.baseAssetQuantity and fillAmount should have same sign
-        // order.baseAssetQuantity != 0 and fillAmount != 0 is validated placeOrder and execute/liquidate order resepctively
-        require(isSameSign(order.baseAssetQuantity, fillAmount), "OB_fill_and_base_sign_not_match");
-
-        return (orderHash, orderInfo[orderHash].blockPlaced);
-    }
 
     function _updateOrder(bytes32 orderHash, int256 fillAmount, int256 baseAssetQuantity) internal {
         orderInfo[orderHash].filledAmount += fillAmount;
@@ -388,15 +419,21 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         _unpause();
     }
 
-    function setValidatorStatus(address validator, bool status) external onlyGovernance whenNotPaused {
+    function setValidatorStatus(address validator, bool status) external onlyGovernance {
         isValidator[validator] = status;
     }
 
-    function initializeMinSize(int minSize) external onlyGovernance whenNotPaused {
+    function initializeMinSize(int minSize) external onlyGovernance {
         minSizes.push(minSize);
     }
 
-    function updateMinSize(uint ammIndex, int minSize) external onlyGovernance whenNotPaused {
+    function updateMinSize(uint ammIndex, int minSize) external onlyGovernance {
         minSizes[ammIndex] = minSize;
+    }
+
+    function updateParams(uint _minAllowableMargin, uint _takerFee) external {
+        require(msg.sender == address(clearingHouse), "OB_only_clearingHouse");
+        minAllowableMargin = _minAllowableMargin;
+        takerFee = _takerFee;
     }
 }

@@ -5,7 +5,7 @@ import "forge-std/Test.sol";
 import "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import "@layerzerolabs/solidity-examples/contracts/mocks/LZEndpointMock.sol";
-import "../../contracts/OrderBook.sol";
+import "../../contracts/orderbooks/OrderBook.sol";
 import "../../contracts/ClearingHouse.sol";
 import "../../contracts/AMM.sol";
 import "../../contracts/MarginAccount.sol";
@@ -277,7 +277,7 @@ abstract contract Utils is Test {
     function placeOrder(uint ammIndex, uint traderKey, int size, uint price, bool reduceOnly) internal returns (IOrderBook.Order memory, bytes memory, bytes32) {
         (address trader, IOrderBook.Order memory order, bytes memory signature, bytes32 orderHash) = prepareOrder(ammIndex, traderKey, size, price, reduceOnly);
         vm.prank(trader);
-        orderBook.placeOrder(order, signature);
+        orderBook.placeOrder(order);
         return (order, signature, orderHash);
     }
 
@@ -308,7 +308,7 @@ abstract contract Utils is Test {
         }
         (orders[1], signatures[1], ordersHash[1]) = placeOrder(ammIndex, trader2Key, -int(stdMath.abs(size)), price, reduceOnly);
 
-        orderBook.executeMatchedOrders(orders, signatures, int(stdMath.abs(fillAmount)));
+        orderBook.executeMatchedOrders(ordersHash[0], ordersHash[1], int(stdMath.abs(fillAmount)));
     }
 
     function assertPositions(address trader, int size, uint openNotional, int unrealizedPnl, uint avgOpen) internal {

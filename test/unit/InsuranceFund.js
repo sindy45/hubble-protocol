@@ -169,9 +169,11 @@ describe('Insurance Fund Auction Tests', function() {
         signers = await ethers.getSigners()
         ;([ _, bob, liquidator1, ifLP, auctionBuyer, admin, charlie ] = signers)
         alice = signers[0].address
-        ;({ swap, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, oracle, weth, insuranceFund } = await setupContracts())
+        ;({ orderBook, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, oracle, weth, insuranceFund } = await setupContracts())
         await vusd.grantRole(await vusd.MINTER_ROLE(), admin.address) // will mint vusd to liquidators account
+        await clearingHouse.setOrderBook(orderBook.address)
         await setDefaultClearingHouseParams(clearingHouse)
+        await clearingHouse.setOrderBook(signers[0].address)
         await amm.setLiquidationParams(1e6, 1e6)
 
         // addCollateral

@@ -8,10 +8,10 @@ contract OrderBookTests is Utils {
     RestrictedErc20 public weth;
     int public constant defaultWethPrice = 1000 * 1e6;
 
-    event OrderPlaced(address indexed trader, bytes32 indexed orderHash, IOrderBook.Order order, bytes signature, uint timestamp);
+    event OrderPlaced(address indexed trader, bytes32 indexed orderHash, IOrderBook.Order order, uint timestamp);
     event OrderCancelled(address indexed trader, bytes32 indexed orderHash, uint timestamp);
     event OrdersMatched(bytes32 indexed orderHash0, bytes32 indexed orderHash1, uint256 fillAmount, uint price, uint openInterestNotional, address relayer, uint timestamp);
-    event LiquidationOrderMatched(address indexed trader, bytes32 indexed orderHash, bytes signature, uint256 fillAmount, uint price, uint openInterestNotional, address relayer, uint timestamp);
+    event LiquidationOrderMatched(address indexed trader, bytes32 indexed orderHash, uint256 fillAmount, uint price, uint openInterestNotional, address relayer, uint timestamp);
 
     function setUp() public {
         setupContracts();
@@ -34,26 +34,26 @@ contract OrderBookTests is Utils {
             price > 1e6
         );
         // place order with size < minSize
-        (address trader, IOrderBook.Order memory order, bytes memory signature, bytes32 orderHash) = prepareOrder(0, traderKey, MIN_SIZE - 1, price, false);
+        (address trader, IOrderBook.Order memory order,, bytes32 orderHash) = prepareOrder(0, traderKey, MIN_SIZE - 1, price, false);
 
         vm.expectRevert("OB_sender_is_not_trader");
-        orderBook.placeOrder(order, signature);
+        orderBook.placeOrder(order);
 
         vm.startPrank(trader);
         vm.expectRevert("OB_order_size_not_multiple_of_minSizeRequirement");
-        orderBook.placeOrder(order, signature);
+        orderBook.placeOrder(order);
         vm.stopPrank();
 
         size = (size / MIN_SIZE) * MIN_SIZE;
         // place order with size > minSize but not multiple of minSize
-        (trader, order, signature, orderHash) = prepareOrder(0, traderKey, size + 1234, price, false);
+        (trader, order,, orderHash) = prepareOrder(0, traderKey, size + 1234, price, false);
 
         vm.startPrank(trader);
         vm.expectRevert("OB_order_size_not_multiple_of_minSizeRequirement");
-        orderBook.placeOrder(order, signature);
+        orderBook.placeOrder(order);
         vm.stopPrank();
 
-        (trader, order, signature, orderHash) = prepareOrder(0, traderKey, size, price, false);
+        (trader, order,, orderHash) = prepareOrder(0, traderKey, size, price, false);
 
         uint quote = stdMath.abs(size) * price / 1e18;
         uint marginRequired = quote / 5 + quote * uint(takerFee) / 1e6;
@@ -61,17 +61,17 @@ contract OrderBookTests is Utils {
 
         vm.startPrank(trader);
         vm.expectRevert("MA_reserveMargin: Insufficient margin");
-        orderBook.placeOrder(order, signature);
+        orderBook.placeOrder(order);
         vm.stopPrank();
 
         addMargin(trader, 1, 0, address(0));
         vm.startPrank(trader);
         vm.expectEmit(true, true, false, true, address(orderBook));
-        emit OrderPlaced(trader, orderHash, order, signature, block.timestamp);
-        orderBook.placeOrder(order, signature);
+        emit OrderPlaced(trader, orderHash, order, block.timestamp);
+        orderBook.placeOrder(order);
 
         vm.expectRevert("OB_Order_already_exists");
-        orderBook.placeOrder(order, signature);
+        orderBook.placeOrder(order);
 
         (
             IOrderBook.Order memory _order,
@@ -88,11 +88,6 @@ contract OrderBookTests is Utils {
         assertEq(reservedMargin, marginRequired);
         assertEq(marginAccount.reservedMargin(trader), marginRequired);
 
-        order.salt += 1;
-        vm.expectRevert("OB_SINT"); // Signature and order doesn't match
-        orderBook.placeOrder(order, signature);
-
-        order.salt -= 1;
         orderBook.cancelOrder(orderHash);
         (_order, blockPlaced, filledAmount, reservedMargin, status) = orderBook.orderInfo(orderHash);
         assertEq(abi.encode(_order), abi.encode(IOrderBook.Order(0, address(0), 0, 0, 0, false)));
@@ -104,7 +99,7 @@ contract OrderBookTests is Utils {
 
         // cannot place same order after cancelling
         vm.expectRevert("OB_Order_already_exists");
-        orderBook.placeOrder(order, signature);
+        orderBook.placeOrder(order);
         vm.stopPrank();
     }
 
@@ -120,7 +115,6 @@ contract OrderBookTests is Utils {
         }
 
         IOrderBook.Order[2] memory orders;
-        bytes[2] memory signatures;
         bytes32[2] memory orderHashes;
 
         int size = int(uint(size_)) / MIN_SIZE * MIN_SIZE + MIN_SIZE; // to avoid min size error
@@ -129,8 +123,8 @@ contract OrderBookTests is Utils {
         addMargin(alice, quote, 0, address(0)); // 1x leverage
         addMargin(bob, quote, 0, address(0));
 
-        (orders[0], signatures[0], orderHashes[0]) = placeOrder(0, aliceKey, size, price, false);
-        (orders[1], signatures[1], orderHashes[1]) = placeOrder(0, bobKey, -size, price, false);
+        (orders[0],, orderHashes[0]) = placeOrder(0, aliceKey, size, price, false);
+        (orders[1],, orderHashes[1]) = placeOrder(0, bobKey, -size, price, false);
 
         // assert reserved margin
         uint marginRequired = quote / uint(MAX_LEVERAGE) + quote * uint(takerFee) / 1e6;
@@ -138,14 +132,14 @@ contract OrderBookTests is Utils {
         assertEq(marginAccount.reservedMargin(bob), marginRequired);
 
         vm.expectRevert("OB_filled_amount_higher_than_order_base");
-        orderBook.executeMatchedOrders(orders, signatures, size + MIN_SIZE);
+        orderBook.executeMatchedOrders(orderHashes[0], orderHashes[1], size + MIN_SIZE);
 
         vm.expectRevert("OB_fillAmount_not_multiple_of_minSizeRequirement");
-        orderBook.executeMatchedOrders(orders, signatures, size + 1);
+        orderBook.executeMatchedOrders(orderHashes[0], orderHashes[1], size + 1);
 
         vm.expectEmit(true, true, false, true, address(orderBook));
         emit OrdersMatched(orderHashes[0], orderHashes[1], uint(size), uint(price), stdMath.abs(2 * size), address(this), block.timestamp);
-        orderBook.executeMatchedOrders(orders, signatures, size);
+        orderBook.executeMatchedOrders(orderHashes[0], orderHashes[1], size);
 
         IOrderBook.Order memory order;
         int filledAmount;
@@ -170,7 +164,7 @@ contract OrderBookTests is Utils {
         assertEq(marginAccount.reservedMargin(bob), 0);
 
         vm.expectRevert("OB_invalid_order");
-        orderBook.executeMatchedOrders(orders, signatures, size);
+        orderBook.executeMatchedOrders(orderHashes[0], orderHashes[1], size);
 
         assertPositions(alice, size, quote, 0, quote * 1e18 / stdMath.abs(size));
         assertPositions(bob, -size, quote, 0, quote * 1e18 / stdMath.abs(size));
@@ -183,15 +177,14 @@ contract OrderBookTests is Utils {
         int size = int(uint(size_)) / MIN_SIZE * MIN_SIZE + 2 * MIN_SIZE; // to avoid min size error
 
         IOrderBook.Order[2] memory orders;
-        bytes[2] memory signatures;
         bytes32[2] memory orderHashes;
 
         uint quote = stdMath.abs(size) * price / 1e18;
         addMargin(alice, quote / 2, 0, address(0)); // 2x leverage
         addMargin(bob, quote / 2, 0, address(0));
 
-        (orders[0], signatures[0], orderHashes[0]) = placeOrder(0, aliceKey, size, price, false);
-        (orders[1], signatures[1], orderHashes[1]) = placeOrder(0, bobKey, -size, price, false);
+        (orders[0],, orderHashes[0]) = placeOrder(0, aliceKey, size, price, false);
+        (orders[1],, orderHashes[1]) = placeOrder(0, bobKey, -size, price, false);
 
         // assert reserved margin
         uint marginRequired = quote / uint(MAX_LEVERAGE) + quote * uint(takerFee) / 1e6;
@@ -199,14 +192,14 @@ contract OrderBookTests is Utils {
         assertEq(marginAccount.reservedMargin(bob), marginRequired);
 
         vm.expectRevert("OB_filled_amount_higher_than_order_base");
-        orderBook.executeMatchedOrders(orders, signatures, size + MIN_SIZE);
+        orderBook.executeMatchedOrders(orderHashes[0], orderHashes[1], size + MIN_SIZE);
 
         vm.expectRevert("OB_fillAmount_not_multiple_of_minSizeRequirement");
-        orderBook.executeMatchedOrders(orders, signatures, size + 1);
+        orderBook.executeMatchedOrders(orderHashes[0], orderHashes[1], size + 1);
 
         vm.expectEmit(true, true, false, true, address(orderBook));
         emit OrdersMatched(orderHashes[0], orderHashes[1], uint(size), uint(price), stdMath.abs(2 * size), address(this), block.timestamp);
-        orderBook.executeMatchedOrders(orders, signatures, size);
+        orderBook.executeMatchedOrders(orderHashes[0], orderHashes[1], size);
 
         IOrderBook.Order memory order;
         int filledAmount;
@@ -231,7 +224,7 @@ contract OrderBookTests is Utils {
         assertEq(marginAccount.reservedMargin(bob), 0);
 
         vm.expectRevert("OB_invalid_order");
-        orderBook.executeMatchedOrders(orders, signatures, size);
+        orderBook.executeMatchedOrders(orderHashes[0], orderHashes[1], size);
 
         assertPositions(alice, size, quote, 0, quote * 1e18 / stdMath.abs(size));
         assertPositions(bob, -size, quote, 0, quote * 1e18 / stdMath.abs(size));
@@ -243,7 +236,7 @@ contract OrderBookTests is Utils {
         int size = int(uint(size_)) / MIN_SIZE * MIN_SIZE +  10 * MIN_SIZE; // to avoid min size error
 
         // add weth margin
-        temp[0] = clearingHouse.getRequiredMargin(size, price) * 1e18 / uint(defaultWethPrice) + 1e10; // required weth margin in 1e18, add 1e10 for any precision loss
+        temp[0] = orderBook.getRequiredMargin(size, price) * 1e18 / uint(defaultWethPrice) + 1e10; // required weth margin in 1e18, add 1e10 for any precision loss
         addMargin(alice, temp[0], 1, address(weth));
         addMargin(bob, temp[0], 1, address(weth));
         placeAndExecuteOrder(0, aliceKey, bobKey, size, price, true, false, size, false);
@@ -256,7 +249,7 @@ contract OrderBookTests is Utils {
         address charlie;
         (charlie, temp[3] /** charlieKey */) = makeAddrAndKey("charlie");
         addMargin(charlie, stdMath.abs(size) * price / 1e18, 0, address(0));
-        (IOrderBook.Order memory order, bytes memory signature, bytes32 orderHash) = placeOrder(0, temp[3], size, price, false);
+        (IOrderBook.Order memory order,, bytes32 orderHash) = placeOrder(0, temp[3], size, price, false);
 
         // liquidate alice
         uint toLiquidate;
@@ -268,11 +261,11 @@ contract OrderBookTests is Utils {
         }
 
         vm.expectRevert("OB_fillAmount_not_multiple_of_minSizeRequirement");
-        orderBook.liquidateAndExecuteOrder(alice, order, signature, toLiquidate + 1);
+        orderBook.liquidateAndExecuteOrder(alice, orderHash, toLiquidate + 1);
 
         vm.expectEmit(true, true, false, true, address(orderBook));
-        emit LiquidationOrderMatched(address(alice), orderHash, signature, toLiquidate, price, stdMath.abs(2 * size), address(this), block.timestamp);
-        orderBook.liquidateAndExecuteOrder(alice, order, signature, toLiquidate);
+        emit LiquidationOrderMatched(address(alice), orderHash, toLiquidate, price, stdMath.abs(2 * size), address(this), block.timestamp);
+        orderBook.liquidateAndExecuteOrder(alice, orderHash, toLiquidate);
 
         {
             (,,int filledAmount, uint reservedMargin, OrderBook.OrderStatus status) = orderBook.orderInfo(orderHash);
@@ -302,12 +295,12 @@ contract OrderBookTests is Utils {
         {
             (peter, temp[3] /** peterKey */) = makeAddrAndKey("peter");
             addMargin(peter, stdMath.abs(size) * price / 1e18, 0, address(0));
-            (order, signature, orderHash) = placeOrder(0, temp[3], -size, price, false);
+            (order,, orderHash) = placeOrder(0, temp[3], -size, price, false);
         }
         {
             vm.expectEmit(true, false, false, true, address(orderBook));
-            emit LiquidationOrderMatched(address(bob), orderHash, signature, toLiquidate, price, stdMath.abs(2 * size), address(this), block.timestamp);
-            orderBook.liquidateAndExecuteOrder(bob, order, signature, toLiquidate);
+            emit LiquidationOrderMatched(address(bob), orderHash, toLiquidate, price, stdMath.abs(2 * size), address(this), block.timestamp);
+            orderBook.liquidateAndExecuteOrder(bob, orderHash, toLiquidate);
         }
         {
             (,,int filledAmount, uint reservedMargin, OrderBook.OrderStatus status) = orderBook.orderInfo(orderHash);
@@ -405,33 +398,35 @@ contract OrderBookTests is Utils {
         int size = int(uint(size_)) / MIN_SIZE * MIN_SIZE +  MIN_SIZE; // to avoid min size error
 
         IOrderBook.Order[2] memory orders;
-        bytes[2] memory signatures;
         bytes32[2] memory ordersHash;
 
         uint quote = stdMath.abs(size) * price / 1e18;
         addMargin(alice, quote / 2, 0, address(0)); // 2x leverage
         addMargin(bob, quote / 2, 0, address(0));
 
-        (orders[0], signatures[0], ordersHash[0]) = placeOrder(0, aliceKey, size, price, false);
-        (orders[1], signatures[1], ordersHash[1]) = placeOrder(0, bobKey, -size, price, false);
+        (orders[0],, ordersHash[0]) = placeOrder(0, aliceKey, size, price, false);
+        (orders[1],, ordersHash[1]) = placeOrder(0, bobKey, -size, price, false);
 
-        // different amms
-        orders[0].ammIndex = 1;
-        vm.expectRevert("OB_orders_for_different_amms");
-        orderBook.executeMatchedOrders(orders, signatures, size);
-        orders[0].ammIndex = 0;
+        orders[0].salt += 1;
+        ordersHash[0] = orderBook.getOrderHash(orders[0]);
+        // execute an order which is not placed
+        vm.expectRevert("OB_invalid_order");
+        orderBook.executeMatchedOrders(ordersHash[0], ordersHash[1], size);
+
+        orders[0].salt -= 1;
+        ordersHash[0] = orderBook.getOrderHash(orders[0]);
 
         vm.expectRevert("OB_order_0_is_not_long");
-        orderBook.executeMatchedOrders([orders[1], orders[0]], signatures, size);
+        orderBook.executeMatchedOrders(ordersHash[1], ordersHash[0], size);
         vm.expectRevert("OB_order_1_is_not_short");
-        orderBook.executeMatchedOrders([orders[0], orders[0]], signatures, size);
+        orderBook.executeMatchedOrders(ordersHash[0], ordersHash[0], size);
         vm.expectRevert("OB_fillAmount_not_multiple_of_minSizeRequirement");
-        orderBook.executeMatchedOrders(orders, signatures, 0);
+        orderBook.executeMatchedOrders(ordersHash[0], ordersHash[1], 0);
 
         // reduce long order price
-        (orders[0], signatures[0], ordersHash[0]) = placeOrder(0, aliceKey, size, price - 1, false);
+        (orders[0],, ordersHash[0]) = placeOrder(0, aliceKey, size, price - 1, false);
         vm.expectRevert("OB_orders_do_not_match");
-        orderBook.executeMatchedOrders(orders, signatures, size);
+        orderBook.executeMatchedOrders(ordersHash[0], ordersHash[1], size);
     }
 
     function testReduceOnly(uint64 price, uint120 size_) public {
@@ -441,67 +436,66 @@ contract OrderBookTests is Utils {
 
         // alice longs, bob shorts, fillAmount = size / 2
         int fillAmount = (size / 2) / MIN_SIZE * MIN_SIZE;
-        uint requiredMargin = clearingHouse.getRequiredMargin(size, price);
+        uint requiredMargin = orderBook.getRequiredMargin(size, price);
         placeAndExecuteOrder(0, aliceKey, bobKey, size, price, false, true, fillAmount, false);
         assertEq(marginAccount.reservedMargin(alice), requiredMargin - requiredMargin * uint(fillAmount) / uint(size));
         assertEq(marginAccount.reservedMargin(bob), requiredMargin - requiredMargin * uint(fillAmount) / uint(size));
 
         IOrderBook.Order[2] memory orders;
-        bytes[2] memory signatures;
         bytes32[] memory orderHashes = new bytes32[](2);
         addMargin(alice, requiredMargin * 10, 0, address(0));
         addMargin(bob, requiredMargin * 10, 0, address(0));
 
         // position cannot increase for a reduce-only order
         // long order increase fail, alice longs more
-        (, orders[0], signatures[0], orderHashes[0]) = prepareOrder(0, aliceKey, size, price - 1, true /** reduceOnly */);
+        (, orders[0],, orderHashes[0]) = prepareOrder(0, aliceKey, size, price - 1, true /** reduceOnly */);
         vm.expectRevert('OB_reduce_only_order_must_reduce_position');
         vm.prank(alice);
-        orderBook.placeOrder(orders[0], signatures[0]);
+        orderBook.placeOrder(orders[0]);
         // short order increase fail, bob shorts more
-        (, orders[0], signatures[0], orderHashes[0]) = prepareOrder(0, bobKey, -size, price - 1, true /** reduceOnly */);
+        (, orders[0],, orderHashes[0]) = prepareOrder(0, bobKey, -size, price - 1, true /** reduceOnly */);
         vm.expectRevert('OB_reduce_only_order_must_reduce_position');
         vm.prank(bob);
-        orderBook.placeOrder(orders[0], signatures[0]);
+        orderBook.placeOrder(orders[0]);
 
         // position cannot reverse for a reduce-only order
         // long order reverse fail, bob longs
-        (, orders[0], signatures[0], orderHashes[0]) = prepareOrder(0, bobKey, size, price - 1, true /** reduceOnly */);
+        (, orders[0],, orderHashes[0]) = prepareOrder(0, bobKey, size, price - 1, true /** reduceOnly */);
         vm.expectRevert('OB_reduce_only_amount_exceeded');
         vm.prank(bob);
-        orderBook.placeOrder(orders[0], signatures[0]);
+        orderBook.placeOrder(orders[0]);
         // short order reverse fail, alice shorts
-        (, orders[0], signatures[0], orderHashes[0]) = prepareOrder(0, aliceKey, -size, price - 1, true /** reduceOnly */);
+        (, orders[0],, orderHashes[0]) = prepareOrder(0, aliceKey, -size, price - 1, true /** reduceOnly */);
         vm.expectRevert('OB_reduce_only_amount_exceeded');
         vm.prank(alice);
-        orderBook.placeOrder(orders[0], signatures[0]);
+        orderBook.placeOrder(orders[0]);
 
         // no margin is reserved for a reduce-only order
         uint[2] memory reservedMargin; // 0 - alice, 1 - bob
         reservedMargin[1] = marginAccount.reservedMargin(bob);
-        (orders[0], signatures[0], orderHashes[0]) = placeOrder(0, bobKey, fillAmount, price - 2, true /** reduceOnly */);
+        (orders[0],, orderHashes[0]) = placeOrder(0, bobKey, fillAmount, price - 2, true /** reduceOnly */);
         assertEq(marginAccount.reservedMargin(bob), reservedMargin[1]); // no new margin reserved
         assertEq(orderBook.reduceOnlyAmount(bob, 0), fillAmount);
 
         reservedMargin[0] = marginAccount.reservedMargin(alice);
-        (orders[1], signatures[1], orderHashes[1]) = placeOrder(0, aliceKey, -fillAmount, price - 2, true /** reduceOnly */);
+        (orders[1],, orderHashes[1]) = placeOrder(0, aliceKey, -fillAmount, price - 2, true /** reduceOnly */);
         assertEq(marginAccount.reservedMargin(alice), reservedMargin[0]); // no new margin reserved
         assertEq(orderBook.reduceOnlyAmount(alice, 0), fillAmount);
 
         // cannot place order in opposite direction if reduce-only order is present
         // existing position - long
-        (, IOrderBook.Order memory order, bytes memory signature,) = prepareOrder(0, aliceKey, -size, price, false /** reduceOnly */);
+        (, IOrderBook.Order memory order,,) = prepareOrder(0, aliceKey, -size, price, false /** reduceOnly */);
         vm.expectRevert('OB_cancel_reduce_only_order_first');
         vm.prank(alice);
-        orderBook.placeOrder(order, signature);
+        orderBook.placeOrder(order);
         // existing position - short
-        (, order, signature,) = prepareOrder(0, bobKey, size, price, false);
+        (, order,,) = prepareOrder(0, bobKey, size, price, false);
         vm.expectRevert('OB_cancel_reduce_only_order_first');
         vm.prank(bob);
-        orderBook.placeOrder(order, signature);
+        orderBook.placeOrder(order);
 
         // position can decrease for a reduce-only order
-        orderBook.executeMatchedOrders(orders, signatures, fillAmount);
+        orderBook.executeMatchedOrders(orderHashes[0], orderHashes[1], fillAmount);
         assertEq(marginAccount.reservedMargin(alice), reservedMargin[0]); // no new margin released
         assertEq(marginAccount.reservedMargin(bob), reservedMargin[1]); // no new margin released
         assertEq(orderBook.reduceOnlyAmount(alice, 0), 0);
@@ -520,18 +514,17 @@ contract OrderBookTests is Utils {
         placeAndExecuteOrder(0, aliceKey, bobKey, size, price, false, true, fillAmount, false);
 
         IOrderBook.Order[2] memory orders;
-        bytes[2] memory signatures;
         bytes32[] memory orderHashes = new bytes32[](2);
         // place reduce-only order
-        (orders[0], signatures[0], orderHashes[0]) = placeOrder(0, bobKey, fillAmount, price - 2, true /** reduceOnly */);
+        (orders[0],, orderHashes[0]) = placeOrder(0, bobKey, fillAmount, price - 2, true /** reduceOnly */);
         assertEq(orderBook.reduceOnlyAmount(bob, 0), fillAmount);
 
-        (orders[1], signatures[1], orderHashes[1]) = placeOrder(0, aliceKey, -fillAmount, price - 2, true /** reduceOnly */);
+        (orders[1],, orderHashes[1]) = placeOrder(0, aliceKey, -fillAmount, price - 2, true /** reduceOnly */);
         assertEq(orderBook.reduceOnlyAmount(alice, 0), fillAmount);
 
         // match half order
         fillAmount = (size / 4) / MIN_SIZE * MIN_SIZE;
-        orderBook.executeMatchedOrders(orders, signatures, fillAmount);
+        orderBook.executeMatchedOrders(orderHashes[0], orderHashes[1], fillAmount);
         assertApproxEqAbs(orderBook.reduceOnlyAmount(alice, 0), size / 4, uint(MIN_SIZE));
         assertApproxEqAbs(orderBook.reduceOnlyAmount(bob, 0), size / 4, uint(MIN_SIZE));
 

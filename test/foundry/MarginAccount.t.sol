@@ -38,7 +38,7 @@ contract MarginAccountTests is Utils {
         // place another order to make reservedMargin non-zero
         placeOrder(0, aliceKey, size + MIN_SIZE, price, false);
         placeOrder(0, bobKey, size + MIN_SIZE, price, false);
-        uint reservedMargin = clearingHouse.getRequiredMargin(size + MIN_SIZE, price);
+        uint reservedMargin = orderBook.getRequiredMargin(size + MIN_SIZE, price);
         assertAvailableMargin(alice, 0, int(reservedMargin), utilizedMargin);
         assertAvailableMargin(bob, 0, int(reservedMargin), utilizedMargin);
 
@@ -70,8 +70,8 @@ contract MarginAccountTests is Utils {
         addMargin(alice, uint(margin), 0, address(0));
 
         IOrderBook.Order[2] memory orders;
-        bytes[2] memory signatures;
-        (orders[0], signatures[0],) = placeOrder(0, aliceKey, size, price, false);
+        bytes32[] memory orderHashes = new bytes32[](2);
+        (orders[0],, orderHashes[0]) = placeOrder(0, aliceKey, size, price, false);
         // cannot remove more than available margin
         uint availableMargin = uint(marginAccount.getAvailableMargin(alice));
         vm.expectRevert("MA: available margin < 0, withdrawing too much");
@@ -81,8 +81,8 @@ contract MarginAccountTests is Utils {
         vm.roll(block.number + 1);
 
         // match orders
-        (orders[1], signatures[1],) = placeOrder(0, bobKey, -size, price, false);
-        orderBook.executeMatchedOrders(orders, signatures, size);
+        (orders[1],, orderHashes[1]) = placeOrder(0, bobKey, -size, price, false);
+        orderBook.executeMatchedOrders(orderHashes[0], orderHashes[1], size);
 
         // execute another trade to make unrealized profit/loss non-zero
         // dump price by 10%, alices loses, bob gains

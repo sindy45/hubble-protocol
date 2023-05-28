@@ -14,7 +14,12 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     using SafeCast for int256;
 
     modifier onlyOrderBook() {
-        require(msg.sender == address(orderBook), "Only orderBook");
+        require(isWhitelistedOrderBook[msg.sender], "Only orderBook");
+        _;
+    }
+
+    modifier onlyDefaultOrderBook() {
+        require(msg.sender == address(defaultOrderBook), "Only orderBook");
         _;
     }
 
@@ -38,13 +43,14 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     VUSD public vusd;
     address override public feeSink;
     IMarginAccount public marginAccount;
-    IOrderBook public orderBook;
-    IAMM[] override public amms; // SLOT_12 !!! used in precompile !!!
+    IOrderBook public defaultOrderBook;
+    IAMM[] override public amms;  // SLOT_12 !!! used in precompile !!!
     IHubbleReferral public hubbleReferral;
     uint public lastFundingTime;
     // trader => lastFundingPaid timestamp
     mapping(address => uint) public lastFundingPaid;
     IHubbleBibliophile public bibliophile;
+    mapping(address => bool) public isWhitelistedOrderBook;
 
     uint256[50] private __gap;
 
@@ -52,7 +58,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         address _governance,
         address _feeSink,
         address _marginAccount,
-        address _orderBook,
+        address _defaultOrderBook,
         address _vusd,
         address _hubbleReferral
     ) external
@@ -62,9 +68,10 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
 
         feeSink = _feeSink;
         marginAccount = IMarginAccount(_marginAccount);
-        orderBook = IOrderBook(_orderBook);
+        defaultOrderBook = IOrderBook(_defaultOrderBook);
         vusd = VUSD(_vusd);
         hubbleReferral = IHubbleReferral(_hubbleReferral);
+        isWhitelistedOrderBook[_defaultOrderBook] = true;
     }
 
     /* ****************** */
@@ -120,7 +127,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         }
     }
 
-    function settleFunding() override external onlyOrderBook {
+    function settleFunding() override external onlyDefaultOrderBook {
         uint numAmms = amms.length;
         uint _nextFundingTime;
         for (uint i; i < numAmms; ++i) {
@@ -275,17 +282,22 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
             uint openNotional
         ) = amms[order.ammIndex].openPosition(order, fillAmount, fulfillPrice);
 
-        (int toFeeSink, int feeCharged) = _chargeFeeAndRealizePnL(order.trader, realizedPnl, quoteAsset, mode);
-        if (toFeeSink != 0) {
-            marginAccount.transferOutVusd(feeSink, toFeeSink.toUint256());
+        int feeCharged;
+        {
+            int toFeeSink;
+            (toFeeSink, feeCharged) = _chargeFeeAndRealizePnL(order.trader, realizedPnl, quoteAsset, mode);
+            if (toFeeSink != 0) {
+                marginAccount.transferOutVusd(feeSink, toFeeSink.toUint256());
+            }
         }
-
-        // isPositionIncreased is true when the position is increased or reversed
-        if (isPositionIncreased) {
-            assertMarginRequirement(order.trader);
-            require(order.reduceOnly == false, "CH: reduceOnly order can only reduce position");
+        {
+            // isPositionIncreased is true when the position is increased or reversed
+            if (isPositionIncreased) {
+                assertMarginRequirement(order.trader);
+                require(order.reduceOnly == false, "CH: reduceOnly order can only reduce position");
+            }
+            emit PositionModified(order.trader, order.ammIndex, fillAmount, fulfillPrice, realizedPnl, size, openNotional, feeCharged, mode, _blockTimestamp());
         }
-        emit PositionModified(order.trader, order.ammIndex, fillAmount, fulfillPrice, realizedPnl, size, openNotional, feeCharged, _blockTimestamp());
     }
 
     /* ****************** */
@@ -369,14 +381,18 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         }
     }
 
-    /**
-    * @notice Get the margin required to place an order
-    * @dev includes trade fee (taker fee)
-    */
-    function getRequiredMargin(int256 baseAssetQuantity, uint256 price) external override view returns(uint256 requiredMargin) {
-        uint quoteAsset = abs(baseAssetQuantity).toUint256() * price / 1e18;
-        requiredMargin = quoteAsset * minAllowableMargin.toUint256() / PRECISION;
-        requiredMargin += _calculateTakerFee(quoteAsset).toUint256();
+
+    function getPositionSizes(address trader) external view returns(int[] memory posSizes) {
+        uint numAmms = amms.length;
+        posSizes = new int[](numAmms);
+        for (uint i; i < numAmms; ++i) {
+            // @todo implement this as a precompile
+            (posSizes[i],,,) = amms[i].positions(trader);
+        }
+    }
+
+    function getPositionSize(address trader, uint ammIndex) external view returns(int posSize) {
+        (posSize,,,) = amms[ammIndex].positions(trader);
     }
 
     /* ****************** */
@@ -385,6 +401,10 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
 
     function isAboveMaintenanceMargin(address trader) override external view returns(bool) {
         return calcMarginFraction(trader, true, Mode.Maintenance_Margin) >= maintenanceMargin;
+    }
+
+    function orderBook() external view returns(IOrderBook) {
+        return defaultOrderBook;
     }
 
     /* ****************** */
@@ -475,7 +495,9 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         uint _tradingFeeDiscount,
         uint _liquidationPenalty
     ) external onlyGovernance {
-        require(_maintenanceMargin > 0, "_maintenanceMargin < 0");
+        require(_maintenanceMargin > 0, "_maintenanceMargin <= 0");
+        require(_liquidationPenalty > 0, "_liquidationPenalty < 0");
+
         maintenanceMargin = _maintenanceMargin;
         minAllowableMargin = _minAllowableMargin;
         takerFee = _takerFee;
@@ -483,6 +505,9 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         referralShare = _referralShare;
         tradingFeeDiscount = _tradingFeeDiscount;
         liquidationPenalty = _liquidationPenalty;
+
+        defaultOrderBook.updateParams(_minAllowableMargin.toUint256(), _takerFee.toUint256());
+        marginAccount.updateParams(_minAllowableMargin.toUint256());
     }
 
     function setBibliophile(address _bibliophile) external onlyGovernance {

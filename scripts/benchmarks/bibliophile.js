@@ -55,10 +55,12 @@ async function main(setBiblioPhile) {
         await clearingHouse.setBibliophile(config.Bibliophile, getTxOptions())
     }
 
+    await sleep(3)
     await addMargin(alice, _1e6.mul(40000), gasLimit)
     await addMargin(bob, _1e6.mul(40000), gasLimit)
     // await sleep(5)
     // console.log(JSON.stringify(await generateConfig(leaderboard.address, marginAccountHelper.address), null, 0))
+    await getAvailableMargin()
 }
 
 async function setupAMM(name, initialRate, oracleAddress) {
@@ -162,6 +164,16 @@ async function amms() {
     console.log(await ma.oracle(), await ch.getAmmsLength(), await ch.getAMMs())
 }
 
+async function getAvailableMargin() {
+    signers = await ethers.getSigners()
+    ;([, alice, bob] = signers)
+    const ma = await ethers.getContractAt('MarginAccount', config.MarginAccount)
+    console.log(await ma.getAvailableMargin(alice.address))
+    console.log(await ma.getAvailableMargin(bob.address))
+    console.log(await ma.margin(0, alice.address))
+    console.log(await ma.margin(0, alice.address))
+}
+
 async function runAnalytics() {
     signers = await ethers.getSigners()
     ;([, alice, bob] = signers)
@@ -183,17 +195,18 @@ async function runAnalytics() {
     for (let i = 0; i < 10; i++) {
         // marketId = i
         marketId = amms.toNumber() + i
-        console.log('deploying new amm')
+        // console.log('deploying new amm')
         await setupAMM(`Market-${marketId}-Perp`, (marketId+1) * 10, oracle)
         await sleep(5)
 
         // const amms = await ch.getAmmsLength()
         // let marketId = amms.sub(1).toNumber()
 
-        // console.log('sending orders in market-id', marketId)
+        console.log('sending orders in market-id', marketId)
         // alice and bob place an order in each market
-        await exchange.createLimitOrder(alice, marketId, marketId+1, (marketId+1)*10)
-        await exchange.createLimitOrder(bob, marketId, -(marketId+1), (marketId+1)*10)
+        const tx1 = await (await exchange.createLimitOrder(alice, marketId, marketId+1, (marketId+1)*10)).wait()
+        // console.log(tx1)
+        const tx2 = await (await exchange.createLimitOrder(bob, marketId, -(marketId+1), (marketId+1)*10)).wait()
         // console.log('orders sent')
 
         await sleep(3)
@@ -204,10 +217,12 @@ async function runAnalytics() {
         const lastMatched = events[events.length - 1]
         // console.log('lastMatched', lastMatched)
         const r = await lastMatched.getTransactionReceipt()
-        console.log({ markets: marketId+1, orderMatchedGas: r.gasUsed.toNumber() })
+        console.log({
+            markets: marketId+1,
+            orderPlaced: Math.floor((tx1.gasUsed.toNumber() + tx2.gasUsed.toNumber())/2),
+            orderMatchedGas: r.gasUsed.toNumber()
+        })
     }
-
-
 }
 
 async function compareValues(alice, bob) {
@@ -222,13 +237,16 @@ async function compareValues(alice, bob) {
     const ch = await ethers.getContractAt('ClearingHouse', config.ClearingHouse)
     // await ch.setBibliophile('0x0300000000000000000000000000000000000001') // not needed with vanilla calls
 
+    console.log(await ch.bibliophile())
+    console.log(await ch.estimateGas.getNotionalPositionAndMargin(alice.address, false, 0))
     console.log(await ch.estimateGas.getNotionalPositionAndMarginVanilla(alice.address, false, 0))
-    console.log(await ch.estimateGas.getNotionalPositionAndMarginVanilla(bob.address, false, 0))
+    // console.log(await ch.estimateGas.getNotionalPositionAndMarginVanilla(bob.address, false, 0))
 }
 
-main(false /* setBiblioPhile */)
+main(true /* setBiblioPhile */)
 // runAnalytics()
 // compareValues()
+// getAvailableMargin()
 .then(() => process.exit(0))
 .catch(error => {
     console.error(error);

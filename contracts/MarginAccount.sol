@@ -36,7 +36,6 @@ contract MarginAccount is IMarginAccount, MetaHubbleBase, ReentrancyGuard {
 
     // used for all usd based values
     uint constant PRECISION = 1e6;
-    int constant PRECISION_INT = 1e6;
 
     error NOT_LIQUIDATABLE(IMarginAccount.LiquidationStatus);
 
@@ -85,6 +84,7 @@ contract MarginAccount is IMarginAccount, MetaHubbleBase, ReentrancyGuard {
     * @notice Maps trader => reserved margin for open orders
     */
     mapping(address => uint) public reservedMargin;
+    uint public minAllowableMargin;
     address public marginAccountHelper;
 
     uint256[50] private __gap;
@@ -201,8 +201,6 @@ contract MarginAccount is IMarginAccount, MetaHubbleBase, ReentrancyGuard {
         external
         onlyOrderBook
     {
-        // settle pending funding payment
-        clearingHouse.updatePositions(trader);
         require(getAvailableMargin(trader) >= amount.toInt256(), "MA_reserveMargin: Insufficient margin");
         reservedMargin[trader] += amount;
         emit MarginReserved(trader, amount);
@@ -218,15 +216,12 @@ contract MarginAccount is IMarginAccount, MetaHubbleBase, ReentrancyGuard {
         emit MarginReleased(trader, amount);
     }
 
-    /**
-    * @dev assumes there is no pending funding payment
-    */
     function getAvailableMargin(address trader) public view override returns (int availableMargin) {
-        // availableMargin = margin + unrealizedPnl - reservedMargin - utilizedMargin
-        int _margin = getNormalizedMargin(trader);
-        (uint notionalPosition, int unrealizedPnl) = clearingHouse.getTotalNotionalPositionAndUnrealizedPnl(trader, _margin, IClearingHouse.Mode.Min_Allowable_Margin);
-        int utilizedMargin = notionalPosition.toInt256() * clearingHouse.minAllowableMargin() / PRECISION_INT;
-        availableMargin = _margin + unrealizedPnl - utilizedMargin - reservedMargin[trader].toInt256();
+        // availableMargin = margin - reservedMargin - utilizedMargin
+        // returned _margin includes funding payments and unrealized pnl and is also optimized via precompile
+        (uint256 notionalPosition, int256 _margin) = clearingHouse.getNotionalPositionAndMargin(trader, true /* includeFundingPayments */, IClearingHouse.Mode.Min_Allowable_Margin);
+        uint utilizedMargin = notionalPosition * minAllowableMargin / PRECISION;
+        availableMargin = _margin - utilizedMargin.toInt256() - reservedMargin[trader].toInt256();
     }
 
     /* ****************** */
@@ -673,5 +668,9 @@ contract MarginAccount is IMarginAccount, MetaHubbleBase, ReentrancyGuard {
         require(_weight <= PRECISION, "weight > 1e6");
         require(idx < supportedCollateral.length, "Collateral not supported");
         supportedCollateral[idx].weight = _weight;
+    }
+
+    function updateParams(uint _minAllowableMargin) external onlyClearingHouse {
+        minAllowableMargin = _minAllowableMargin;
     }
 }

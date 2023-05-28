@@ -25,7 +25,7 @@ const orderType = {
 class Exchange {
     constructor(provider) {
         this.provider = provider // new ethers.providers.JsonRpcProvider('https://internal-hubblenet-rpc.hubble.exchange/ext/bc/2ErDhAugYgUSwpeejAsCBcHY4MzLYZ5Y13nDuNRtrSWjQN5SDM/rpc')
-        const orderBookAbi = require('../../artifacts/contracts/OrderBook.sol/OrderBook.json').abi
+        const orderBookAbi = require('../../artifacts/contracts/orderbooks/OrderBook.sol/OrderBook.json').abi
         this.orderBook = new ethers.Contract(OBGenesisProxyAddress, orderBookAbi, this.provider)
     }
 
@@ -61,10 +61,8 @@ class Exchange {
             price: ethers.utils.parseUnits(price.toFixed(6).toString(), 6),
             salt: BigNumber.from(Date.now())
         }
-        const orderHash = await this.orderBook.getOrderHash(order)
-        const signature = await signer._signTypedData(domain, orderType, order)
-        await this.orderBook.connect(signer).placeOrder(order, signature)
-        return { orderHash }
+        return this.orderBook.connect(signer).placeOrder(order)
+        // return { orderHash }
         // console.log(await tx.wait())
     }
 
