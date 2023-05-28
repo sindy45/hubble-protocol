@@ -36,9 +36,10 @@ async function main() {
         genesisProxies: true,
         mockOrderBook: false,
         testClearingHouse: false,
+        tradeFee: 500, // .05%
+        makerFee: -50, // -.005%
         amm: {
-            initialRate: 2000,
-            minSize: 1e16
+            initialRate: 2000
         }
     })
 

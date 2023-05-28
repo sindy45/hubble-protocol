@@ -7,7 +7,7 @@ import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import { HubbleBase } from "./legos/HubbleBase.sol";
 import { IAMM, IMarginAccount, IClearingHouse, IHubbleReferral, IOrderBook } from "./Interfaces.sol";
 import { VUSD } from "./VUSD.sol";
-import { IHubbleBibliophile } from "./interfaces/IHubbleBibliophile.sol";
+import { IHubbleBibliophile } from "./precompiles/IHubbleBibliophile.sol";
 
 contract ClearingHouse is IClearingHouse, HubbleBase {
     using SafeCast for uint256;

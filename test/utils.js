@@ -1,7 +1,6 @@
 const { expect } = require('chai')
 const { BigNumber } = require('ethers')
 const { ethers, network } = require('hardhat')
-const Bluebird = require('bluebird')
 
 const ZERO = BigNumber.from(0)
 const _1e6 = BigNumber.from(10).pow(6)
@@ -26,6 +25,7 @@ async function setupContracts(options = {}) {
     options = Object.assign(
         {
             tradeFee: DEFAULT_TRADE_FEE,
+            makerFee: DEFAULT_TRADE_FEE,
             restrictedVUSD: true,
             governance: signers[0].address,
             setupAMM: true,
@@ -176,7 +176,7 @@ async function setupContracts(options = {}) {
         0.1 * 1e6, // 10% maintenance margin, 10x
         0.2 * 1e6, // 20% minimum allowable margin, 5x
         options.tradeFee,
-        options.tradeFee,
+        options.makerFee,
         50, // referralShare = .5bps
         100, // feeDiscount = 1bps
         0.05 * 1e6, // liquidationPenalty = 5%

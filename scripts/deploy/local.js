@@ -38,8 +38,7 @@ async function main() {
         mockOrderBook: false,
         testClearingHouse: false,
         amm: {
-            initialRate: 2000,
-            minSize: 1e16
+            initialRate: 2000
         }
     })
 
@@ -54,6 +53,78 @@ async function main() {
 
     await sleep(5)
     console.log(JSON.stringify(await generateConfig(leaderboard.address, marginAccountHelper.address), null, 0))
+}
+
+async function setupAMM() {
+    signers = await ethers.getSigners()
+    txOptions.nonce = await signers[0].getTransactionCount()
+    txOptions.gasLimit = gasLimit
+
+    const ERC20Mintable = await ethers.getContractFactory('ERC20Mintable')
+    const avax = await ERC20Mintable.deploy('avax', 'avax', 18, getTxOptions())
+    governance = signers[0].address
+    ;({ amm: avaxAmm } = await _setupAmm(
+        governance,
+        [ 'AVAX-PERP', avax.address, config.Oracle ],
+        {
+            initialRate: 15,
+            testAmm: false,
+            whitelist: true,
+            minSize: utils.BigNumber.from(10).pow(17) // 0.1 AVAX
+        }
+    ))
+    console.log('AVAX AMM', avaxAmm.address) // 0xCD8a1C3ba11CF5ECfa6267617243239504a98d90
+}
+
+async function _setupAmm(governance, args, ammOptions, slowMode) {
+    const { initialRate, testAmm, whitelist, minSize  } = ammOptions
+    const AMM = await ethers.getContractFactory('AMM')
+    const TransparentUpgradeableProxy = await ethers.getContractFactory('TransparentUpgradeableProxy')
+
+    let admin = await ethers.provider.getStorageAt(config.OrderBook, '0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103')
+
+    const ammImpl = await AMM.deploy(config.ClearingHouse, getTxOptions())
+    let constructorArguments = [
+        ammImpl.address,
+        ethers.utils.hexStripZeros(admin),
+        ammImpl.interface.encodeFunctionData('initialize', args.concat([ minSize, governance ]))
+    ]
+    const ammProxy = await TransparentUpgradeableProxy.deploy(...constructorArguments, getTxOptions())
+    await ammProxy.deployTransaction.wait()
+
+    const amm = await ethers.getContractAt(testAmm ? 'TestAmm' : 'AMM', ammProxy.address)
+
+    if (slowMode) {
+        await sleep(5) // if the above txs aren't mined, read calls to amm fail
+    }
+
+    if (initialRate) {
+        // amm.liftOff() needs the price for the underlying to be set
+        // set index price within price spread
+        const oracle = await ethers.getContractAt('TestOracle', config.Oracle)
+        const underlyingAsset = await amm.underlyingAsset();
+        await oracle.setUnderlyingTwapPrice(underlyingAsset, ethers.utils.parseUnits(initialRate.toString(), 6), getTxOptions())
+        await oracle.setUnderlyingPrice(underlyingAsset, ethers.utils.parseUnits(initialRate.toString(), 6), getTxOptions())
+    }
+
+    if (whitelist) {
+        const clearingHouse = await ethers.getContractAt('ClearingHouse', config.ClearingHouse)
+        const orderBook = await ethers.getContractAt('OrderBook', config.OrderBook)
+        await clearingHouse.whitelistAmm(amm.address, getTxOptions())
+        await orderBook.initializeMinSize(minSize, getTxOptions())
+    }
+
+    return { amm }
+}
+
+async function addMargin() {
+    signers = await ethers.getSigners()
+    governance = signers[0].address
+    ;([, alice, bob] = signers)
+    const margin = _1e6.mul(5e4)
+    const marginAccountHelper = await ethers.getContractAt('MarginAccountHelper', config.MarginAccountHelper)
+    await marginAccountHelper.connect(alice).addVUSDMarginWithReserve(margin, { value: margin.mul(1e12) })
+    await marginAccountHelper.connect(bob).addVUSDMarginWithReserve(margin, { value: margin.mul(1e12) })
 }
 
 main()
