@@ -115,7 +115,7 @@ interface IOrderBook {
     }
 
     struct OrderInfo {
-        IOrderBook.Order order;
+        // IOrderBook.Order order;
         uint blockPlaced;
         int256 filledAmount;
         uint256 reservedMargin;
@@ -129,11 +129,11 @@ interface IOrderBook {
     event OrderMatchingError(bytes32 indexed orderHash, string err);
     event LiquidationError(address indexed trader, bytes32 indexed orderHash, string err, uint256 toLiquidate);
 
-    function executeMatchedOrders(bytes32 orderHash0, bytes32 orderHash1, int256 fillAmount) external;
+    function executeMatchedOrders(Order[2] memory orders, int256 fillAmount) external;
     function settleFunding() external;
-    function liquidateAndExecuteOrder(address trader, bytes32 orderHash, uint256 toLiquidate) external;
+    function liquidateAndExecuteOrder(address trader, Order calldata order, uint256 toLiquidate) external;
     function getLastTradePrices() external view returns(uint[] memory lastTradePrices);
-    function cancelMultipleOrders(bytes32[] memory orderHashes) external;
+    function cancelMultipleOrders(Order[] calldata orders) external;
     function initializeMinSize(int256 minSize) external;
     function updateParams(uint minAllowableMargin, uint takerFee) external;
 }

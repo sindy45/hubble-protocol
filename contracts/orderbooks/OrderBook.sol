@@ -62,26 +62,22 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
     }
 
     function executeMatchedOrders(
-        bytes32 orderHash0,
-        bytes32 orderHash1,
+        Order[2] memory orders,
         int256 fillAmount
     )   override
         external
         whenNotPaused
         onlyValidator
     {
-        _validateOrder(orderHash0);
-        _validateOrder(orderHash1);
-
-        Order[2] memory orders = [
-            orderInfo[orderHash0].order,
-            orderInfo[orderHash1].order
-        ];
         MatchInfo[2] memory matchInfo;
-        matchInfo[0].orderHash = orderHash0;
-        matchInfo[0].blockPlaced = orderInfo[orderHash0].blockPlaced;
-        matchInfo[1].orderHash = orderHash1;
-        matchInfo[1].blockPlaced = orderInfo[orderHash1].blockPlaced;
+        matchInfo[0].orderHash = getOrderHash(orders[0]);
+        matchInfo[0].blockPlaced = orderInfo[matchInfo[0].orderHash].blockPlaced;
+        _validateOrder(matchInfo[0].orderHash);
+
+        matchInfo[1].orderHash = getOrderHash(orders[1]);
+        matchInfo[1].blockPlaced = orderInfo[matchInfo[1].orderHash].blockPlaced;
+        _validateOrder(matchInfo[1].orderHash);
+
         _executeMatchedOrders(orders, matchInfo, fillAmount);
     }
 
@@ -126,8 +122,8 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         }
 
         try clearingHouse.openComplementaryPositions(orders, matchInfo, fillAmount, fulfillPrice) {
-            _updateOrder(matchInfo[0].orderHash, fillAmount, orders[0].baseAssetQuantity);
-            _updateOrder(matchInfo[1].orderHash, -fillAmount, orders[1].baseAssetQuantity);
+            _updateOrder(orders[0], matchInfo[0].orderHash, fillAmount);
+            _updateOrder(orders[1], matchInfo[1].orderHash, -fillAmount);
             // get openInterestNotional for indexing
             IAMM amm = clearingHouse.amms(orders[0].ammIndex);
             uint openInterestNotional = amm.openInterestNotional();
@@ -200,17 +196,16 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         }
 
         // add orderInfo for the corresponding orderHash
-        orderInfo[orderHash] = OrderInfo(order, block.number, 0, reserveAmount, OrderStatus.Placed);
+        orderInfo[orderHash] = OrderInfo(block.number, 0, reserveAmount, OrderStatus.Placed);
         emit OrderPlaced(order.trader, orderHash, order, block.timestamp);
     }
 
-    function cancelOrder(bytes32 orderHash) public {
+    function cancelOrder(Order memory order) public {
+        bytes32 orderHash = getOrderHash(order);
         // order status should be placed
         require(orderInfo[orderHash].status == OrderStatus.Placed, "OB_Order_does_not_exist");
 
-        address trader = orderInfo[orderHash].order.trader;
-        // settle pending funding
-        clearingHouse.updatePositions(trader);
+        address trader = order.trader;
         if (msg.sender != trader) {
             require(isValidator[msg.sender], "OB_invalid_sender");
             // allow cancellation of order by validator if availableMargin < 0
@@ -219,9 +214,9 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
 
         orderInfo[orderHash].status = OrderStatus.Cancelled;
         // update reduceOnlyAmount
-        if (orderInfo[orderHash].order.reduceOnly) {
-            int unfilledAmount = abs(orderInfo[orderHash].order.baseAssetQuantity - orderInfo[orderHash].filledAmount);
-            reduceOnlyAmount[trader][orderInfo[orderHash].order.ammIndex] -= unfilledAmount;
+        if (order.reduceOnly) {
+            int unfilledAmount = abs(order.baseAssetQuantity - orderInfo[orderHash].filledAmount);
+            reduceOnlyAmount[trader][order.ammIndex] -= unfilledAmount;
         } else {
             // release margin
             marginAccount.releaseMargin(trader, orderInfo[orderHash].reservedMargin);
@@ -231,9 +226,9 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         emit OrderCancelled(trader, orderHash, block.timestamp);
     }
 
-    function cancelMultipleOrders(bytes32[] memory orderHashes) external {
-        for (uint i; i < orderHashes.length; i++) {
-            cancelOrder(orderHashes[i]);
+    function cancelMultipleOrders(Order[] calldata orders) external {
+        for (uint i; i < orders.length; i++) {
+            cancelOrder(orders[i]);
         }
     }
 
@@ -245,21 +240,21 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
      * @dev assuming one order is in liquidation zone and other is out of it
      * @notice liquidate trader
      * @param trader trader to liquidate
-     * @param orderHash order to match when liquidating for a particular amm
+     * @param order order to match when liquidating for a particular amm
      * @param liquidationAmount baseAsset amount being traded/liquidated.
      *        liquidationAmount!=0 is validated in amm.liquidatePosition
     */
     function liquidateAndExecuteOrder(
         address trader,
-        bytes32 orderHash,
+        Order calldata order,
         uint256 liquidationAmount
     )   override
         external
         whenNotPaused
         onlyValidator
     {
+        bytes32 orderHash = getOrderHash(order);
         _validateOrder(orderHash);
-        Order memory order = orderInfo[orderHash].order;
         int256 fillAmount = liquidationAmount.toInt256();
         if (order.baseAssetQuantity < 0) { // order is short, so short position is being liquidated
             fillAmount *= -1;
@@ -274,7 +269,7 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         });
 
         try clearingHouse.liquidate(order, matchInfo, fillAmount, order.price, trader) {
-            _updateOrder(matchInfo.orderHash, fillAmount, order.baseAssetQuantity);
+            _updateOrder(order, matchInfo.orderHash, fillAmount);
             // get openInterestNotional for indexing
             IAMM amm = clearingHouse.amms(order.ammIndex);
             uint openInterestNotional = amm.openInterestNotional();
@@ -338,29 +333,28 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
     /*      Internal      */
     /* ****************** */
 
-    function _updateOrder(bytes32 orderHash, int256 fillAmount, int256 baseAssetQuantity) internal {
+    function _updateOrder(Order memory order, bytes32 orderHash, int256 fillAmount) internal {
         orderInfo[orderHash].filledAmount += fillAmount;
-        require(abs(orderInfo[orderHash].filledAmount) <= abs(baseAssetQuantity), "OB_filled_amount_higher_than_order_base");
+        require(abs(orderInfo[orderHash].filledAmount) <= abs(order.baseAssetQuantity), "OB_filled_amount_higher_than_order_base");
 
-        address trader = orderInfo[orderHash].order.trader;
         // update order status if filled and free up reserved margin
-        if (orderInfo[orderHash].order.reduceOnly) {
-            reduceOnlyAmount[trader][orderInfo[orderHash].order.ammIndex] -= abs(fillAmount);
+        if (order.reduceOnly) {
+            reduceOnlyAmount[order.trader][order.ammIndex] -= abs(fillAmount);
 
-            if (orderInfo[orderHash].filledAmount == baseAssetQuantity) {
+            if (orderInfo[orderHash].filledAmount == order.baseAssetQuantity) {
                 orderInfo[orderHash].status = OrderStatus.Filled;
                 _deleteOrderInfo(orderHash);
             }
         } else {
             uint reservedMargin = orderInfo[orderHash].reservedMargin;
-            if (orderInfo[orderHash].filledAmount == baseAssetQuantity) {
+            if (orderInfo[orderHash].filledAmount == order.baseAssetQuantity) {
                 orderInfo[orderHash].status = OrderStatus.Filled;
-                marginAccount.releaseMargin(trader, reservedMargin);
+                marginAccount.releaseMargin(order.trader, reservedMargin);
                 _deleteOrderInfo(orderHash);
             } else {
-                uint utilisedMargin = uint(abs(fillAmount)) * reservedMargin / uint(abs(baseAssetQuantity));
+                uint utilisedMargin = uint(abs(fillAmount)) * reservedMargin / uint(abs(order.baseAssetQuantity));
                 orderInfo[orderHash].reservedMargin -= utilisedMargin;
-                marginAccount.releaseMargin(trader, utilisedMargin);
+                marginAccount.releaseMargin(order.trader, utilisedMargin);
             }
         }
     }
@@ -370,7 +364,6 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
     * @dev cannot delete order status because then same order can be placed again
     */
     function _deleteOrderInfo(bytes32 orderHash) internal {
-        delete orderInfo[orderHash].order;
         delete orderInfo[orderHash].blockPlaced;
         delete orderInfo[orderHash].reservedMargin;
     }

@@ -308,7 +308,7 @@ abstract contract Utils is Test {
         }
         (orders[1], signatures[1], ordersHash[1]) = placeOrder(ammIndex, trader2Key, -int(stdMath.abs(size)), price, reduceOnly);
 
-        orderBook.executeMatchedOrders(ordersHash[0], ordersHash[1], int(stdMath.abs(fillAmount)));
+        orderBook.executeMatchedOrders([orders[0], orders[1]], int(stdMath.abs(fillAmount)));
     }
 
     function assertPositions(address trader, int size, uint openNotional, int unrealizedPnl, uint avgOpen) internal {

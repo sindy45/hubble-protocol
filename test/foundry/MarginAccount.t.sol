@@ -82,7 +82,7 @@ contract MarginAccountTests is Utils {
 
         // match orders
         (orders[1],, orderHashes[1]) = placeOrder(0, bobKey, -size, price, false);
-        orderBook.executeMatchedOrders(orderHashes[0], orderHashes[1], size);
+        orderBook.executeMatchedOrders([orders[0], orders[1]], size);
 
         // execute another trade to make unrealized profit/loss non-zero
         // dump price by 10%, alices loses, bob gains

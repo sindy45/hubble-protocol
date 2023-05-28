@@ -230,7 +230,7 @@ contract ClearingHouseTests is Utils {
         (charlie, temp[0] /**charlieKey */) = makeAddrAndKey("charlie");
         uint charlieMargin = stdMath.abs(size) * price / 1e18;
         addMargin(charlie, charlieMargin, 0, address(0));
-        (,,bytes32 orderHash) = placeOrder(0, temp[0], size, price, false);
+        (IOrderBook.Order memory order,,bytes32 orderHash) = placeOrder(0, temp[0], size, price, false);
 
         // liquidate alice
         uint toLiquidate;
@@ -243,10 +243,10 @@ contract ClearingHouseTests is Utils {
 
         vm.expectEmit(true, true, false, true, address(orderBook));
         emit LiquidationOrderMatched(address(alice), orderHash, toLiquidate, price, stdMath.abs(2 * size), address(this), block.timestamp);
-        orderBook.liquidateAndExecuteOrder(alice, orderHash, toLiquidate);
+        orderBook.liquidateAndExecuteOrder(alice, order, toLiquidate);
 
         {
-            (,,int filledAmount, uint reservedMargin, OrderBook.OrderStatus status) = orderBook.orderInfo(orderHash);
+            (,int filledAmount, uint reservedMargin, OrderBook.OrderStatus status) = orderBook.orderInfo(orderHash);
             assertEq(uint(status), 1);
             assertEq(filledAmount, int(toLiquidate));
             temp[1] = stdMath.abs(size) * price / 1e18; // quote

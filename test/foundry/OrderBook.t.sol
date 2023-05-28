@@ -74,23 +74,21 @@ contract OrderBookTests is Utils {
         orderBook.placeOrder(order);
 
         (
-            IOrderBook.Order memory _order,
             uint blockPlaced,
             int filledAmount,
             uint256 reservedMargin,
             OrderBook.OrderStatus status
         ) = orderBook.orderInfo(orderHash);
 
-        assertEq(abi.encode(order), abi.encode(_order));
+        assertEq(abi.encode(order), abi.encode(order));
         assertEq(uint(status), 1); // placed
         assertEq(blockPlaced, block.number);
         assertEq(filledAmount, 0);
         assertEq(reservedMargin, marginRequired);
         assertEq(marginAccount.reservedMargin(trader), marginRequired);
 
-        orderBook.cancelOrder(orderHash);
-        (_order, blockPlaced, filledAmount, reservedMargin, status) = orderBook.orderInfo(orderHash);
-        assertEq(abi.encode(_order), abi.encode(IOrderBook.Order(0, address(0), 0, 0, 0, false)));
+        orderBook.cancelOrder(order);
+        (blockPlaced, filledAmount, reservedMargin, status) = orderBook.orderInfo(orderHash);
         assertEq(blockPlaced, 0);
         assertEq(filledAmount, 0);
         assertEq(reservedMargin, 0);
@@ -132,19 +130,19 @@ contract OrderBookTests is Utils {
         assertEq(marginAccount.reservedMargin(bob), marginRequired);
 
         vm.expectRevert("OB_filled_amount_higher_than_order_base");
-        orderBook.executeMatchedOrders(orderHashes[0], orderHashes[1], size + MIN_SIZE);
+        orderBook.executeMatchedOrders([orders[0], orders[1]], size + MIN_SIZE);
 
         vm.expectRevert("OB_fillAmount_not_multiple_of_minSizeRequirement");
-        orderBook.executeMatchedOrders(orderHashes[0], orderHashes[1], size + 1);
+        orderBook.executeMatchedOrders([orders[0], orders[1]], size + 1);
 
         vm.expectEmit(true, true, false, true, address(orderBook));
         emit OrdersMatched(orderHashes[0], orderHashes[1], uint(size), uint(price), stdMath.abs(2 * size), address(this), block.timestamp);
-        orderBook.executeMatchedOrders(orderHashes[0], orderHashes[1], size);
+        orderBook.executeMatchedOrders([orders[0], orders[1]], size);
 
         IOrderBook.Order memory order;
         int filledAmount;
         OrderBook.OrderStatus status;
-        (order, temp[0] /** block placed */, filledAmount, temp[1] /** reservedMargin */, status) = orderBook.orderInfo(orderHashes[0]);
+        (temp[0] /** block placed */, filledAmount, temp[1] /** reservedMargin */, status) = orderBook.orderInfo(orderHashes[0]);
         // assert that order, blockPlaced, reservedMargin are deleted
         assertEq(abi.encode(order), abi.encode(IOrderBook.Order(0, address(0), 0, 0, 0, false)));
         assertEq(temp[0], 0);
@@ -152,7 +150,7 @@ contract OrderBookTests is Utils {
         assertEq(temp[1], 0);
         assertEq(uint(status), 2); // filled
 
-        (order, temp[0] /** block placed */, filledAmount, temp[1] /** reservedMargin */, status) = orderBook.orderInfo(orderHashes[1]);
+        (temp[0] /** block placed */, filledAmount, temp[1] /** reservedMargin */, status) = orderBook.orderInfo(orderHashes[1]);
         // assert that order, blockPlaced, reservedMargin are deleted
         assertEq(abi.encode(order), abi.encode(IOrderBook.Order(0, address(0), 0, 0, 0, false)));
         assertEq(temp[0], 0);
@@ -164,7 +162,7 @@ contract OrderBookTests is Utils {
         assertEq(marginAccount.reservedMargin(bob), 0);
 
         vm.expectRevert("OB_invalid_order");
-        orderBook.executeMatchedOrders(orderHashes[0], orderHashes[1], size);
+        orderBook.executeMatchedOrders([orders[0], orders[1]], size);
 
         assertPositions(alice, size, quote, 0, quote * 1e18 / stdMath.abs(size));
         assertPositions(bob, -size, quote, 0, quote * 1e18 / stdMath.abs(size));
@@ -192,19 +190,19 @@ contract OrderBookTests is Utils {
         assertEq(marginAccount.reservedMargin(bob), marginRequired);
 
         vm.expectRevert("OB_filled_amount_higher_than_order_base");
-        orderBook.executeMatchedOrders(orderHashes[0], orderHashes[1], size + MIN_SIZE);
+        orderBook.executeMatchedOrders([orders[0], orders[1]], size + MIN_SIZE);
 
         vm.expectRevert("OB_fillAmount_not_multiple_of_minSizeRequirement");
-        orderBook.executeMatchedOrders(orderHashes[0], orderHashes[1], size + 1);
+        orderBook.executeMatchedOrders([orders[0], orders[1]], size + 1);
 
         vm.expectEmit(true, true, false, true, address(orderBook));
         emit OrdersMatched(orderHashes[0], orderHashes[1], uint(size), uint(price), stdMath.abs(2 * size), address(this), block.timestamp);
-        orderBook.executeMatchedOrders(orderHashes[0], orderHashes[1], size);
+        orderBook.executeMatchedOrders([orders[0], orders[1]], size);
 
         IOrderBook.Order memory order;
         int filledAmount;
         OrderBook.OrderStatus status;
-        (order, temp[0] /** block placed */, filledAmount, temp[1] /** reservedMargin */, status) = orderBook.orderInfo(orderHashes[0]);
+        (temp[0] /** block placed */, filledAmount, temp[1] /** reservedMargin */, status) = orderBook.orderInfo(orderHashes[0]);
         // assert that order, blockPlaced, reservedMargin are deleted
         assertEq(abi.encode(order), abi.encode(IOrderBook.Order(0, address(0), 0, 0, 0, false)));
         assertEq(temp[0], 0);
@@ -212,7 +210,7 @@ contract OrderBookTests is Utils {
         assertEq(temp[1], 0);
         assertEq(uint(status), 2); // filled
 
-        (order, temp[0] /** block placed */, filledAmount, temp[1] /** reservedMargin */, status) = orderBook.orderInfo(orderHashes[1]);
+        (temp[0] /** block placed */, filledAmount, temp[1] /** reservedMargin */, status) = orderBook.orderInfo(orderHashes[1]);
         // assert that order, blockPlaced, reservedMargin are deleted
         assertEq(abi.encode(order), abi.encode(IOrderBook.Order(0, address(0), 0, 0, 0, false)));
         assertEq(temp[0], 0);
@@ -224,7 +222,7 @@ contract OrderBookTests is Utils {
         assertEq(marginAccount.reservedMargin(bob), 0);
 
         vm.expectRevert("OB_invalid_order");
-        orderBook.executeMatchedOrders(orderHashes[0], orderHashes[1], size);
+        orderBook.executeMatchedOrders([orders[0], orders[1]], size);
 
         assertPositions(alice, size, quote, 0, quote * 1e18 / stdMath.abs(size));
         assertPositions(bob, -size, quote, 0, quote * 1e18 / stdMath.abs(size));
@@ -261,14 +259,14 @@ contract OrderBookTests is Utils {
         }
 
         vm.expectRevert("OB_fillAmount_not_multiple_of_minSizeRequirement");
-        orderBook.liquidateAndExecuteOrder(alice, orderHash, toLiquidate + 1);
+        orderBook.liquidateAndExecuteOrder(alice, order, toLiquidate + 1);
 
         vm.expectEmit(true, true, false, true, address(orderBook));
         emit LiquidationOrderMatched(address(alice), orderHash, toLiquidate, price, stdMath.abs(2 * size), address(this), block.timestamp);
-        orderBook.liquidateAndExecuteOrder(alice, orderHash, toLiquidate);
+        orderBook.liquidateAndExecuteOrder(alice, order, toLiquidate);
 
         {
-            (,,int filledAmount, uint reservedMargin, OrderBook.OrderStatus status) = orderBook.orderInfo(orderHash);
+            (,int filledAmount, uint reservedMargin, OrderBook.OrderStatus status) = orderBook.orderInfo(orderHash);
             assertEq(uint(status), 1);
             assertEq(filledAmount, int(toLiquidate));
             temp[1] = stdMath.abs(size) * price / 1e18; // quote
@@ -300,10 +298,10 @@ contract OrderBookTests is Utils {
         {
             vm.expectEmit(true, false, false, true, address(orderBook));
             emit LiquidationOrderMatched(address(bob), orderHash, toLiquidate, price, stdMath.abs(2 * size), address(this), block.timestamp);
-            orderBook.liquidateAndExecuteOrder(bob, orderHash, toLiquidate);
+            orderBook.liquidateAndExecuteOrder(bob, order, toLiquidate);
         }
         {
-            (,,int filledAmount, uint reservedMargin, OrderBook.OrderStatus status) = orderBook.orderInfo(orderHash);
+            (,int filledAmount, uint reservedMargin, OrderBook.OrderStatus status) = orderBook.orderInfo(orderHash);
             assertEq(uint(status), 1);
             assertEq(filledAmount, -int(toLiquidate));
             assertEq(marginAccount.reservedMargin(peter), temp[0] - temp[0] * toLiquidate / stdMath.abs(size));
@@ -339,9 +337,9 @@ contract OrderBookTests is Utils {
         int utilizedMargin = quote / MAX_LEVERAGE; // 5x max leverage
 
         // alice places 2 open orders
-        (,,bytes32 orderHash1) = placeOrder(0, aliceKey, size, uint(price) + 2, false);
+        (IOrderBook.Order memory order1,,bytes32 orderHash1) = placeOrder(0, aliceKey, size, uint(price) + 2, false);
         uint reservedMarginForOrder1 = marginAccount.reservedMargin(alice);
-        (,,bytes32 orderHash2) = placeOrder(0, aliceKey, size, uint(price) + 1, false);
+        (IOrderBook.Order memory order2,,) = placeOrder(0, aliceKey, size, uint(price) + 1, false);
         uint totalReservedMargin = marginAccount.reservedMargin(alice);
 
         // collateral price decreases such that avaialble margin < 0
@@ -352,14 +350,13 @@ contract OrderBookTests is Utils {
         // other users cannot cancel order
         vm.prank(bob);
         vm.expectRevert('OB_invalid_sender');
-        orderBook.cancelOrder(orderHash1);
+        orderBook.cancelOrder(order1);
 
         // validator can cancel order1
-        orderBook.cancelOrder(orderHash1);
+        orderBook.cancelOrder(order1);
         {
-            (IOrderBook.Order memory order, uint blockPlaced, int filledAmount, uint reservedMargin, OrderBook.OrderStatus status) = orderBook.orderInfo(orderHash1);
+            (uint blockPlaced, int filledAmount, uint reservedMargin, OrderBook.OrderStatus status) = orderBook.orderInfo(orderHash1);
             // assert that order, blockPlaced, reservedMargin are deleted
-            assertEq(abi.encode(order), abi.encode(IOrderBook.Order(0, address(0), 0, 0, 0, false)));
             assertEq(blockPlaced, 0);
             assertEq(filledAmount, 0);
             assertEq(reservedMargin, 0);
@@ -375,20 +372,20 @@ contract OrderBookTests is Utils {
         }
 
         vm.expectRevert('OB_available_margin_not_negative');
-        orderBook.cancelOrder(orderHash2);
+        orderBook.cancelOrder(order2);
 
         // other users cannot cancel order
         vm.prank(bob);
         vm.expectRevert('OB_invalid_sender');
-        orderBook.cancelOrder(orderHash2);
+        orderBook.cancelOrder(order2);
 
         // alice can still cancel the order
         vm.startPrank(alice);
-        orderBook.cancelOrder(orderHash2);
+        orderBook.cancelOrder(order2);
         assertEq(marginAccount.reservedMargin(alice), 0);
         // cannot cancel already cancelled order
         vm.expectRevert('OB_Order_does_not_exist');
-        orderBook.cancelOrder(orderHash2);
+        orderBook.cancelOrder(order2);
         vm.stopPrank();
     }
 
@@ -411,22 +408,22 @@ contract OrderBookTests is Utils {
         ordersHash[0] = orderBook.getOrderHash(orders[0]);
         // execute an order which is not placed
         vm.expectRevert("OB_invalid_order");
-        orderBook.executeMatchedOrders(ordersHash[0], ordersHash[1], size);
+        orderBook.executeMatchedOrders([orders[0], orders[1]], size);
 
         orders[0].salt -= 1;
         ordersHash[0] = orderBook.getOrderHash(orders[0]);
 
         vm.expectRevert("OB_order_0_is_not_long");
-        orderBook.executeMatchedOrders(ordersHash[1], ordersHash[0], size);
+        orderBook.executeMatchedOrders([orders[1], orders[0]], size);
         vm.expectRevert("OB_order_1_is_not_short");
-        orderBook.executeMatchedOrders(ordersHash[0], ordersHash[0], size);
+        orderBook.executeMatchedOrders([orders[0], orders[0]], size);
         vm.expectRevert("OB_fillAmount_not_multiple_of_minSizeRequirement");
-        orderBook.executeMatchedOrders(ordersHash[0], ordersHash[1], 0);
+        orderBook.executeMatchedOrders([orders[0], orders[1]], 0);
 
         // reduce long order price
         (orders[0],, ordersHash[0]) = placeOrder(0, aliceKey, size, price - 1, false);
         vm.expectRevert("OB_orders_do_not_match");
-        orderBook.executeMatchedOrders(ordersHash[0], ordersHash[1], size);
+        orderBook.executeMatchedOrders([orders[0], orders[1]], size);
     }
 
     function testReduceOnly(uint64 price, uint120 size_) public {
@@ -495,7 +492,7 @@ contract OrderBookTests is Utils {
         orderBook.placeOrder(order);
 
         // position can decrease for a reduce-only order
-        orderBook.executeMatchedOrders(orderHashes[0], orderHashes[1], fillAmount);
+        orderBook.executeMatchedOrders([orders[0], orders[1]], fillAmount);
         assertEq(marginAccount.reservedMargin(alice), reservedMargin[0]); // no new margin released
         assertEq(marginAccount.reservedMargin(bob), reservedMargin[1]); // no new margin released
         assertEq(orderBook.reduceOnlyAmount(alice, 0), 0);
@@ -524,15 +521,15 @@ contract OrderBookTests is Utils {
 
         // match half order
         fillAmount = (size / 4) / MIN_SIZE * MIN_SIZE;
-        orderBook.executeMatchedOrders(orderHashes[0], orderHashes[1], fillAmount);
+        orderBook.executeMatchedOrders([orders[0], orders[1]], fillAmount);
         assertApproxEqAbs(orderBook.reduceOnlyAmount(alice, 0), size / 4, uint(MIN_SIZE));
         assertApproxEqAbs(orderBook.reduceOnlyAmount(bob, 0), size / 4, uint(MIN_SIZE));
 
         // cancel reduce-only orders
         vm.prank(alice);
-        orderBook.cancelOrder(orderHashes[1]);
+        orderBook.cancelOrder(orders[1]);
         vm.prank(bob);
-        orderBook.cancelOrder(orderHashes[0]);
+        orderBook.cancelOrder(orders[0]);
         assertEq(orderBook.reduceOnlyAmount(alice, 0), 0);
         assertEq(orderBook.reduceOnlyAmount(bob, 0), 0);
     }
