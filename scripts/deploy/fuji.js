@@ -39,7 +39,8 @@ async function main() {
         tradeFee: 500, // .05%
         makerFee: -50, // -.005%
         amm: {
-            initialRate: 2000
+            initialRate: 2000,
+            minSize: utils.BigNumber.from(10).pow(16) // 0.01 ETH
         }
     })
 

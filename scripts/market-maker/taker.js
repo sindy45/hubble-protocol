@@ -1,100 +1,126 @@
 const ethers = require('ethers')
 
-const Exchange = require('./exchange')
+const { Exchange, getOpenSize, getOrdersWithinBounds } = require('./exchange');
+const { bnToFloat } = require('../../test/utils');
+
+const updateFrequency = 2e3
+const dryRun = false
 
 const provider = new ethers.providers.JsonRpcProvider(process.env.RPC_URL)
 const signer = new ethers.Wallet(process.env.PRIVATE_KEY_TAKER, provider);
 const exchange = new Exchange(provider)
-const dryRun = false
 
-const market = 0;
-const updateFrequency = 1e3;
-const maxOrderSize = 1.9
+const marketInfo = [
+    { // ETH Perp
+        x: 0.01, // operate +- 1% of index price
+        spread: 2, // $2
+        minOrderSize: 0.01,
+        maxOrderSize: 0.69,
+        toFixed: 2,
+        baseLiquidityInMarket: 1.3 // each side
+    },
+    { // Avax Perp
+        x: 0.02, // operate +- 1% of index price
+        spread: .1, // $
+        minOrderSize: 0.1,
+        maxOrderSize: 69,
+        toFixed: 1,
+        baseLiquidityInMarket: 169 // each side
+    }
+]
 
 const marketTaker = async () => {
-    try {
-        let { bids, asks } = await exchange.fetchOrderBook(market);
-        asks = asks.filter(ask => ask.price < 2400)
-
-        if (asks.length) {
-            const askIndex = Math.floor(Math.random() * asks.length/2);
-            const selectedAsk = asks[askIndex];
-            // console.log({ askIndex, selectedAsk })
-
-            // we will fill all orders until askIndex
-            let q = 0
-            for (let i = 0; i < askIndex; i++) {
-                // console.log(`Filling ${asks[i].size} ETH at $${asks[i].price}`)
-                q += asks[i].size
-            }
-            console.log({ totalBids: asks.length, askIndex, selectedAsk, q: q + selectedAsk.size })
-            // for the last order at askIndex, we will only partially fill it
-            const _orderSize = randomFloat(q, q + selectedAsk.size)
-            if (!dryRun) await exchange.createLimitOrder(signer, 0, _orderSize, selectedAsk.price)
-            console.log(`Executed long for ${_orderSize} ETH at $${selectedAsk.price}`)
-        }
-
-        if (bids.length) {
-            const bidIndex = Math.floor(Math.random() * bids.length/2);
-
-            const selectedBid = bids[bidIndex];
-
-            // we will fill all orders until askIndex
-            let q = 0
-            for (let i = 0; i < bidIndex; i++) {
-                // console.log(`Filling ${bids[i].size} ETH at $${bids[i].price}`)
-                q += bids[i].size
-            }
-            console.log({ totalBids: bids.length, bidIndex, selectedBid, q: q + selectedBid.size })
-            // for the last order at askIndex, we will only partially fill it
-            const _orderSize = randomFloat(q, q + selectedBid.size) * -1
-            if (!dryRun) await exchange.createLimitOrder(signer, 0, _orderSize, selectedBid.price)
-            console.log(`Executed short for ${_orderSize} ETH at $${selectedBid.price}`)
-        }
-    } catch (error) {
-        console.error('Error in marketTaker function:', error);
+    // try {
+    //     await exchange.cancelAllOrders(signer)
+    // } catch (e) {
+    //     console.error('couldnt cancel order', e)
+    // }
+    for (let i = 0; i < marketInfo.length; i++) {
+        await runForMarket(i)
     }
-
     // Schedule the next update
     setTimeout(marketTaker, updateFrequency);
-};
-
-async function showNonce() {
-    console.log(await signer.getTransactionCount())
 }
 
-// cancels all orders placed by the market maker
-const cancelAllOrders = async () => {
-    let orders = await exchange.getOpenOrders(signer.address);
-    console.log(orders.length)
-    while (orders.length) {
-        const _orders = orders.slice(0, 11).map(o => {
-            return {
-                ammIndex: o.Market,
-                trader: signer.address,
-                baseAssetQuantity: o.Size,
-                price: o.Price,
-                salt: o.Salt,
-            }
-        })
-        await exchange.cancelMultipleOrders(signer, _orders)
-        orders = orders.slice(11)
-    }
-};
+async function runForMarket(market) {
+    const { x, minOrderSize, maxOrderSize, baseLiquidityInMarket, toFixed } = marketInfo[market]
+    try {
+        let { bids, asks } = await exchange.fetchOrderBook(market);
+        const underlyingPrice = (await exchange.getUnderlyingPrice())[market]
 
-// generate a random float within a given range
-function randomSize(q) {
-    const size = Math.random() * Math.abs(q)
-    return size > maxOrderSize ? maxOrderSize : size
+        const validBids = getOrdersWithinBounds(bids, underlyingPrice * (1-x), underlyingPrice * 2 /* high upper bound */)
+        const longsOpenSize = getOpenSize(validBids)
+
+        const validAsks = getOrdersWithinBounds(asks, 0, underlyingPrice * (1+x))
+        const shortsOpenSize = getOpenSize(validAsks)
+
+        console.log({ market, longsOpenSize, shortsOpenSize, baseLiquidityInMarket })
+        if (longsOpenSize > baseLiquidityInMarket + minOrderSize) await execute(market, validBids, longsOpenSize - baseLiquidityInMarket)
+        if (shortsOpenSize > baseLiquidityInMarket + minOrderSize) await execute(market, validAsks, shortsOpenSize - baseLiquidityInMarket)
+    } catch (e) {
+        if (e && e.error && containsErrorType(e.error.toString())) {
+            try {
+                await exchange.cancelAllOrders(signer)
+            } catch (e) {
+                console.error('couldnt cancel order', e)
+            }
+        } else {
+            console.error(e)
+        }
+    }
+}
+
+async function execute(market, orders, totalSize) {
+    // console.log({ market, orders, totalSize })
+    if (!orders.length) return
+
+    const { minOrderSize, maxOrderSize, toFixed } = marketInfo[market]
+    let size = 0
+    let price
+    for (let i = 0; i < orders.length; i++) {
+        // console.log({ order: orders[i] })
+        size += Math.abs(orders[i].size)
+        if (size >= totalSize) {
+            price = orders[i].price
+            break
+        }
+    }
+    if (orders[0].size > 0) totalSize *= -1 //  taking long orders
+    const { sizes } = await exchange.getMarginFractionAndPosition(signer.address)
+    const nowSize = sizes[market]
+    const _nowSize = bnToFloat(nowSize, 18)
+    // console.log({ nowSize, _nowSize, totalSize })
+    if (_nowSize && _nowSize * totalSize < 0) {
+        // reduce position first
+        if (Math.abs(_nowSize) <= Math.abs(totalSize)) {
+            const tx = await exchange.createLimitOrderUnscaled(signer, dryRun, market, nowSize.mul(-1), ethers.utils.parseUnits(price.toFixed(6).toString(), 6), true)
+            await tx.wait()
+            // console.log(await exchange.createLimitOrderUnscaled(signer, dryRun, market, nowSize.mul(-1), ethers.utils.parseUnits(price.toFixed(6).toString(), 6), true))
+            totalSize += _nowSize
+        } else {
+            return exchange.createLimitOrder(signer, dryRun, market, totalSize, price, true)
+        }
+    }
+    totalSize = totalSize.toFixed(toFixed)
+    if (Math.abs(totalSize) >= minOrderSize) {
+        return exchange.createLimitOrder(signer, dryRun, market, Math.min(totalSize, maxOrderSize), price, false)
+    }
+}
+
+const errorTypes = [
+    'MA_reserveMargin: Insufficient margin',
+    'OB_cancel_reduce_only_order_first',
+    'OB_reduce_only_amount_exceeded'
+];
+
+function containsErrorType(str) {
+    return errorTypes.some(errorType => str.includes(errorType));
 }
 
 // generate a random float within a min and max range
 function randomFloat(min, max) {
-    const size = Math.random() * (Math.abs(max) - Math.abs(min)) + Math.abs(min);
-    return size > maxOrderSize ? maxOrderSize : size
+    return Math.random() * (Math.abs(max) - Math.abs(min)) + Math.abs(min);
 }
 
 // Start the taker script
 marketTaker();
-// showNonce();
-// cancelAllOrders()
