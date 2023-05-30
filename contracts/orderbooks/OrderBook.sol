@@ -211,7 +211,25 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         emit OrderPlaced(order.trader, orderHash, order, block.timestamp);
     }
 
-    function cancelOrder(Order memory order) public {
+    function cancelOrder(Order memory order) override external {
+        Order[] memory _orders = new Order[](1);
+        _orders[0] = order;
+        cancelOrders(_orders);
+    }
+
+    function cancelOrders(Order[] memory orders) override public {
+        address trader = orders[0].trader;
+        uint releaseMargin;
+        for (uint i; i < orders.length; i++) {
+            require(orders[i].trader == trader, "OB_trader_mismatch");
+            releaseMargin += _cancelOrder(orders[i]);
+        }
+        if (releaseMargin != 0) {
+            marginAccount.releaseMargin(trader, releaseMargin);
+        }
+    }
+
+    function _cancelOrder(Order memory order) internal returns (uint releaseMargin) {
         bytes32 orderHash = getOrderHash(order);
         // order status should be placed
         require(orderInfo[orderHash].status == OrderStatus.Placed, "OB_Order_does_not_exist");
@@ -229,18 +247,11 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
             int unfilledAmount = abs(order.baseAssetQuantity - orderInfo[orderHash].filledAmount);
             reduceOnlyAmount[trader][order.ammIndex] -= unfilledAmount;
         } else {
-            // release margin
-            marginAccount.releaseMargin(trader, orderInfo[orderHash].reservedMargin);
+            releaseMargin = orderInfo[orderHash].reservedMargin;
         }
 
         _deleteOrderInfo(orderHash);
         emit OrderCancelled(trader, orderHash, block.timestamp);
-    }
-
-    function cancelMultipleOrders(Order[] calldata orders) external {
-        for (uint i; i < orders.length; i++) {
-            cancelOrder(orders[i]);
-        }
     }
 
     function settleFunding() external whenNotPaused onlyValidator {

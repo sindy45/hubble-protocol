@@ -90,7 +90,7 @@ describe('Order Book', function () {
     })
 
     it('cancel multiple orders', async function() {
-        const tx = await orderBook.connect(alice).cancelMultipleOrders([shortOrder2, shortOrder3])
+        const tx = await orderBook.connect(alice).cancelOrders([shortOrder2, shortOrder3])
         const _timestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp
         await expect(tx).to.emit(orderBook, "OrderCancelled").withArgs(
             alice.address,

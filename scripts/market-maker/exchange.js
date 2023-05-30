@@ -2,28 +2,9 @@ const ethers = require('ethers')
 const { bnToFloat, sleep } = require('../../test/utils')
 const { BigNumber } = ethers
 const _ = require('lodash')
-
+const crypto = require('crypto')
 const OBGenesisProxyAddress = '0x0300000000000000000000000000000000000000'
 const CHGenesisProxyAddress = '0x0300000000000000000000000000000000000002'
-
-const domain = {
-    name: 'Hubble',
-    version: '2.0',
-    chainId: 321123, // (await ethers.provider.getNetwork()).chainId,
-    verifyingContract: OBGenesisProxyAddress // orderBook.address
-}
-
-const orderType = {
-    Order: [
-        // field ordering must be the same as LIMIT_ORDER_TYPEHASH
-        { name: "ammIndex", type: "uint256" },
-        { name: "trader", type: "address" },
-        { name: "baseAssetQuantity", type: "int256" },
-        { name: "price", type: "uint256" },
-        { name: "salt", type: "uint256" },
-        { name: "reduceOnly", type: "bool" },
-    ]
-}
 
 class Exchange {
     constructor(provider) {
@@ -104,6 +85,21 @@ class Exchange {
         return this.createLimitOrderUnscaled(signer, dryRun, market, ethers.utils.parseEther(baseAssetQuantity.toString()), ethers.utils.parseUnits(price.toFixed(6).toString(), 6), reduceOnly, txOpts)
     }
 
+    async placeOrders(signer, dryRun, orders, txOpts={}) {
+        if (!dryRun) return this.orderBook.connect(signer).placeOrders(orders, txOpts)
+    }
+
+    buildOrderObj(trader, ammIndex, baseAssetQuantity, price, reduceOnly=false) {
+        return {
+            ammIndex,
+            trader,
+            baseAssetQuantity: ethers.utils.parseEther(baseAssetQuantity.toString()),
+            price: ethers.utils.parseUnits(price.toFixed(6).toString(), 6),
+            salt: BigNumber.from('0x' + crypto.randomBytes(16).toString('hex')),
+            reduceOnly
+        }
+    }
+
     async createLimitOrderUnscaled(signer, dryRun, market, baseAssetQuantity, price, reduceOnly=false, txOpts={}) {
         // console.log({ dryRun, baseAssetQuantity, price, reduceOnly })
         if (dryRun || !baseAssetQuantity) return
@@ -113,7 +109,7 @@ class Exchange {
             baseAssetQuantity,
             price,
             salt: BigNumber.from(Date.now()),
-            reduceOnly: reduceOnly
+            reduceOnly
         }
         // console.log({ order })
         // const orderHash = await this.orderBook.getOrderHash(order)
@@ -132,6 +128,10 @@ class Exchange {
     async fetchOrder(orderHash) {
         const orderInfo = await this.orderBook.orderInfo(orderHash)
         return { status: orderInfo.status }
+    }
+
+    async cancelOrders(signer, orders) {
+        return this.orderBook.connect(signer).cancelOrders(orders)
     }
 
     async cancelMultipleOrders(signer, orders) {

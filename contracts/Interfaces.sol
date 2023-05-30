@@ -131,7 +131,8 @@ interface IOrderBook {
     function settleFunding() external;
     function liquidateAndExecuteOrder(address trader, Order calldata order, uint256 toLiquidate) external;
     function getLastTradePrices() external view returns(uint[] memory lastTradePrices);
-    function cancelMultipleOrders(Order[] calldata orders) external;
+    function cancelOrder(Order memory order) external;
+    function cancelOrders(Order[] memory orders) external;
     function initializeMinSize(int256 minSize) external;
     function updateParams(uint minAllowableMargin, uint takerFee) external;
 }
