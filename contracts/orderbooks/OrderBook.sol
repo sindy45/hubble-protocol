@@ -9,6 +9,7 @@ import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 import { VanillaGovernable } from "../legos/Governable.sol";
 import { IClearingHouse, IOrderBook, IAMM, IMarginAccount } from "../Interfaces.sol";
+import { IHubbleBibliophile } from "../precompiles/IHubbleBibliophile.sol";
 
 contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable {
     using SafeCast for uint256;
@@ -16,6 +17,7 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
 
     // keccak256("Order(uint256 ammIndex,address trader,int256 baseAssetQuantity,uint256 price,uint256 salt,bool reduceOnly)");
     bytes32 public constant ORDER_TYPEHASH = 0x0a2e4d36552888a97d5a8975ad22b04e90efe5ea0a8abb97691b63b431eb25d2;
+    string constant NOT_IS_MULTIPLE = "OB.not_multiple";
 
     IClearingHouse public immutable clearingHouse;
     IMarginAccount public immutable marginAccount;
@@ -33,6 +35,7 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
     int256[] public minSizes; // min size for each AMM, array index is the ammIndex
     uint public minAllowableMargin;
     uint public takerFee;
+    IHubbleBibliophile public bibliophile;
 
     uint256[50] private __gap;
 
@@ -103,7 +106,7 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         require(orders[0].price /* buy */ >= orders[1].price /* sell */, "OB_orders_do_not_match");
         require(orders[0].ammIndex == orders[1].ammIndex, "OB_orders_for_different_amms");
         // fillAmount should be multiple of min size requirement and fillAmount should be non-zero
-        require(isMultiple(fillAmount, minSizes[orders[0].ammIndex]), "OB_fillAmount_not_multiple_of_minSizeRequirement");
+        require(isMultiple(fillAmount, minSizes[orders[0].ammIndex]), NOT_IS_MULTIPLE);
 
         // Interactions
         uint fulfillPrice;
@@ -125,6 +128,7 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
             _updateOrder(orders[0], matchInfo[0].orderHash, fillAmount);
             _updateOrder(orders[1], matchInfo[1].orderHash, -fillAmount);
             // get openInterestNotional for indexing
+            // @todo move this to precompile
             IAMM amm = clearingHouse.amms(orders[0].ammIndex);
             uint openInterestNotional = amm.openInterestNotional();
             emit OrdersMatched(matchInfo[0].orderHash, matchInfo[1].orderHash, fillAmount.toUint256() /* asserts fillAmount is +ve */, fulfillPrice, openInterestNotional, msg.sender, block.timestamp);
@@ -142,21 +146,15 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         } */
     }
 
-    function parseMatchingError(string memory err) pure public returns(bytes32 orderHash, string memory reason) {
-        (orderHash, reason) = abi.decode(bytes(err), (bytes32, string));
+    function placeOrder(Order memory order) external {
+        Order[] memory _orders = new Order[](1);
+        _orders[0] = order;
+        placeOrders(_orders);
     }
 
-    function placeOrder(Order memory order) external whenNotPaused {
-        int posSize = clearingHouse.getPositionSize(order.trader, order.ammIndex);
-        uint reserveAmount = _placeOrder(order, posSize);
-        if (reserveAmount != 0) {
-            marginAccount.reserveMargin(order.trader, reserveAmount);
-        }
-    }
-
-    function placeOrders(Order[] memory orders) external whenNotPaused {
+    function placeOrders(Order[] memory orders) public whenNotPaused {
         address trader = orders[0].trader;
-        int[] memory posSizes = clearingHouse.getPositionSizes(trader);
+        int[] memory posSizes = _getPositionSizes(trader);
         uint reserveAmount;
         for (uint i = 0; i < orders.length; i++) {
             require(orders[i].trader == trader, "OB_trader_mismatch");
@@ -167,11 +165,24 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         }
     }
 
+    function _getPositionSizes(address trader) internal view returns (int[] memory) {
+        if (address(bibliophile) != address(0)) {
+            // precompile magic allows us to execute this for a fixed 1k gas
+            return bibliophile.getPositionSizes(trader);
+        }
+        uint numAmms = clearingHouse.getAmmsLength();
+        int[] memory posSizes = new int[](numAmms);
+        for (uint i; i < numAmms; ++i) {
+            (posSizes[i],,,) = IAMM(clearingHouse.amms(i)).positions(trader);
+        }
+        return posSizes;
+    }
+
     function _placeOrder(Order memory order, int size) internal returns (uint reserveAmount) {
         require(msg.sender == order.trader, "OB_sender_is_not_trader");
         // require(order.validUntil == 0, "OB_expiring_orders_not_supported");
         // order.baseAssetQuantity should be multiple of minSizeRequirement
-        require(isMultiple(order.baseAssetQuantity, minSizes[order.ammIndex]), "OB_order_size_not_multiple_of_minSizeRequirement");
+        require(isMultiple(order.baseAssetQuantity, minSizes[order.ammIndex]), NOT_IS_MULTIPLE);
 
         bytes32 orderHash = getOrderHash(order);
         // order should not exist in the orderStatus map already
@@ -260,7 +271,7 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
             fillAmount *= -1;
         }
         // fillAmount should be multiple of min size requirement and fillAmount should be non-zero
-        require(isMultiple(fillAmount, minSizes[order.ammIndex]), "OB_fillAmount_not_multiple_of_minSizeRequirement");
+        require(isMultiple(fillAmount, minSizes[order.ammIndex]), NOT_IS_MULTIPLE);
 
         MatchInfo memory matchInfo = MatchInfo({
             orderHash: orderHash,
@@ -385,19 +396,15 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
     }
 
     /**
-    * @notice returns true if x and y have same signs
-    * @dev it considers 0 to have positive sign
-    */
-    function isSameSign(int256 x, int256 y) internal pure returns (bool) {
-        return (x ^ y) >= 0;
-    }
-
-    /**
     * @notice returns true if x is multiple of y and abs(x) >= y
     * @dev assumes y is positive
     */
     function isMultiple(int256 x, int256 y) internal pure returns (bool) {
         return (x != 0 && x % y == 0);
+    }
+
+    function parseMatchingError(string memory err) pure public returns(bytes32 orderHash, string memory reason) {
+        (orderHash, reason) = abi.decode(bytes(err), (bytes32, string));
     }
 
     /* ****************** */
@@ -422,6 +429,10 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
 
     function updateMinSize(uint ammIndex, int minSize) external onlyGovernance {
         minSizes[ammIndex] = minSize;
+    }
+
+    function setBibliophile(address _bibliophile) external onlyGovernance {
+        bibliophile = IHubbleBibliophile(_bibliophile);
     }
 
     function updateParams(uint _minAllowableMargin, uint _takerFee) external {

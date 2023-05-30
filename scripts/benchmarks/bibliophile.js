@@ -1,6 +1,6 @@
 const utils = require('../../test/utils')
 const { addMargin } = require('../deploy/deployUtils')
-const Exchange = require('../market-maker/exchange')
+const { Exchange } = require('../market-maker/exchange')
 
 const {
     constants: { _1e6 },
@@ -14,10 +14,10 @@ const {
 const gasLimit = 5e6
 
 const config = {
-    Bibliophile: '0x0300000000000000000000000000000000000001',
-    OrderBook: '0x0300000000000000000000000000000000000069',
-    MarginAccount: '0x0300000000000000000000000000000000000070',
-    ClearingHouse: '0x0300000000000000000000000000000000000071'
+    OrderBook: '0x0300000000000000000000000000000000000000',
+    MarginAccount: '0x0300000000000000000000000000000000000001',
+    ClearingHouse: '0x0300000000000000000000000000000000000002',
+    Bibliophile: '0x0300000000000000000000000000000000000003'
 }
 
 /**
@@ -40,7 +40,7 @@ async function main(setBiblioPhile) {
     // however, if we pass the gasLimit here, the estimation is skipped and nonce makes sure that tx1 and then tx2 is mined
     txOptions.gasLimit = gasLimit
 
-    const { marginAccountHelper, orderBook, oracle, clearingHouse } =  await setupContracts({
+    const { orderBook, clearingHouse } =  await setupContracts({
         governance,
         restrictedVUSD: false,
         genesisProxies: true,
@@ -53,14 +53,14 @@ async function main(setBiblioPhile) {
     await orderBook.setValidatorStatus(ethers.utils.getAddress('0x4Cf2eD3665F6bFA95cE6A11CFDb7A2EF5FC1C7E4'), true, getTxOptions())
     if (setBiblioPhile) {
         await clearingHouse.setBibliophile(config.Bibliophile, getTxOptions())
+        await orderBook.setBibliophile(config.Bibliophile, getTxOptions())
     }
 
     await sleep(3)
     await addMargin(alice, _1e6.mul(40000), gasLimit)
     await addMargin(bob, _1e6.mul(40000), gasLimit)
-    // await sleep(5)
+
     // console.log(JSON.stringify(await generateConfig(leaderboard.address, marginAccountHelper.address), null, 0))
-    await getAvailableMargin()
 }
 
 async function setupAMM(name, initialRate, oracleAddress) {
@@ -133,17 +133,17 @@ async function execute(alice, bob) {
     await exchange.createLimitOrder(bob, 0, -3, 1999)
 
     await sleep(5)
-    const hb = await ethers.getContractAt('IHubbleBibliophile', '0x0300000000000000000000000000000000000001')
+    const hb = await ethers.getContractAt('IHubbleBibliophile', '0x0300000000000000000000000000000000000003')
     console.log(await hb.getNotionalPositionAndMargin(alice.address, false, 0))
     console.log(await hb.getNotionalPositionAndMargin(bob.address, false, 0))
 
     // bibliophile is not updated yet
-    const ch = await ethers.getContractAt('ClearingHouse', '0x0300000000000000000000000000000000000071')
+    const ch = await ethers.getContractAt('ClearingHouse', '0x0300000000000000000000000000000000000002')
     console.log(await ch.getNotionalPositionAndMargin(alice.address, false, 0))
     console.log(await ch.getNotionalPositionAndMargin(bob.address, false, 0))
 
     console.log(await ch.estimateGas.getNotionalPositionAndMargin(alice.address, true, 0))
-    await ch.setBibliophile('0x0300000000000000000000000000000000000001')
+    await ch.setBibliophile('0x0300000000000000000000000000000000000003')
     await sleep(3)
     console.log(await ch.estimateGas.getNotionalPositionAndMargin(alice.address, true, 0))
 }
@@ -153,7 +153,7 @@ async function read() {
     governance = signers[0].address
     ;([, alice, bob] = signers)
 
-    const hb = await ethers.getContractAt('IHubbleBibliophile', '0x0300000000000000000000000000000000000001')
+    const hb = await ethers.getContractAt('IHubbleBibliophile', '0x0300000000000000000000000000000000000003')
     console.log(await hb.getNotionalPositionAndMargin(alice.address, false, 0))
     console.log(await hb.getNotionalPositionAndMargin(bob.address, false, 0))
 }
@@ -171,7 +171,7 @@ async function getAvailableMargin() {
     console.log(await ma.getAvailableMargin(alice.address))
     console.log(await ma.getAvailableMargin(bob.address))
     console.log(await ma.margin(0, alice.address))
-    console.log(await ma.margin(0, alice.address))
+    console.log(await ma.margin(0, bob.address))
 }
 
 async function runAnalytics() {
@@ -186,7 +186,7 @@ async function runAnalytics() {
     const orderBook = await ethers.getContractAt('OrderBook', config.OrderBook)
     const oracle = await ma.oracle()
 
-    // await ch.setBibliophile('0x0300000000000000000000000000000000000001', getTxOptions())
+    // await ch.setBibliophile('0x0300000000000000000000000000000000000003', getTxOptions())
     // const b4events = await orderBook.queryFilter(orderBook.filters.OrdersMatched())
     // console.log('b4events', b4events.length)
 
@@ -204,9 +204,9 @@ async function runAnalytics() {
 
         console.log('sending orders in market-id', marketId)
         // alice and bob place an order in each market
-        const tx1 = await (await exchange.createLimitOrder(alice, marketId, marketId+1, (marketId+1)*10)).wait()
+        const tx1 = await (await exchange.createLimitOrder(alice, false, marketId, marketId+1, (marketId+1)*10)).wait()
         // console.log(tx1)
-        const tx2 = await (await exchange.createLimitOrder(bob, marketId, -(marketId+1), (marketId+1)*10)).wait()
+        const tx2 = await (await exchange.createLimitOrder(bob, false, marketId, -(marketId+1), (marketId+1)*10)).wait()
         // console.log('orders sent')
 
         await sleep(3)
@@ -219,6 +219,7 @@ async function runAnalytics() {
         const r = await lastMatched.getTransactionReceipt()
         console.log({
             markets: marketId+1,
+            blockNumber: r.blockNumber,
             orderPlaced: Math.floor((tx1.gasUsed.toNumber() + tx2.gasUsed.toNumber())/2),
             orderMatchedGas: r.gasUsed.toNumber()
         })
@@ -235,16 +236,22 @@ async function compareValues(alice, bob) {
     console.log(await hb.getNotionalPositionAndMargin(bob.address, false, 0))
 
     const ch = await ethers.getContractAt('ClearingHouse', config.ClearingHouse)
-    // await ch.setBibliophile('0x0300000000000000000000000000000000000001') // not needed with vanilla calls
+    const ma = await ethers.getContractAt('MarginAccount', config.MarginAccount)
+    // await ch.setBibliophile(config.Bibliophile) // not needed with vanilla calls
+    // await ch.setBibliophile('0x0000000000000000000000000000000000000000') // not needed with vanilla calls
+    // console.log(await ch.bibliophile())
 
-    console.log(await ch.bibliophile())
-    console.log(await ch.estimateGas.getNotionalPositionAndMargin(alice.address, false, 0))
-    console.log(await ch.estimateGas.getNotionalPositionAndMarginVanilla(alice.address, false, 0))
+    console.log('alice-getNotionalPositionAndMargin', await ch.getNotionalPositionAndMargin(alice.address, false, 0))
+    console.log('bob-getNotionalPositionAndMargin', await ch.getNotionalPositionAndMargin(bob.address, false, 0))
+
+    // estimate gas
+    // console.log(await ch.estimateGas.getNotionalPositionAndMargin(alice.address, false, 0))
+    // console.log(await ch.estimateGas.getNotionalPositionAndMarginVanilla(alice.address, false, 0))
     // console.log(await ch.estimateGas.getNotionalPositionAndMarginVanilla(bob.address, false, 0))
 }
 
-main(true /* setBiblioPhile */)
-// runAnalytics()
+// main(true /* setBiblioPhile */)
+runAnalytics()
 // compareValues()
 // getAvailableMargin()
 .then(() => process.exit(0))

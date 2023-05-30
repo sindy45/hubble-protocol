@@ -8,9 +8,9 @@ const {
 const { BigNumber } = ethers
 
 const validator = '0x7baf9e291a0E676a3FC92b684c7198123e9e23e8'
-const OBGenesisProxyAddress = '0x0300000000000000000000000000000000000069'
-const MAGenesisProxyAddress = '0x0300000000000000000000000000000000000070'
-const CHGenesisProxyAddress = '0x0300000000000000000000000000000000000071'
+const OBGenesisProxyAddress = '0x0300000000000000000000000000000000000000'
+const MAGenesisProxyAddress = '0x0300000000000000000000000000000000000001'
+const CHGenesisProxyAddress = '0x0300000000000000000000000000000000000002'
 
 describe.skip('(fork) order match', async function() {
     let blockNumber = 8106

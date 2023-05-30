@@ -1,5 +1,5 @@
 const utils = require('../../test/utils')
-const { addVUSDWithReserve, addMargin } = require('./deployUtils')
+const { addMargin } = require('./deployUtils')
 
 const {
     constants: { _1e6 },
@@ -38,7 +38,8 @@ async function main() {
         mockOrderBook: false,
         testClearingHouse: false,
         amm: {
-            initialRate: 2000
+            initialRate: 2000,
+            minSize: utils.BigNumber.from(10).pow(16),
         }
     })
 
@@ -47,11 +48,9 @@ async function main() {
 
     // whitelist evm address for order execution transactions
     await orderBook.setValidatorStatus(ethers.utils.getAddress('0x4Cf2eD3665F6bFA95cE6A11CFDb7A2EF5FC1C7E4'), true)
-    // set spread limit to higher value
-    const maxOracleSpreadRatio = 20 * 1e4 // 20%
-    await amm.setPriceSpreadParams(maxOracleSpreadRatio, 0)
 
     await sleep(5)
+    console.log({ marginAccountHelper: marginAccountHelper.address, leaderboard: leaderboard.address })
     console.log(JSON.stringify(await generateConfig(leaderboard.address, marginAccountHelper.address), null, 0))
 }
 
@@ -117,7 +116,7 @@ async function _setupAmm(governance, args, ammOptions, slowMode) {
     return { amm }
 }
 
-async function addMargin() {
+async function addMarginAgain() {
     signers = await ethers.getSigners()
     governance = signers[0].address
     ;([, alice, bob] = signers)

@@ -297,12 +297,6 @@ describe('Position Tests', async function() {
             expect(await amm.shortOpenInterestNotional()).to.eq(_1e18.mul(8))
         })
 
-        it("open an empty position", async () => {
-            await expect(clearingHouse.openPosition2(0, 0, 0)).to.be.revertedWith('AMM._short: baseAssetQuantity is >= 0')
-            expect(await amm.longOpenInterestNotional()).to.eq(ZERO)
-            expect(await amm.shortOpenInterestNotional()).to.eq(ZERO)
-        })
-
         it('long + smaller short', async () => {
             const longBaseAssetQuantity = _1e18.mul(5)
 

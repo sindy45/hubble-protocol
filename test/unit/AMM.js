@@ -147,7 +147,7 @@ describe('AMM unit tests', async function() {
 
     it('storage slots are as expected', async () => {
         // Test fixed slot for maxOracleSpreadRatio
-        const VAR_MAX_ORACLE_SPREAD_RATIO_SLOT = 4
+        const VAR_MAX_ORACLE_SPREAD_RATIO_SLOT = 7
         storage = await ethers.provider.getStorageAt(
             amm.address,
             ethers.utils.solidityPack(['uint256'], [VAR_MAX_ORACLE_SPREAD_RATIO_SLOT])
@@ -156,7 +156,7 @@ describe('AMM unit tests', async function() {
         expect(BigNumber.from(storage)).to.eq(maxOracleSpreadRatio)
 
         // Test fixed slot for maxLiquidationRatio
-        const VAR_MAX_LIQUIDATION_RATIO_SLOT = 5
+        const VAR_MAX_LIQUIDATION_RATIO_SLOT = 8
         storage = await ethers.provider.getStorageAt(
             amm.address,
             ethers.utils.solidityPack(['uint256'], [VAR_MAX_LIQUIDATION_RATIO_SLOT])
@@ -165,7 +165,7 @@ describe('AMM unit tests', async function() {
         expect(BigNumber.from(storage)).to.eq(maxLiquidationRatio)
 
         // Test fixed slot for minSizeRequirement
-        const VAR_MIN_SIZE_REQUIREMENT_SLOT = 6
+        const VAR_MIN_SIZE_REQUIREMENT_SLOT = 9
         storage = await ethers.provider.getStorageAt(
             amm.address,
             ethers.utils.solidityPack(['uint256'], [VAR_MIN_SIZE_REQUIREMENT_SLOT])
@@ -259,7 +259,7 @@ describe('AMM unit tests', async function() {
     })
 
     it('min size requirement', async () => {
-        await clearingHouse.closePosition(0)
+        await clearingHouse.closePosition(0, 0)
 
         let posSize = _1e18.mul(-5)
         await clearingHouse.openPosition2(0, posSize, 0)
@@ -314,7 +314,7 @@ describe('Oracle Price Spread Check', async function() {
         await oracle.setUnderlyingPrice(weth.address, _1e6.mul(1250))
         await expect(
             clearingHouse.openPosition2(0, _1e18.mul(-5), _1e6.mul(4999)) // price = 4999 / 5 = 999.8
-        ).to.be.revertedWith('AMM_price_decrease_not_allowed')
+        ).to.be.revertedWith('AMM.price_LT_bound')
 
         // longs allowed
         await clearingHouse.openPosition2(0, _1e18.mul(5), _1e6.mul(5000))
@@ -325,10 +325,7 @@ describe('Oracle Price Spread Check', async function() {
         await oracle.setUnderlyingPrice(weth.address, _1e6.mul(833))
         await expect(
             clearingHouse.openPosition2(0, _1e18.mul(5), ethers.constants.MaxUint256)
-        ).to.be.revertedWith('AMM_price_increase_not_allowed')
-
-        // shorts allowed
-        await clearingHouse.openPosition2(0, _1e18.mul(-5), 0)
+        ).to.be.revertedWith('AMM.price_GT_bound')
     })
 
     // marginFraction < maintenanceMargin < minAllowableMargin < oracleBasedMF
@@ -435,7 +432,7 @@ describe('Oracle Price Spread Check', async function() {
         ).to.be.revertedWith('CH: Below Minimum Allowable Margin')
 
         // can reduce position however (doesn't revert)
-        await clearingHouse.callStatic.closePosition(0)
+        await clearingHouse.callStatic.closePosition(0, _1e6.mul(1300)) // at same price as underlying
 
         // However, when it comes to liquidation, amm based marginFraction will kick in again
         expect(await clearingHouse.calcMarginFraction(alice, false, 0 /* Maintenance_Margin */)).to.eq(marginFraction)

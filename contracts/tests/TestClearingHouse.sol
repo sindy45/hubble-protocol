@@ -26,15 +26,19 @@ contract TestClearingHouse is ClearingHouse {
     function openPosition3(uint ammIndex, int baseAssetQuantity, uint price) public {
         uint salt = _blockTimestamp();
         IOrderBook.Order memory order = IOrderBook.Order(ammIndex, _msgSender(), baseAssetQuantity, price, salt, false);
+        amms[ammIndex].validateTradeAndUpdateTwap(price, false);
         _openPosition(order, order.baseAssetQuantity, order.price, IOrderBook.OrderExecutionMode.Taker);
     }
 
-    function closePosition(uint ammIndex) external {
+    function closePosition(uint ammIndex, uint price) external {
         address trader = _msgSender();
-        uint price = amms[ammIndex].lastPrice();
+        if (price == 0) {
+            price = amms[ammIndex].lastPrice();
+        }
         uint salt = _blockTimestamp();
         (int baseAssetQuantity,,,) = amms[ammIndex].positions(trader);
         IOrderBook.Order memory order = IOrderBook.Order(ammIndex,_msgSender(), -baseAssetQuantity, price, salt, true);
+        amms[ammIndex].validateTradeAndUpdateTwap(price, false);
         _openPosition(order, order.baseAssetQuantity, order.price, IOrderBook.OrderExecutionMode.Taker);
     }
 
@@ -44,7 +48,8 @@ contract TestClearingHouse is ClearingHouse {
     }
 
     function liquidate3(address trader, uint price) public {
-        (int size,,, uint liquidationThreshold) = amms[0].positions(trader);
+        uint8 ammIndex = 0; // hardcoded for tests
+        (int size,,, uint liquidationThreshold) = amms[ammIndex].positions(trader);
         liquidationThreshold = Math.min(liquidationThreshold, abs(size).toUint256());
 
         int fillAmount = liquidationThreshold.toInt256();
@@ -52,6 +57,7 @@ contract TestClearingHouse is ClearingHouse {
             fillAmount = -liquidationThreshold.toInt256();
         }
         updatePositions(trader);
+        amms[ammIndex].validateTradeAndUpdateTwap(price, true);
         _liquidateSingleAmm(trader, 0, price, fillAmount);
     }
 

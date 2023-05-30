@@ -10,9 +10,9 @@ const _1e18 = ethers.constants.WeiPerEther
 const feeSink = new ethers.Wallet.createRandom()
 
 const DEFAULT_TRADE_FEE = 0.0005 * 1e6 /* 0.05% */
-const OBGenesisProxyAddress = '0x0300000000000000000000000000000000000069'
-const MAGenesisProxyAddress = '0x0300000000000000000000000000000000000070'
-const CHGenesisProxyAddress = '0x0300000000000000000000000000000000000071'
+const OBGenesisProxyAddress = '0x0300000000000000000000000000000000000000'
+const MAGenesisProxyAddress = '0x0300000000000000000000000000000000000001'
+const CHGenesisProxyAddress = '0x0300000000000000000000000000000000000002'
 
 let txOptions = {}
 const verification = []

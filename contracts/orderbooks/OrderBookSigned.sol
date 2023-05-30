@@ -118,7 +118,7 @@ contract OrderBookSigned is VanillaGovernable, Pausable, EIP712Upgradeable {
         require(orders[0].price /* buy */ >= orders[1].price /* sell */, "OB_orders_do_not_match");
         require(orders[0].ammIndex == orders[1].ammIndex, "OB_orders_for_different_amms");
         // fillAmount should be multiple of min size requirement and fillAmount should be non-zero
-        require(isMultiple(fillAmount, minSizes[orders[0].ammIndex]), "OB_fillAmount_not_multiple_of_minSizeRequirement");
+        require(isMultiple(fillAmount, minSizes[orders[0].ammIndex]), "OB.not_multiple");
 
         // Interactions
         // Bulls (Longs) are our friends. We give them a favorable price in this corner case

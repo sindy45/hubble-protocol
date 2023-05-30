@@ -86,9 +86,12 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     )   external
         onlyOrderBook
     {
+
+        amms[orders[0].ammIndex].validateTradeAndUpdateTwap(fulfillPrice, false);
         try this.openPosition(orders[0], fillAmount, fulfillPrice, matchInfo[0].mode) {
             // only executed if the above doesn't revert
             try this.openPosition(orders[1], -fillAmount, fulfillPrice, matchInfo[1].mode) {
+                // only executed if the above doesn't revert
             } catch Error(string memory reason) {
                 // will revert all state changes including those made in this.openPosition(orders[0])
                 revert(string(abi.encode(matchInfo[1].orderHash, reason)));
@@ -168,7 +171,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         external
         onlyOrderBook
     {
-        updatePositions(trader);
+        amms[order.ammIndex].validateTradeAndUpdateTwap(price, true);
         try this.liquidateSingleAmm(trader, order.ammIndex, price, liquidationAmount) {
             // only executed if the above doesn't revert
             try this.openPosition(order, liquidationAmount, price, matchInfo.mode) {
@@ -191,6 +194,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     /* ********************* */
 
     function _liquidateSingleAmm(address trader, uint ammIndex, uint price, int toLiquidate) internal {
+        updatePositions(trader); // settle funding payments
         _assertLiquidationRequirement(trader);
         (
             int realizedPnl,
@@ -273,7 +277,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     }
 
     function _openPosition(IOrderBook.Order memory order, int256 fillAmount, uint256 fulfillPrice, IOrderBook.OrderExecutionMode mode) internal {
-        updatePositions(order.trader); // adjust funding payments
+        updatePositions(order.trader); // settle funding payments
         uint quoteAsset = abs(fillAmount).toUint256() * fulfillPrice / 1e18;
         (
             int realizedPnl,
@@ -341,7 +345,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         returns(uint256 notionalPosition, int256 margin)
     {
         if (address(bibliophile) != address(0x0)) {
-            // precompile magic allows us to execute this for a fixed 5k gas
+            // precompile magic allows us to execute this for a fixed 1k gas
             return bibliophile.getNotionalPositionAndMargin(trader, includeFundingPayments, uint8(mode));
         }
         return getNotionalPositionAndMarginVanilla(trader, includeFundingPayments, mode);
@@ -379,20 +383,6 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         for (uint i; i < numAmms; ++i) {
             prices[i] = amms[i].getUnderlyingPrice();
         }
-    }
-
-
-    function getPositionSizes(address trader) external view returns(int[] memory posSizes) {
-        uint numAmms = amms.length;
-        posSizes = new int[](numAmms);
-        for (uint i; i < numAmms; ++i) {
-            // @todo implement this as a precompile
-            (posSizes[i],,,) = amms[i].positions(trader);
-        }
-    }
-
-    function getPositionSize(address trader, uint ammIndex) external view returns(int posSize) {
-        (posSize,,,) = amms[ammIndex].positions(trader);
     }
 
     /* ****************** */

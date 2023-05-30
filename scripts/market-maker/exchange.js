@@ -3,8 +3,8 @@ const { bnToFloat, sleep } = require('../../test/utils')
 const { BigNumber } = ethers
 const _ = require('lodash')
 
-const OBGenesisProxyAddress = '0x0300000000000000000000000000000000000069'
-const CHGenesisProxyAddress = '0x0300000000000000000000000000000000000071'
+const OBGenesisProxyAddress = '0x0300000000000000000000000000000000000000'
+const CHGenesisProxyAddress = '0x0300000000000000000000000000000000000002'
 
 const domain = {
     name: 'Hubble',
@@ -29,7 +29,7 @@ class Exchange {
     constructor(provider) {
         this.provider = provider // new ethers.providers.JsonRpcProvider('https://internal-hubblenet-rpc.hubble.exchange/ext/bc/2ErDhAugYgUSwpeejAsCBcHY4MzLYZ5Y13nDuNRtrSWjQN5SDM/rpc')
 
-        const orderBookAbi = require('../../artifacts/contracts/OrderBook.sol/OrderBook.json').abi
+        const orderBookAbi = require('../../artifacts/contracts/orderbooks/OrderBook.sol/OrderBook.json').abi
         this.orderBook = new ethers.Contract(OBGenesisProxyAddress, orderBookAbi, this.provider)
 
         const clearingHouseAbi = require('../../artifacts/contracts/ClearingHouse.sol/ClearingHouse.json').abi
@@ -117,10 +117,9 @@ class Exchange {
         }
         // console.log({ order })
         // const orderHash = await this.orderBook.getOrderHash(order)
-        const signature = await signer._signTypedData(domain, orderType, order)
-        // const estimateGas = await this.orderBook.connect(signer).estimateGas.placeOrder(order, signature)
+        // const estimateGas = await this.orderBook.connect(signer).estimateGas.placeOrders([order], signature)
         // console.log({ estimateGas })
-        return this.orderBook.connect(signer).placeOrder(order, signature, txOpts)
+        return this.orderBook.connect(signer).placeOrders([order], txOpts)
         // return tx.wait()
     }
 

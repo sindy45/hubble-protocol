@@ -160,21 +160,20 @@ describe('Order Book', function () {
         )
         expect(BigNumber.from(storage)).to.eq(1) // true
 
-        const VAR_LAST_PRICE_SLOT = 1
-        storage = await ethers.provider.getStorageAt(
-            amm.address,
-            ethers.utils.solidityPack(['uint256'], [VAR_LAST_PRICE_SLOT])
-        )
+        const MARK_PRICE_TWAP_DATA_SLOT = 1
+        const baseSlot = BigNumber.from(ethers.utils.solidityPack(['uint256'], [MARK_PRICE_TWAP_DATA_SLOT]))
+        storage = await ethers.provider.getStorageAt(amm.address, baseSlot)
         expect(BigNumber.from(storage)).to.eq(longOrder.price)
+        // console.log(await ethers.provider.getStorageAt(amm.address, baseSlot.add(1))) // timestamp
 
-        const VAR_POSITIONS_SLOT = 2
+        const VAR_POSITIONS_SLOT = 5
         let basePositionSlot = ethers.utils.keccak256(ethers.utils.solidityPack(['bytes32', 'uint256'], ['0x' + '0'.repeat(24) + bob.address.slice(2), VAR_POSITIONS_SLOT]))
         storage = await ethers.provider.getStorageAt(amm.address, basePositionSlot) // size
         expect(longOrder.baseAssetQuantity).to.eq(BigNumber.from(storage))
         storage = await ethers.provider.getStorageAt(amm.address, BigNumber.from(basePositionSlot).add(1)) // open notional
         expect(longOrder.baseAssetQuantity.mul(longOrder.price).div(_1e18)).to.eq(BigNumber.from(storage))
 
-        // alice which has a negative position
+        // alice who has a negative position
         basePositionSlot = ethers.utils.keccak256(ethers.utils.solidityPack(['bytes32', 'uint256'], ['0x' + '0'.repeat(24) + alice.address.slice(2), VAR_POSITIONS_SLOT]))
         storage = await ethers.provider.getStorageAt(amm.address, basePositionSlot) // size
         expect(shortOrder.baseAssetQuantity).to.eq(BigNumber.from(storage).fromTwos(256))
@@ -243,7 +242,7 @@ describe('Order Book', function () {
 
         const charlie = signers[7]
         await addMargin(charlie, _1e6.mul(4000))
-        const { order, orderHash } = await placeOrder(size, markPrice, charlie)
+        const { order } = await placeOrder(size, markPrice, charlie)
 
         // liquidate
         const toLiquidate = size.mul(25e4).div(1e6) // 1/4th position liquidated (in multiple of minSize)
@@ -344,29 +343,48 @@ describe('Order Book - Error Handling', function () {
         await assertPosSize(0, 0)
     })
 
-    it('try with another err msg', async function() {
+    it('AMM.price_GT_bound', async function() {
+        await oracle.setUnderlyingPrice(wavax.address, initialAvaxPrice * 4) // increase margin so that it doesnt revert for that reason
+
         const badShortOrder = JSON.parse(JSON.stringify(shortOrder))
         badShortOrder.price = ethers.utils.parseUnits('2000', 6)
-
-        await oracle.setUnderlyingPrice(wavax.address, initialAvaxPrice * 4)
         await orderBook.connect(alice).placeOrder(badShortOrder)
 
         const badLongOrder = JSON.parse(JSON.stringify(longOrder))
         badLongOrder.price = ethers.utils.parseUnits('2000', 6)
-        // order2Hash is declared locally so they don't affect the vars in global scope
-        const order2Hash = await orderBook.getOrderHash(badLongOrder)
         await orderBook.connect(bob).placeOrder(badLongOrder)
 
-        const tx = await orderBook.executeMatchedOrders([badLongOrder, badShortOrder], longOrder.baseAssetQuantity)
+        await expect(orderBook.executeMatchedOrders(
+            [badLongOrder, badShortOrder],
+            longOrder.baseAssetQuantity
+        )).to.be.revertedWith('AMM.price_GT_bound')
+        await assertPosSize(0, 0)
+    })
 
-        await expect(tx).to.emit(orderBook, 'OrderMatchingError')
-        const event = await filterEvent(tx, 'OrderMatchingError')
-        expect(event.args.orderHash).to.eq(order2Hash)
-        expect(event.args.err).to.eq('AMM_price_increase_not_allowed')
+    it('AMM.price_LT_bound', async function() {
+        await oracle.setUnderlyingPrice(wavax.address, initialAvaxPrice * 4) // increase margin so that it doesnt revert for that reason
+
+        const badShortOrder = JSON.parse(JSON.stringify(shortOrder))
+        badShortOrder.price = ethers.utils.parseUnits('799', 6)
+        await orderBook.connect(alice).placeOrder(badShortOrder)
+
+        const badLongOrder = JSON.parse(JSON.stringify(longOrder))
+        badLongOrder.price = ethers.utils.parseUnits('799', 6)
+        await orderBook.connect(bob).placeOrder(badLongOrder)
+
+        await expect(orderBook.executeMatchedOrders(
+            [badLongOrder, badShortOrder],
+            longOrder.baseAssetQuantity
+        )).to.be.revertedWith('AMM.price_LT_bound')
         await assertPosSize(0, 0)
     })
 
     it('generic errors are not caught and bubbled up', async function() {
+        await expect(
+            orderBook.executeMatchedOrders([longOrder, shortOrder], 0)
+        ).to.be.revertedWith('OB.not_multiple')
+
+        // provide another reason to revert
         await clearingHouse.setMarginAccount('0x0000000000000000000000000000000000000000')
         await expect(orderBook.executeMatchedOrders(
             [longOrder, shortOrder],
@@ -473,8 +491,14 @@ describe('Order Book - Error Handling', function () {
         expect(charliePos[0].size).to.eq(0)
     })
 
-    it('liquidations when all conditions met', async function() {
+    it('liquidations will fail when toLiquidate=0', async function() {
         await addMargin(charlie, _1e6.mul(2000))
+        await expect(orderBook.liquidateAndExecuteOrder(
+            alice.address, order, 0)
+        ).to.be.revertedWith('OB.not_multiple')
+    })
+
+    it('liquidations when all conditions met', async function() {
         let tx = await orderBook.liquidateAndExecuteOrder(alice.address, order, toLiquidate.abs())
         const _timestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp
         await expect(tx).to.emit(orderBook, 'LiquidationOrderMatched').withArgs(

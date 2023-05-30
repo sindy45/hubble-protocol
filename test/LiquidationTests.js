@@ -566,7 +566,7 @@ describe('Liquidation Price Safeguard', async function() {
         expect(await amm.maxLiquidationPriceSpread()).to.eq(_1e6.div(100))
         expect((price.sub(indexPrice)).mul(1e8).div(indexPrice)).to.gt(_1e6)
         await expect(clearingHouse.connect(liquidator1).liquidate3(alice, price)).to.be.revertedWith(
-            'AMM.spread_limit_exceeded_between_liquidationPrice_and_indexPrice'
+            'AMM.price_GT_bound'
         )
     })
 
@@ -576,7 +576,7 @@ describe('Liquidation Price Safeguard', async function() {
 
         expect((price.sub(indexPrice)).mul(1e8).div(indexPrice)).to.lt(_1e6.mul(-1))
         await expect(clearingHouse.connect(liquidator1).liquidate3(alice, price)).to.be.revertedWith(
-            'AMM.spread_limit_exceeded_between_liquidationPrice_and_indexPrice'
+            'AMM.price_LT_bound'
         )
     })
 

@@ -8,10 +8,10 @@ const {
 } = utils
 
 const config = {
-    "OrderBook": "0x0300000000000000000000000000000000000069",
-    "ClearingHouse": "0x0300000000000000000000000000000000000071",
+    "OrderBook": "0x0300000000000000000000000000000000000000",
+    "ClearingHouse": "0x0300000000000000000000000000000000000002",
     "HubbleViewer": "0x5F1f4Eb04a82b4D78D99b6eFd412e0B69653E75b",
-    "MarginAccount": "0x0300000000000000000000000000000000000070",
+    "MarginAccount": "0x0300000000000000000000000000000000000001",
     "Oracle": "0xC2116D4E4DAb6C6855D4510F3cb7006939F532f0",
     "InsuranceFund": "0x6039c0C0D2F4fb8657808b552BA5546D6047c677",
     "Registry": "0xE977c1bE1a6D00cF38e4F6C25FB8f0Ea86443F1C",
@@ -55,7 +55,7 @@ async function depositMargin() {
     // await maHelper.connect(alice).addVUSDMarginWithReserve(amount, { value: _1e18.mul(35000) })
     await maHelper.connect(bob).addVUSDMarginWithReserve(amount, { value: _1e18.mul(35000) })
 
-    const marginAccount = await ethers.getContractAt('MarginAccount', '0x0300000000000000000000000000000000000070')
+    const marginAccount = await ethers.getContractAt('MarginAccount', '0x0300000000000000000000000000000000000001')
     console.log(await marginAccount.margin(0, alice.address))
     console.log(await marginAccount.margin(0, bob.address))
 }
@@ -74,10 +74,10 @@ async function fundingTime() {
     // console.log(await amm.getUnderlyingTwapPrice(3600))
     // console.log(await amm.getTwapPrice(3600))
 
-    // const ch = await ethers.getContractAt('ClearingHouse', '0x0300000000000000000000000000000000000071')
+    // const ch = await ethers.getContractAt('ClearingHouse', '0x0300000000000000000000000000000000000002')
     // console.log(await ch.getUnderlyingPrice())
 
-    const orderbook = await ethers.getContractAt('OrderBook', '0x0300000000000000000000000000000000000069')
+    const orderbook = await ethers.getContractAt('OrderBook', '0x0300000000000000000000000000000000000000')
     const tx = await orderbook.estimateGas.settleFunding()
     console.log(tx)
     // console.log(await tx.wait())

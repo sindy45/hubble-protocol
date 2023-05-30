@@ -40,7 +40,7 @@ contract OrderBookTests is Utils {
         orderBook.placeOrder(order);
 
         vm.startPrank(trader);
-        vm.expectRevert("OB_order_size_not_multiple_of_minSizeRequirement");
+        vm.expectRevert("OB.not_multiple");
         orderBook.placeOrder(order);
         vm.stopPrank();
 
@@ -49,7 +49,7 @@ contract OrderBookTests is Utils {
         (trader, order,, orderHash) = prepareOrder(0, traderKey, size + 1234, price, false);
 
         vm.startPrank(trader);
-        vm.expectRevert("OB_order_size_not_multiple_of_minSizeRequirement");
+        vm.expectRevert("OB.not_multiple");
         orderBook.placeOrder(order);
         vm.stopPrank();
 
@@ -132,7 +132,7 @@ contract OrderBookTests is Utils {
         vm.expectRevert("OB_filled_amount_higher_than_order_base");
         orderBook.executeMatchedOrders([orders[0], orders[1]], size + MIN_SIZE);
 
-        vm.expectRevert("OB_fillAmount_not_multiple_of_minSizeRequirement");
+        vm.expectRevert("OB.not_multiple");
         orderBook.executeMatchedOrders([orders[0], orders[1]], size + 1);
 
         vm.expectEmit(true, true, false, true, address(orderBook));
@@ -192,7 +192,7 @@ contract OrderBookTests is Utils {
         vm.expectRevert("OB_filled_amount_higher_than_order_base");
         orderBook.executeMatchedOrders([orders[0], orders[1]], size + MIN_SIZE);
 
-        vm.expectRevert("OB_fillAmount_not_multiple_of_minSizeRequirement");
+        vm.expectRevert("OB.not_multiple");
         orderBook.executeMatchedOrders([orders[0], orders[1]], size + 1);
 
         vm.expectEmit(true, true, false, true, address(orderBook));
@@ -258,7 +258,7 @@ contract OrderBookTests is Utils {
             toLiquidate = toLiquidate / uint(MIN_SIZE) * uint(MIN_SIZE);
         }
 
-        vm.expectRevert("OB_fillAmount_not_multiple_of_minSizeRequirement");
+        vm.expectRevert("OB.not_multiple");
         orderBook.liquidateAndExecuteOrder(alice, order, toLiquidate + 1);
 
         vm.expectEmit(true, true, false, true, address(orderBook));
@@ -417,7 +417,7 @@ contract OrderBookTests is Utils {
         orderBook.executeMatchedOrders([orders[1], orders[0]], size);
         vm.expectRevert("OB_order_1_is_not_short");
         orderBook.executeMatchedOrders([orders[0], orders[0]], size);
-        vm.expectRevert("OB_fillAmount_not_multiple_of_minSizeRequirement");
+        vm.expectRevert("OB.not_multiple");
         orderBook.executeMatchedOrders([orders[0], orders[1]], 0);
 
         // reduce long order price

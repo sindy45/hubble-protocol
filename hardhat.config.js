@@ -88,15 +88,11 @@ module.exports = {
         currency: 'USD',
         gasPrice: 25,
         coinmarketcap: '554a6764-aae9-440e-852b-63e3c66c20d7',
-        token: 'AVAX',
+        token: 'USDC',
         enabled: process.env.REPORT_GAS ? true : false
     },
     docgen: {
         clear: true,
-    },
-    tenderly: {
-        project: "hubble",
-        username: "atvanguard",
     },
     mocha: {
         timeout: 0

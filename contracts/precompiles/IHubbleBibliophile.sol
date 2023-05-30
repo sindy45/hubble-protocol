@@ -8,4 +8,6 @@ interface IHubbleBibliophile {
         external
         view
         returns(uint256 notionalPosition, int256 margin);
+
+    function getPositionSizes(address trader) external view returns(int[] memory posSizes);
 }
