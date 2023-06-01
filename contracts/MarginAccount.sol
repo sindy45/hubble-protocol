@@ -20,6 +20,7 @@ import {
     IWAVAX,
     IOrderBook
 } from "./Interfaces.sol";
+import { IHubbleBibliophile } from "./precompiles/IHubbleBibliophile.sol";
 
 /**
 * @title This contract is used for posting margin (collateral), realizing PnL etc.
@@ -86,6 +87,7 @@ contract MarginAccount is IMarginAccount, MetaHubbleBase, ReentrancyGuard {
     mapping(address => uint) public reservedMargin;
     uint public minAllowableMargin;
     address public marginAccountHelper;
+    IHubbleBibliophile public bibliophile;
 
     uint256[50] private __gap;
 
@@ -219,7 +221,14 @@ contract MarginAccount is IMarginAccount, MetaHubbleBase, ReentrancyGuard {
     function getAvailableMargin(address trader) public view override returns (int availableMargin) {
         // availableMargin = margin - reservedMargin - utilizedMargin
         // returned _margin includes funding payments and unrealized pnl and is also optimized via precompile
-        (uint256 notionalPosition, int256 _margin) = clearingHouse.getNotionalPositionAndMargin(trader, true /* includeFundingPayments */, IClearingHouse.Mode.Min_Allowable_Margin);
+        uint256 notionalPosition;
+        int256 _margin;
+        if (address(bibliophile) != address(0x0)) {
+            // precompile magic allows us to execute this for a fixed 1k gas
+            (notionalPosition, _margin) = bibliophile.getNotionalPositionAndMargin(trader, true /* includeFundingPayments */, uint8(IClearingHouse.Mode.Min_Allowable_Margin));
+        } else {
+            (notionalPosition, _margin) = clearingHouse.getNotionalPositionAndMargin(trader, true /* includeFundingPayments */, IClearingHouse.Mode.Min_Allowable_Margin);
+        }
         uint utilizedMargin = notionalPosition * minAllowableMargin / PRECISION;
         availableMargin = _margin - utilizedMargin.toInt256() - reservedMargin[trader].toInt256();
     }
@@ -668,6 +677,10 @@ contract MarginAccount is IMarginAccount, MetaHubbleBase, ReentrancyGuard {
         require(_weight <= PRECISION, "weight > 1e6");
         require(idx < supportedCollateral.length, "Collateral not supported");
         supportedCollateral[idx].weight = _weight;
+    }
+
+    function setBibliophile(address _bibliophile) external onlyGovernance {
+        bibliophile = IHubbleBibliophile(_bibliophile);
     }
 
     function updateParams(uint _minAllowableMargin) external onlyClearingHouse {

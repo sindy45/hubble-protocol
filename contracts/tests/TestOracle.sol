@@ -5,8 +5,10 @@ pragma solidity 0.8.9;
 import { Oracle } from "../Oracle.sol";
 
 contract TestOracle is Oracle {
-    mapping(address => int256) prices;
+
+    mapping(address => int256) prices; // SLOT_3
     mapping(address => int256) twapPrices;
+    mapping(address => bool) public isUpdater;
 
     function getUnderlyingPrice(address underlying)
         override
@@ -35,10 +37,16 @@ contract TestOracle is Oracle {
     }
 
     function setUnderlyingPrice(address underlying, int256 _price) external {
+        require(msg.sender == governance() || isUpdater[msg.sender], "not_updater");
         prices[underlying] = _price;
     }
 
     function setUnderlyingTwapPrice(address underlying, int256 _price) external {
+        require(msg.sender == governance() || isUpdater[msg.sender], "not_updater");
         twapPrices[underlying] = _price;
+    }
+
+    function setUpdater(address updater, bool enabled) external onlyGovernance {
+        isUpdater[updater] = enabled;
     }
 }

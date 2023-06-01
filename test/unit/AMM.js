@@ -136,7 +136,7 @@ describe('AMM unit tests', async function() {
 
         initialPrice = _1e6.mul(1000)
         contracts = await setupContracts({ amm: { whitelist: false, initialPrice }})
-        ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, hubbleViewer, liquidationPriceViewer, orderBook } = contracts)
+        ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, hubbleViewer, liquidationPriceViewer, orderBook, oracle } = contracts)
 
         // add margin
         margin = _1e6.mul(2000)
@@ -172,6 +172,27 @@ describe('AMM unit tests', async function() {
         )
         minSizeRequirement = await amm.minSizeRequirement()
         expect(BigNumber.from(storage)).to.eq(minSizeRequirement)
+
+        const ORACLE_SLOT = 10
+        storage = await ethers.provider.getStorageAt(
+            amm.address,
+            ethers.utils.solidityPack(['uint256'], [ORACLE_SLOT])
+        )
+        expect(oracle.address).to.eq(ethers.utils.getAddress('0x' + storage.slice(26)))
+
+        const UNDERLYING_ASSET_SLOT = 11
+        storage = await ethers.provider.getStorageAt(
+            amm.address,
+            ethers.utils.solidityPack(['uint256'], [UNDERLYING_ASSET_SLOT])
+        )
+        expect(weth.address).to.eq(ethers.utils.getAddress('0x' + storage.slice(26)))
+
+        const TEST_ORACLE_PRICES_MAPPING_SLOT = 53
+        storage = await ethers.provider.getStorageAt(
+            oracle.address,
+            ethers.utils.keccak256(ethers.utils.solidityPack(['bytes32', 'uint256'], ['0x' + '0'.repeat(24) + weth.address.slice(2), TEST_ORACLE_PRICES_MAPPING_SLOT]))
+        )
+        expect(initialPrice).to.eq(BigNumber.from(storage))
     })
 
     it('openPosition fails when amm not whitelisted', async () => {

@@ -113,7 +113,6 @@ interface IOrderBook {
     }
 
     struct OrderInfo {
-        // IOrderBook.Order order;
         uint blockPlaced;
         int256 filledAmount;
         uint256 reservedMargin;

@@ -54,7 +54,7 @@ async function runForMarket(market) {
         let idsToClose = bids.filter(bid => !validBids.includes(bid)).map(bid => bid.id).concat(
             asks.filter(ask => !validAsks.includes(ask)).map(ask => ask.id)
         )
-        if (!dryRun && idsToClose.length) await exchange.cancelMultipleOrders(signer, idsToClose)
+        if (!dryRun && idsToClose.length) await exchange.cancelOrders(signer, idsToClose)
         await decideStrategy(bids, asks, underlyingPrice, market)
     } catch (error) {
         console.error('Error in marketMaker function:', error);

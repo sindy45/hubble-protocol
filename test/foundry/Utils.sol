@@ -161,6 +161,7 @@ abstract contract Utils is Test {
             100, // feeDiscount = 1bps
             0.05 * 1e6 // liquidationPenalty = 5%
         );
+        oracle.setUpdater(address(this), true);
         vm.stopPrank();
 
         wavax = setupRestrictedTestToken('Hubble Avax', 'hWAVAX', 18);

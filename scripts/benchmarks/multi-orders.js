@@ -40,7 +40,7 @@ async function main(setBiblioPhile) {
     // however, if we pass the gasLimit here, the estimation is skipped and nonce makes sure that tx1 and then tx2 is mined
     txOptions.gasLimit = gasLimit
 
-    const { orderBook, clearingHouse } =  await setupContracts({
+    const { orderBook, clearingHouse, marginAccount } =  await setupContracts({
         governance,
         restrictedVUSD: false,
         genesisProxies: true,
@@ -54,6 +54,7 @@ async function main(setBiblioPhile) {
     if (setBiblioPhile) {
         await clearingHouse.setBibliophile(config.Bibliophile, getTxOptions())
         await orderBook.setBibliophile(config.Bibliophile, getTxOptions())
+        await marginAccount.setBibliophile(config.Bibliophile, getTxOptions())
     }
 
     await sleep(3)
@@ -155,12 +156,12 @@ async function runAnalytics() {
     const exchange = new Exchange(ethers.provider)
 
     // deploy 3 AMMS
-    // for (let i = amms.toNumber(); i < 3; i++) {
-    //     const marketId = i
-    //     console.log(`deploying new amm at id=${marketId}`)
-    //     await setupAMM(`Market-${marketId}-Perp`, (marketId+1) * 10, oracle, false)
-    // }
-    // await sleep(3)
+    for (let i = amms.toNumber(); i < 1; i++) {
+        const marketId = i
+        console.log(`deploying new amm at id=${marketId}`)
+        await setupAMM(`Market-${marketId}-Perp`, (marketId+1) * 10, oracle, false)
+    }
+    await sleep(3)
 
     const marketId = 0
     for (let i = 1; i <= 10; i++) {
@@ -207,52 +208,52 @@ main(true /* setBiblioPhile */)
 /** Results
 {
   numOrders: 1,
-  place: { gasUsed: 187958, cost: '$0.00563874' },
+  place: { gasUsed: 174301, cost: '$0.00522903' },
   cancel: { gasUsed: 74476, cost: '$0.00223428' }
 }
 {
   numOrders: 2,
-  place: { gasUsed: 266113, cost: '$0.00798339' },
+  place: { gasUsed: 252455, cost: '$0.00757365' },
   cancel: { gasUsed: 95374, cost: '$0.00286122' }
 }
 {
   numOrders: 3,
-  place: { gasUsed: 344271, cost: '$0.01032813' },
-  cancel: { gasUsed: 116274, cost: '$0.00348822' }
+  place: { gasUsed: 330601, cost: '$0.00991803' },
+  cancel: { gasUsed: 116262, cost: '$0.00348786' }
 }
 {
   numOrders: 4,
-  place: { gasUsed: 422434, cost: '$0.01267302' },
+  place: { gasUsed: 408776, cost: '$0.01226328' },
   cancel: { gasUsed: 137178, cost: '$0.00411534' }
 }
 {
   numOrders: 5,
-  place: { gasUsed: 500588, cost: '$0.01501764' },
-  cancel: { gasUsed: 158072, cost: '$0.00474216' }
+  place: { gasUsed: 486942, cost: '$0.01460826' },
+  cancel: { gasUsed: 158084, cost: '$0.00474252' }
 }
 {
   numOrders: 6,
-  place: { gasUsed: 578769, cost: '$0.01736307' },
+  place: { gasUsed: 565110, cost: '$0.0169533' },
   cancel: { gasUsed: 178991, cost: '$0.00536973' }
 }
 {
   numOrders: 7,
-  place: { gasUsed: 656943, cost: '$0.01970829' },
+  place: { gasUsed: 643283, cost: '$0.01929849' },
   cancel: { gasUsed: 199901, cost: '$0.00599703' }
 }
 {
   numOrders: 8,
-  place: { gasUsed: 735109, cost: '$0.02205327' },
-  cancel: { gasUsed: 220803, cost: '$0.00662409' }
+  place: { gasUsed: 721461, cost: '$0.02164383' },
+  cancel: { gasUsed: 220815, cost: '$0.00662445' }
 }
 {
   numOrders: 9,
-  place: { gasUsed: 813301, cost: '$0.02439903' },
+  place: { gasUsed: 799641, cost: '$0.02398923' },
   cancel: { gasUsed: 241730, cost: '$0.0072519' }
 }
 {
   numOrders: 10,
-  place: { gasUsed: 891485, cost: '$0.02674455' },
+  place: { gasUsed: 877824, cost: '$0.02633472' },
   cancel: { gasUsed: 262647, cost: '$0.00787941' }
 }
 */

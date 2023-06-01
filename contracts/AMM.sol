@@ -44,18 +44,23 @@ contract AMM is IAMM, Governable {
 
     // vars needed in the precompiles should preferably come first and mention the SLOT_# to avoid any potential slot errors
     TWAPData public markPriceTwapData; // SLOT_1 - SLOT_4 !!! used in precompile !!!
+
     mapping(address => Position) override public positions;  // SLOT_5 !!! used in precompile !!!
+
     int256 public cumulativePremiumFraction; // SLOT_6 !!! used in precompile !!!
+
     // maximum allowed % difference between mark price and index price. scaled 6 decimals
     uint256 public maxOracleSpreadRatio; // SLOT_7 !!! used in precompile !!!
+
     // maximum allowd % size which can be liquidated in one tx scaled 6 decimals
     uint256 public maxLiquidationRatio; // SLOT_8 !!! used in precompile !!!
+
     /// @notice Min amount of base asset quantity to trade
     uint256 public minSizeRequirement; // SLOT_9 !!! used in precompile !!!
 
-    IOracle public oracle;
+    IOracle public oracle; // SLOT_10 !!! used in precompile !!!
 
-    address override public underlyingAsset;
+    address override public underlyingAsset; // SLOT_11 !!! used in precompile !!!
     string public name;
 
     uint256 public fundingBufferPeriod;

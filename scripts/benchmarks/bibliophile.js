@@ -40,7 +40,7 @@ async function main(setBiblioPhile) {
     // however, if we pass the gasLimit here, the estimation is skipped and nonce makes sure that tx1 and then tx2 is mined
     txOptions.gasLimit = gasLimit
 
-    const { orderBook, clearingHouse } =  await setupContracts({
+    const { orderBook, clearingHouse, marginAccount } =  await setupContracts({
         governance,
         restrictedVUSD: false,
         genesisProxies: true,
@@ -54,6 +54,7 @@ async function main(setBiblioPhile) {
     if (setBiblioPhile) {
         await clearingHouse.setBibliophile(config.Bibliophile, getTxOptions())
         await orderBook.setBibliophile(config.Bibliophile, getTxOptions())
+        await marginAccount.setBibliophile(config.Bibliophile, getTxOptions())
     }
 
     await sleep(3)
@@ -250,8 +251,8 @@ async function compareValues(alice, bob) {
     // console.log(await ch.estimateGas.getNotionalPositionAndMarginVanilla(bob.address, false, 0))
 }
 
-// main(true /* setBiblioPhile */)
-runAnalytics()
+main(true /* setBiblioPhile */)
+// runAnalytics()
 // compareValues()
 // getAvailableMargin()
 .then(() => process.exit(0))

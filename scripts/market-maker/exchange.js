@@ -134,18 +134,10 @@ class Exchange {
         return this.orderBook.connect(signer).cancelOrders(orders)
     }
 
-    async cancelMultipleOrders(signer, orders) {
-        console.log(`cancelling ${orders.length} orders`)
-        while (orders.length) {
-            const orderHashes = orders.slice(0, 15)
-            await this.orderBook.connect(signer).cancelMultipleOrders(orderHashes)
-            orders = orders.slice(15)
-        }
-    }
-
-    async cancelAllOrders(signer) {
-        return this.cancelMultipleOrders(signer, await this.getOpenOrders(signer.address, ''))
-    }
+    // to fix
+    // async cancelAllOrders(signer) {
+    //     return this.cancelOrders(signer, await this.getOpenOrders(signer.address, ''))
+    // }
 
     async getMarginFractionAndPosition(trader) {
         const [ { freeMargin, marginFraction }, sizes ] = await Promise.all([
