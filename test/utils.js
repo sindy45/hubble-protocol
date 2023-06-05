@@ -80,9 +80,9 @@ async function setupContracts(options = {}) {
             ethers.getContractAt('GenesisTUP', CHGenesisProxyAddress)
         ]))
         await Promise.all([
-            orderBookProxy.init(proxyAdmin.address, getTxOptions()),
-            marginAccountProxy.init(proxyAdmin.address, getTxOptions()),
-            clearingHouseProxy.init(proxyAdmin.address, getTxOptions())
+            orderBookProxy.setGenesisAdmin(proxyAdmin.address, getTxOptions()),
+            marginAccountProxy.setGenesisAdmin(proxyAdmin.address, getTxOptions()),
+            clearingHouseProxy.setGenesisAdmin(proxyAdmin.address, getTxOptions())
         ])
     }
 
@@ -520,11 +520,13 @@ async function assertBounds(v, lowerBound, upperBound) {
 }
 
 // doesn't print inactive AMMs
-async function generateConfig(leaderboardAddress, marginAccountHelperAddress, executorAddress, startBlock) {
-    const leaderboard = await ethers.getContractAt('Leaderboard', leaderboardAddress)
-    const hubbleViewer = await ethers.getContractAt('HubbleViewer', await leaderboard.hubbleViewer())
+async function generateConfig(hubbleViewerAddress) {
+    const hubbleViewer = await ethers.getContractAt('HubbleViewer', hubbleViewerAddress)
     const clearingHouse = await ethers.getContractAt('ClearingHouse', await hubbleViewer.clearingHouse())
     const marginAccount = await ethers.getContractAt('MarginAccount', await hubbleViewer.marginAccount())
+    const marginAccountHelperAddress = await marginAccount.marginAccountHelper()
+
+    const orderBook = await ethers.getContractAt('OrderBook', await clearingHouse.orderBook())
     const vusd = await ethers.getContractAt('VUSD', await clearingHouse.vusd())
     const hubbleReferral = await clearingHouse.hubbleReferral()
 
@@ -551,13 +553,8 @@ async function generateConfig(leaderboardAddress, marginAccountHelperAddress, ex
         })
     }
 
-    // to find the genesis block, we will get the block in which the first amm was whitelisted
-    // const marketAddedEvents = await clearingHouse.queryFilter('MarketAdded', startBlock)
-    // genesisBlock = marketAddedEvents[0].blockNumber
-
+    let proxyAdmin = await ethers.provider.getStorageAt(clearingHouse.address, '0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103') // admin slot
     const res = {
-        // genesisBlock,
-        // timestamp: (await ethers.provider.getBlock(genesisBlock)).timestamp,
         contracts: {
             OrderBook: orderBook.address,
             ClearingHouse: clearingHouse.address,
@@ -566,12 +563,12 @@ async function generateConfig(leaderboardAddress, marginAccountHelperAddress, ex
             Oracle: await marginAccount.oracle(),
             InsuranceFund: await marginAccount.insuranceFund(),
             Registry: await hubbleViewer.registry(),
-            Leaderboard: leaderboardAddress,
             MarginAccountHelper: marginAccountHelperAddress,
             HubbleReferral: hubbleReferral,
             vusd: vusd.address,
             amms,
             collateral,
+            proxyAdmin: '0x' + proxyAdmin.slice(26, 66)
         },
         systemParams: {
             maintenanceMargin: (await clearingHouse.maintenanceMargin()).toString(),
@@ -580,9 +577,6 @@ async function generateConfig(leaderboardAddress, marginAccountHelperAddress, ex
             makerFee: (await clearingHouse.makerFee()).toString(),
             liquidationFee: (await clearingHouse.liquidationPenalty()).toString(),
         }
-    }
-    if (executorAddress) {
-        res.contracts.Executor = executorAddress
     }
     return res
 }

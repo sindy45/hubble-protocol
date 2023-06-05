@@ -1,6 +1,6 @@
 const utils = require('./utils')
 const { BigNumber } = require('ethers')
-const { expect } = require('chai');
+const { expect } = require('chai')
 
 const {
     constants: { _1e6, _1e18, ZERO },
@@ -26,7 +26,7 @@ describe('Order Book', function () {
     before(async function () {
         signers = await ethers.getSigners()
         ;([, alice, bob] = signers)
-        ;({ orderBook, usdc, oracle, weth, marginAccount } = await setupContracts({mockOrderBook: false}))
+        ;({ orderBook, usdc, oracle, weth, marginAccount, clearingHouse } = await setupContracts({mockOrderBook: false}))
         domain = await getDomain()
 
         await orderBook.setValidatorStatus(signers[0].address, true)

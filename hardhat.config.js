@@ -51,8 +51,8 @@ module.exports = {
                 mnemonic: "test test test test test test test test test test test junk"
             }
         },
-        hubblenext: {
-            url: 'https://candy-hubblenet-rpc.hubble.exchange/ext/bc/RvN18T4TH8U4SEamC7rJxavTfuwf6i9V2Fqu8LYCg9u9GgfYE/rpc',
+        hubblev2next: {
+            url: 'https://candy-hubblenet-rpc.hubble.exchange/ext/bc/iKMFgo49o4X3Pd3UWUkmPwjKom3xZz3Vo6Y1kkwL2Ce6DZaPm/rpc',
             chainId: 321123,
             throwOnTransactionFailures: true,
             gasLimit: 5000000,

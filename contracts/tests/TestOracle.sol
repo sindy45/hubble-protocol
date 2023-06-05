@@ -10,6 +10,9 @@ contract TestOracle is Oracle {
     mapping(address => int256) twapPrices;
     mapping(address => bool) public isUpdater;
 
+    event MockUnderlyingPriceUpdated(address underlying, int256 price);
+    event MockUnderlyingTwapPriceUpdated(address underlying, int256 price);
+
     function getUnderlyingPrice(address underlying)
         override
         external
@@ -39,11 +42,13 @@ contract TestOracle is Oracle {
     function setUnderlyingPrice(address underlying, int256 _price) external {
         require(msg.sender == governance() || isUpdater[msg.sender], "not_updater");
         prices[underlying] = _price;
+        emit MockUnderlyingPriceUpdated(underlying, _price);
     }
 
     function setUnderlyingTwapPrice(address underlying, int256 _price) external {
         require(msg.sender == governance() || isUpdater[msg.sender], "not_updater");
         twapPrices[underlying] = _price;
+        emit MockUnderlyingTwapPriceUpdated(underlying, _price);
     }
 
     function setUpdater(address updater, bool enabled) external onlyGovernance {

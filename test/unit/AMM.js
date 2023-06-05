@@ -67,7 +67,7 @@ describe('Twap Price Tests', function() {
 
     it('return oracle twap when no trades', async () => {
         const twap = await amm.getMarkPriceTwap()
-        expect(twap).to.eq(oracleTwap)
+        expect(twap).to.eq(0)
     })
 
     it('get TWAP price', async () => {

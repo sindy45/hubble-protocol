@@ -3,21 +3,41 @@ const { bnToFloat, sleep } = require('../../test/utils')
 const { BigNumber } = ethers
 const _ = require('lodash')
 const crypto = require('crypto')
-const OBGenesisProxyAddress = '0x0300000000000000000000000000000000000000'
-const CHGenesisProxyAddress = '0x0300000000000000000000000000000000000002'
 
 class Exchange {
-    constructor(provider) {
-        this.provider = provider // new ethers.providers.JsonRpcProvider('https://internal-hubblenet-rpc.hubble.exchange/ext/bc/2ErDhAugYgUSwpeejAsCBcHY4MzLYZ5Y13nDuNRtrSWjQN5SDM/rpc')
-
-        const orderBookAbi = require('../../artifacts/contracts/orderbooks/OrderBook.sol/OrderBook.json').abi
-        this.orderBook = new ethers.Contract(OBGenesisProxyAddress, orderBookAbi, this.provider)
-
-        const clearingHouseAbi = require('../../artifacts/contracts/ClearingHouse.sol/ClearingHouse.json').abi
-        this.clearingHouse = new ethers.Contract(CHGenesisProxyAddress, clearingHouseAbi, this.provider)
-
-        const hubbleViewerABI = require('../../artifacts/contracts/HubbleViewer.sol/HubbleViewer.json').abi
-        this.hubbleViewer = new ethers.Contract('0x5F1f4Eb04a82b4D78D99b6eFd412e0B69653E75b', hubbleViewerABI, this.provider)
+    constructor(provider, config) {
+        this.provider = provider
+        this.config = config
+        this.orderBook = new ethers.Contract(
+            config.contracts.OrderBook,
+            require('../../artifacts/contracts/orderbooks/OrderBook.sol/OrderBook.json').abi,
+            this.provider
+        )
+        this.marginAccount = new ethers.Contract(
+            config.contracts.MarginAccount,
+            require('../../artifacts/contracts/MarginAccount.sol/MarginAccount.json').abi,
+            this.provider
+        )
+        this.marginAccountHelper = new ethers.Contract(
+            config.contracts.MarginAccountHelper,
+            require('../../artifacts/contracts/MarginAccountHelper.sol/MarginAccountHelper.json').abi,
+            this.provider
+        )
+        this.clearingHouse = new ethers.Contract(
+            config.contracts.ClearingHouse,
+            require('../../artifacts/contracts/ClearingHouse.sol/ClearingHouse.json').abi,
+            this.provider
+        )
+        this.hubbleViewer = new ethers.Contract(
+            config.contracts.HubbleViewer,
+            require('../../artifacts/contracts/HubbleViewer.sol/HubbleViewer.json').abi,
+            this.provider
+        )
+        this.bibliophile = new ethers.Contract(
+            config.contracts.Bibliophile,
+            require('../../artifacts/contracts/precompiles/IHubbleBibliophile.sol/IHubbleBibliophile.json').abi,
+            this.provider
+        )
     }
 
     async getCurrentPosition(trader, market) {
@@ -34,38 +54,42 @@ class Exchange {
     }
 
     async fetchOrderBook(market) {
-        const orderBook = (await this.provider.send('orderbook_getOrderBook', [market.toString()])).Orders
+        const orders = (await this.provider.send('orderbook_getOrderBook', [market.toString()])).Orders
         // console.log({ orderBook })
-        const bids = orderBook
+        const bids = orders
             .map(order => ({ price: parseFloat(order.Price) / 1e6, size: parseFloat(order.Size) / 1e18 }))
             .filter(order => order.size > 0)
             .sort((a, b) => b.price - a.price)
-        const asks = orderBook
+        const asks = orders
             .map(order => ({ price: parseFloat(order.Price) / 1e6, size: parseFloat(order.Size) / 1e18 }))
             .filter(order => order.size < 0)
             .sort((a, b) => a.price - b.price)
-        return { bids, asks }
+        return { orders, bids, asks }
     }
 
-    async getOpenOrders(trader, market) {
-        console.log({ trader, market })
-        const orderBook = (await this.provider.send('orderbook_getOpenOrders', [trader, market.toString()])).Orders
-        // console.log({ openOrders: orderBook })
-        return orderBook.map(order => order.OrderId)
+    async getTraderOpenOrders(trader, market) {
+        return (await this.provider.send('orderbook_getOpenOrders', [trader, market.toString()])).Orders
     }
 
-    async getOpenOrders2(trader, market) {
-        const orderBook = (await this.provider.send('orderbook_getOpenOrders', [trader, market.toString()])).Orders
-        // console.log({ orderBook })
-        const bids = orderBook
-            .map(order => ({ price: parseFloat(order.Price) / 1e6, size: parseFloat(order.Size) / 1e18, id: order.OrderId }))
+    async getTraderBidsAndAsks(trader, market) {
+        const orders = await this.getTraderOpenOrders(trader, market)
+        // console.log({ orders })
+        const bids = orders
+            .map(order => ({ price: parseFloat(order.Price) / 1e6, size: parseFloat(order.Size) / 1e18, id: order.OrderId, reduceOnly: order.ReduceOnly }))
             .filter(order => order.size > 0)
             .sort((a, b) => b.price - a.price)
-        const asks = orderBook
-            .map(order => ({ price: parseFloat(order.Price) / 1e6, size: parseFloat(order.Size) / 1e18, id: order.OrderId }))
+        const asks = orders
+            .map(order => ({ price: parseFloat(order.Price) / 1e6, size: parseFloat(order.Size) / 1e18, id: order.OrderId, reduceOnly: order.ReduceOnly }))
             .filter(order => order.size < 0)
             .sort((a, b) => a.price - b.price)
-        return { bids, asks }
+        return { orders, bids, asks }
+    }
+
+    async cancelAllOrders(signer, txOpts={}) {
+        const orders = await this.getTraderOpenOrders(signer.address, '')
+        const rawOrders = toRawOrders(signer.address, orders)
+        console.log(`Cancelling ${rawOrders.length} orders`)
+        return this.cancelOrders(signer, rawOrders, txOpts)
     }
 
     async getReduceOnlyOrders(trader) {
@@ -85,11 +109,16 @@ class Exchange {
         return this.createLimitOrderUnscaled(signer, dryRun, market, ethers.utils.parseEther(baseAssetQuantity.toString()), ethers.utils.parseUnits(price.toFixed(6).toString(), 6), reduceOnly, txOpts)
     }
 
-    async placeOrders(signer, dryRun, orders, txOpts={}) {
-        if (!dryRun) return this.orderBook.connect(signer).placeOrders(orders, txOpts)
+    async placeOrders(signer, orders, txOpts={}, chunkSize = 20) {
+        if (!orders.length) return
+        // place chunkSize orders at a time
+        const chunks = _.chunk(orders, chunkSize)
+        let nonce = txOpts.nonce || await signer.getTransactionCount()
+        return Promise.all(chunks.map(chunk => this.orderBook.connect(signer).placeOrders(chunk, Object.assign(txOpts, { nonce: nonce++ }))))
     }
 
     buildOrderObj(trader, ammIndex, baseAssetQuantity, price, reduceOnly=false) {
+        // console.log(trader, ammIndex, baseAssetQuantity, price, reduceOnly)
         return {
             ammIndex,
             trader,
@@ -130,14 +159,20 @@ class Exchange {
         return { status: orderInfo.status }
     }
 
-    async cancelOrders(signer, orders) {
-        return this.orderBook.connect(signer).cancelOrders(orders)
+    async cancelOrders(signer, orders, txOpts={}) {
+        if (!orders.length) return
+        const chunks = _.chunk(orders, 20)
+        let nonce = txOpts.nonce || await signer.getTransactionCount()
+        return Promise.all(chunks.map(chunk => this.orderBook.connect(signer).cancelOrders(chunk, Object.assign(txOpts, { nonce: nonce++ }))))
     }
 
-    // to fix
-    // async cancelAllOrders(signer) {
-    //     return this.cancelOrders(signer, await this.getOpenOrders(signer.address, ''))
-    // }
+    getPositionSizes(trader) {
+        return this.bibliophile.getPositionSizes(trader)
+    }
+
+    getNotionalPositionAndMargin(trader) {
+        return this.clearingHouse.getNotionalPositionAndMargin(trader, true, 1) // Min_Allowable_Margin
+    }
 
     async getMarginFractionAndPosition(trader) {
         const [ { freeMargin, marginFraction }, sizes ] = await Promise.all([
@@ -168,4 +203,61 @@ const getOrdersWithinBounds = (orders, lower, upper) => {
     return orders.filter(order => order.price >= lower && order.price <= upper)
 }
 
-module.exports = { Exchange, getOpenSize, getOrdersWithinBounds }
+const prettyPrint = (orders, marketInfo) => {
+    return orders.map(order => {
+        return {
+            market: marketInfo[order.ammIndex].name,
+            size: bnToFloat(order.baseAssetQuantity, 18),
+            price: `$${bnToFloat(order.price)}`,
+            reduceOnly: order.reduceOnly
+        }
+    })
+}
+
+const toRawOrders = (trader, orders) => {
+    // console.log({ orders })
+    return orders.map(function (order) {
+        return {
+            ammIndex: order.Market,
+            trader,
+            baseAssetQuantity: order.Size,
+            price: order.Price,
+            salt: order.Salt,
+            reduceOnly: order.ReduceOnly,
+        }
+    })
+}
+
+const knownErrorTypes = [
+    'OB_Order_does_not_exist',
+    'OB_cancel_reduce_only_order_first',
+    'OB_reduce_only_amount_exceeded',
+    'OB_reduce_only_order_must_reduce_position',
+    'MA_reserveMargin: Insufficient margin'
+]
+
+function findError(str) {
+    return knownErrorTypes.find(errorType => str.includes(errorType));
+}
+
+function parseAndLogError(e) {
+    let shouldLog = true
+    if (e && e.error) {
+        const err = findError(e.error.toString())
+        if (err) {
+            console.error(`encountered error`, err)
+            shouldLog = false
+        }
+    }
+    if (shouldLog) console.error(e)
+}
+
+module.exports = {
+    Exchange,
+    getOpenSize,
+    toRawOrders,
+    getOrdersWithinBounds,
+    prettyPrint,
+    findError,
+    parseAndLogError
+}

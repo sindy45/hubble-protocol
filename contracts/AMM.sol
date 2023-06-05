@@ -112,7 +112,7 @@ contract AMM is IAMM, Governable {
         maxOracleSpreadRatio = 20 * 1e4; // 20%
         maxLiquidationRatio = 25 * 1e4; // 25%
         maxLiquidationPriceSpread = 1 * 1e4; // 1%
-        maxFundingRate = 50; // 0.005%
+        // maxFundingRate = 50; // 0.005%
 
         fundingPeriod = 1 hours;
         spotPriceTwapInterval = 1 hours;
@@ -237,21 +237,23 @@ contract AMM is IAMM, Governable {
         // premiumFraction = premium * timeFraction
         // @todo calculate oracle twap for exact funding period
         underlyingPrice = getUnderlyingTwapPrice(spotPriceTwapInterval);
-        int256 premium = getMarkPriceTwap() - underlyingPrice;
-        premiumFraction = (premium * int256(fundingPeriod)) / 1 days;
-        // funding rate cap
-        // if premiumFraction > 0, premiumFraction = min(premiumFraction, maxFundingRate * indexTwap)
-        // if premiumFraction < 0, premiumFraction = max(premiumFraction, -maxFundingRate * indexTwap)
-        if (maxFundingRate != 0) {
-            int256 premiumFractionLimit = maxFundingRate * underlyingPrice / 1e6;
-            if (premiumFraction > 0) {
-                premiumFraction = _min(premiumFraction, premiumFractionLimit);
-            } else {
-                premiumFraction = _max(premiumFraction, -premiumFractionLimit);
-            }
-        }
 
-        cumulativePremiumFraction += premiumFraction;
+        if (markPriceTwapData.lastTimestamp != 0) { // there was atleast 1 trade in the lifetime of the market
+            int256 premium = getMarkPriceTwap() - underlyingPrice;
+            premiumFraction = (premium * int256(fundingPeriod)) / 1 days;
+            // funding rate cap
+            // if premiumFraction > 0, premiumFraction = min(premiumFraction, maxFundingRate * indexTwap)
+            // if premiumFraction < 0, premiumFraction = max(premiumFraction, -maxFundingRate * indexTwap)
+            if (maxFundingRate != 0) {
+                int256 premiumFractionLimit = maxFundingRate * underlyingPrice / 1e6;
+                if (premiumFraction > 0) {
+                    premiumFraction = _min(premiumFraction, premiumFractionLimit);
+                } else {
+                    premiumFraction = _max(premiumFraction, -premiumFractionLimit);
+                }
+            }
+            cumulativePremiumFraction += premiumFraction;
+        }
 
         // Updates for next funding event
         // in order to prevent multiple funding settlement during very short time after network congestion
@@ -494,12 +496,6 @@ contract AMM is IAMM, Governable {
     function _calcTwap() internal view returns (uint256 twap) {
         uint256 currentPeriodStart = (_blockTimestamp() / spotPriceTwapInterval) * spotPriceTwapInterval;
         uint256 lastPeriodStart = currentPeriodStart - spotPriceTwapInterval;
-
-        // If there is no trade at all, return oracle price twap
-        if (markPriceTwapData.lastTimestamp == 0) {
-            // @todo calculate oracle twap for exact funding period
-            return getUnderlyingTwapPrice(spotPriceTwapInterval).toUint256();
-        }
 
         // If there is no trade in the last period, return the last trade price
         if (markPriceTwapData.lastTimestamp <= lastPeriodStart) {

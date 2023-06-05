@@ -1,123 +1,172 @@
 const ethers = require('ethers')
 
-const { Exchange, getOpenSize, getOrdersWithinBounds } = require('./exchange');
-const { bnToFloat } = require('../../test/utils');
+const { Exchange, getOpenSize, getOrdersWithinBounds, prettyPrint, toRawOrders, findError, parseAndLogError } = require('./exchange');
+const { constants: { _1e6, _1e18 }, bnToFloat } = require('../../test/utils');
 
-const updateFrequency = 2e3
+const hubblev2next = require('../hubblev2next');
+const { marketInfo } = hubblev2next
+
+const updateFrequency = 10e3 // 10s
 const dryRun = false
 
 const provider = new ethers.providers.JsonRpcProvider(process.env.RPC_URL)
 const signer = new ethers.Wallet(process.env.PRIVATE_KEY_TAKER, provider);
-const exchange = new Exchange(provider)
-
-const marketInfo = [
-    { // ETH Perp
-        x: 0.01, // operate +- 1% of index price
-        spread: 2, // $2
-        minOrderSize: 0.01,
-        maxOrderSize: 0.69,
-        toFixed: 2,
-        baseLiquidityInMarket: 1.3 // each side
-    },
-    { // Avax Perp
-        x: 0.02, // operate +- 1% of index price
-        spread: .1, // $
-        minOrderSize: 0.1,
-        maxOrderSize: 69,
-        toFixed: 1,
-        baseLiquidityInMarket: 169 // each side
-    }
-]
+const exchange = new Exchange(provider, hubblev2next)
 
 const marketTaker = async () => {
-    // try {
-    //     await exchange.cancelAllOrders(signer)
-    // } catch (e) {
-    //     console.error('couldnt cancel order', e)
-    // }
-    for (let i = 0; i < marketInfo.length; i++) {
-        await runForMarket(i)
-    }
-    // Schedule the next update
-    setTimeout(marketTaker, updateFrequency);
-}
-
-async function runForMarket(market) {
-    const { x, minOrderSize, maxOrderSize, baseLiquidityInMarket, toFixed } = marketInfo[market]
+    let nonce = await signer.getTransactionCount()
+    // cancel all pending orders
     try {
-        let { bids, asks } = await exchange.fetchOrderBook(market);
-        const underlyingPrice = (await exchange.getUnderlyingPrice())[market]
-
-        const validBids = getOrdersWithinBounds(bids, underlyingPrice * (1-x), underlyingPrice * 2 /* high upper bound */)
-        const longsOpenSize = getOpenSize(validBids)
-
-        const validAsks = getOrdersWithinBounds(asks, 0, underlyingPrice * (1+x))
-        const shortsOpenSize = getOpenSize(validAsks)
-
-        console.log({ market, longsOpenSize, shortsOpenSize, baseLiquidityInMarket })
-        if (longsOpenSize > baseLiquidityInMarket + minOrderSize) await execute(market, validBids, longsOpenSize - baseLiquidityInMarket)
-        if (shortsOpenSize > baseLiquidityInMarket + minOrderSize) await execute(market, validAsks, shortsOpenSize - baseLiquidityInMarket)
-    } catch (e) {
-        if (e && e.error && containsErrorType(e.error.toString())) {
-            try {
-                await exchange.cancelAllOrders(signer)
-            } catch (e) {
-                console.error('couldnt cancel order', e)
-            }
+        const myOrders = await exchange.getTraderOpenOrders(signer.address, '')
+        if (myOrders.length) {
+            await exchange.cancelOrders(signer, toRawOrders(signer.address, myOrders), { nonce: nonce++ })
+        }
+    } catch(e) {
+        if (e && e.error && e.error.toString().includes('OB_Order_does_not_exist')) {
+            // fail silently because order cancel only fails when it was already matched
         } else {
             console.error(e)
         }
     }
+
+    // only works if bibliophile is deployed
+    let [ sizes, { margin }, underlyingPrices ] = await Promise.all([
+        exchange.getPositionSizes(signer.address),
+        exchange.getNotionalPositionAndMargin(signer.address),
+        exchange.getUnderlyingPrice()
+    ])
+    margin = bnToFloat(margin)
+
+    let activeMarkets = 0
+    for (let i = 0; i < marketInfo.length; i++) {
+        if (marketInfo[i].active) activeMarkets++
+    }
+
+    const targetMargin = 1e5 * activeMarkets
+    if (!dryRun && margin < targetMargin) {
+        // mint native
+        const toMint = parseFloat((targetMargin * 1.2 - margin).toFixed(0)) // mint 20% extra
+        console.log(`minting ${toMint} margin for myself...`)
+        const nativeMinter = new ethers.Contract(
+            '0x0200000000000000000000000000000000000001',
+            require('../../artifacts/contracts/precompiles/INativeMinter.sol/INativeMinter.json').abi,
+            provider
+        )
+        await nativeMinter.connect(signer).mintNativeCoin(signer.address, _1e18.mul(toMint), { nonce: nonce++ })
+        await exchange.marginAccountHelper.connect(signer).addVUSDMarginWithReserve(_1e6.mul(toMint), { nonce: nonce++, value: _1e18.mul(toMint) })
+    }
+
+    try {
+        let orders = []
+        for (let i = 0; i < marketInfo.length; i++) {
+            if (!marketInfo[i].active) continue
+            const _orders = (await runForMarket(i, underlyingPrices[i], sizes[i])).filter(o => o)
+            // console.log({ market: marketInfo[i].name, size: sizes[i], orders: prettyPrint(_orders, marketInfo) })
+            if (_orders.length) {
+                try {
+                    const estimateGas = await exchange.orderBook.connect(signer).estimateGas.placeOrders(_orders)
+                    // console.log({ market: i, estimateGas })
+                    orders = orders.concat(_orders)
+                } catch (e) {
+                    console.error(`estimateGas failed for market ${i}`)
+                    parseAndLogError(e)
+                }
+            }
+        }
+        if (orders.length) {
+            if (dryRun) {
+                const estimateGas = await exchange.orderBook.connect(signer).estimateGas.placeOrders(orders)
+                console.log({ orders: prettyPrint(orders, marketInfo), numOrders: orders.length, estimateGas })
+            } else {
+                console.log(`placing ${orders.length} orders...`)
+                // console.log(prettyPrint(orders, marketInfo))
+                await exchange.placeOrders(signer, orders, { nonce })
+            }
+        }
+    } catch (e) {
+        parseAndLogError(e)
+    }
+
+    // Schedule the next update
+    setTimeout(marketTaker, updateFrequency);
 }
 
-async function execute(market, orders, totalSize) {
+async function runForMarket(market, underlyingPrice, nowSize) {
+    const { x, minOrderSize, taker: { baseLiquidityInMarket } } = marketInfo[market]
+    let { bids, asks } = await exchange.fetchOrderBook(market)
+    // console.log({ asks, bids, underlyingPrice })
+
+    const validBids = getOrdersWithinBounds(bids, underlyingPrice * (1-x), underlyingPrice * 2 /* high upper bound */)
+    const longsOpenSize = getOpenSize(validBids)
+
+    const validAsks = getOrdersWithinBounds(asks, 0, underlyingPrice * (1+x))
+    const shortsOpenSize = getOpenSize(validAsks)
+
+    // console.log({ market, longsOpenSize, shortsOpenSize, baseLiquidityInMarket })
+
+    const _nowSize = bnToFloat(nowSize, 18)
+    // in each run we will do only 1 taker order
+    // priorotize reducing position
+    let shouldShort = false
+    let shouldLong = false
+    if (_nowSize > 0 && longsOpenSize > baseLiquidityInMarket + minOrderSize) {
+        shouldShort = true
+    } else if (_nowSize < 0 && shortsOpenSize > baseLiquidityInMarket + minOrderSize) {
+        shouldLong = true
+    } else {
+        // reducing position is not possible, so we will just take a random side
+        if (Math.random() > 0.5) {
+            shouldShort = true
+        } else {
+            shouldLong = true
+        }
+    }
+
+    if (shouldShort) {
+        return decideStrategy(market, validBids, -(longsOpenSize - baseLiquidityInMarket), nowSize)
+    }
+    if (shouldLong) {
+        return decideStrategy(market, validAsks, shortsOpenSize - baseLiquidityInMarket, nowSize)
+    }
+}
+
+function decideStrategy(market, orders, totalSize, nowSize) {
     // console.log({ market, orders, totalSize })
     if (!orders.length) return
 
-    const { minOrderSize, maxOrderSize, toFixed } = marketInfo[market]
+    const { minOrderSize, taker: { maxOrderSize }, toFixed } = marketInfo[market]
+    totalSize = parseFloat(totalSize.toFixed(toFixed))
+
     let size = 0
     let price
     for (let i = 0; i < orders.length; i++) {
         // console.log({ order: orders[i] })
         size += Math.abs(orders[i].size)
-        if (size >= totalSize) {
+        if (size >= Math.abs(totalSize) || i == orders.length - 1) {
             price = orders[i].price
             break
         }
     }
-    if (orders[0].size > 0) totalSize *= -1 //  taking long orders
-    const { sizes } = await exchange.getMarginFractionAndPosition(signer.address)
-    const nowSize = sizes[market]
     const _nowSize = bnToFloat(nowSize, 18)
     // console.log({ nowSize, _nowSize, totalSize })
-    if (_nowSize && _nowSize * totalSize < 0) {
+
+    const _orders = []
+    if (_nowSize * totalSize < 0) {
         // reduce position first
+        let _order
         if (Math.abs(_nowSize) <= Math.abs(totalSize)) {
-            const tx = await exchange.createLimitOrderUnscaled(signer, dryRun, market, nowSize.mul(-1), ethers.utils.parseUnits(price.toFixed(6).toString(), 6), true)
-            await tx.wait()
-            // console.log(await exchange.createLimitOrderUnscaled(signer, dryRun, market, nowSize.mul(-1), ethers.utils.parseUnits(price.toFixed(6).toString(), 6), true))
-            totalSize += _nowSize
+            _order = exchange.buildOrderObj(signer.address, market, -_nowSize, price, true)
+            _order.baseAssetQuantity = nowSize.mul(-1) // decimal precision can cause the above to be not super accurate sometimes
         } else {
-            return exchange.createLimitOrder(signer, dryRun, market, totalSize, price, true)
+            _order = exchange.buildOrderObj(signer.address, market, totalSize, price, true)
         }
+        _orders.push(_order)
+    } else if (Math.abs(totalSize) >= minOrderSize) {
+        _orders.push(exchange.buildOrderObj(signer.address, market, Math.min(totalSize, maxOrderSize), price))
     }
-    totalSize = totalSize.toFixed(toFixed)
-    if (Math.abs(totalSize) >= minOrderSize) {
-        return exchange.createLimitOrder(signer, dryRun, market, Math.min(totalSize, maxOrderSize), price, false)
-    }
+    return _orders
 }
 
-const errorTypes = [
-    'MA_reserveMargin: Insufficient margin',
-    'OB_cancel_reduce_only_order_first',
-    'OB_reduce_only_amount_exceeded'
-];
-
-function containsErrorType(str) {
-    return errorTypes.some(errorType => str.includes(errorType));
-}
-
-// generate a random float within a min and max range
 function randomFloat(min, max) {
     return Math.random() * (Math.abs(max) - Math.abs(min)) + Math.abs(min);
 }
