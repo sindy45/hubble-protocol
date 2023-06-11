@@ -35,7 +35,7 @@ interface IClearingHouse {
         IOrderBook.MatchInfo[2] memory matchInfo,
         int256 fillAmount,
         uint fulfillPrice
-    )  external;
+    )  external returns (uint256 openInterest);
 
     function settleFunding() external;
     function getTotalNotionalPositionAndUnrealizedPnl(address trader, int256 margin, Mode mode)
@@ -63,7 +63,7 @@ interface IClearingHouse {
         int256 liquidationAmount,
         uint price,
         address trader
-    ) external;
+    ) external returns (uint256 openInterest);
     function feeSink() external view returns(address);
     function calcMarginFraction(address trader, bool includeFundingPayments, Mode mode) external view returns(int256);
     function getUnderlyingPrice() external view returns(uint[] memory prices);
@@ -108,7 +108,6 @@ interface IOrderBook {
 
     struct MatchInfo {
         bytes32 orderHash;
-        uint blockPlaced;
         OrderExecutionMode mode;
     }
 
@@ -137,9 +136,9 @@ interface IOrderBook {
 }
 
 interface IAMM {
-    function openPosition(IOrderBook.Order memory order, int256 fillAmount, uint256 fulfillPrice)
+    function openPosition(IOrderBook.Order memory order, int256 fillAmount, uint256 fulfillPrice, bool is2ndTrade)
         external
-        returns (int realizedPnl, bool isPositionIncreased, int size, uint openNotional);
+        returns (int realizedPnl, bool isPositionIncreased, int size, uint openNotional, uint openInterest);
     function getNotionalPositionAndUnrealizedPnl(address trader)
         external
         view
@@ -166,7 +165,8 @@ interface IAMM {
     function openInterestNotional() external returns(uint256);
     function getUnderlyingPrice() external view returns(uint256);
     function minSizeRequirement() external view returns(uint256);
-    function validateTradeAndUpdateTwap(uint256 price, bool isLiquidation) external;
+    function maxOracleSpreadRatio() external view returns(uint256);
+    function maxLiquidationPriceSpread() external view returns(uint256);
 }
 
 // for backward compatibility in forked tests

@@ -69,7 +69,7 @@ contract AMM is IAMM, Governable {
     uint256 public longOpenInterestNotional;
     uint256 public shortOpenInterestNotional;
     // maximum allowed % difference between mark price and index price before liquidation
-    uint256 public maxLiquidationPriceSpread; // scaled 6 decimals
+    uint256 public maxLiquidationPriceSpread; // scaled 6 decimals  // SLOT_17 !!! used in precompile !!!
 
     uint256 public spotPriceTwapInterval;
     uint256 public fundingPeriod;
@@ -121,11 +121,11 @@ contract AMM is IAMM, Governable {
     /**
     * @dev fillAmount != 0 has been validated in orderBook.executeMatchedOrders/liquidateAndExecuteOrder
     */
-    function openPosition(IOrderBook.Order memory order, int256 fillAmount, uint256 fulfillPrice)
+    function openPosition(IOrderBook.Order memory order, int256 fillAmount, uint256 fulfillPrice, bool is2ndTrade)
         override
         external
         onlyClearingHouse
-        returns (int realizedPnl, bool isPositionIncreased, int size, uint openNotional)
+        returns (int realizedPnl, bool isPositionIncreased, int size, uint openNotional, uint openInterest)
     {
         Position memory position = positions[order.trader];
         bool isNewPosition = position.size == 0 ? true : false;
@@ -150,6 +150,11 @@ contract AMM is IAMM, Governable {
             (totalPosSize * maxLiquidationRatio / 1e6) + 1,
             minSizeRequirement
         );
+
+        if (is2ndTrade) {
+            _updateTWAP(fulfillPrice);
+            openInterest = openInterestNotional();
+        }
     }
 
     function liquidatePosition(address trader, uint price, int fillAmount)
@@ -437,22 +442,6 @@ contract AMM is IAMM, Governable {
         }
         (position.openNotional, realizedPnl) = getOpenNotionalWhileReducingPosition(position.size, position.openNotional, unrealizedPnl, baseAssetQuantity);
         position.size += baseAssetQuantity;
-    }
-
-    function validateTradeAndUpdateTwap(uint256 price, bool isLiquidation) external onlyClearingHouse {
-        uint spreadLimit = isLiquidation ? maxLiquidationPriceSpread : maxOracleSpreadRatio;
-        uint256 oraclePrice = getUnderlyingPrice();
-
-        uint bound = oraclePrice * (1e6 + spreadLimit) / 1e6;
-        require(price <= bound, "AMM.price_GT_bound");
-
-        // if spreadLimit >= 1e6 it means that 100% variation is allowed which means shorts at $0 will also pass.
-        // so we don't need to check for that case
-        if (spreadLimit < 1e6) {
-            bound = oraclePrice * (1e6 - spreadLimit) / 1e6;
-            require(price >= bound, "AMM.price_LT_bound");
-        }
-        _updateTWAP(price);
     }
 
     function _updateTWAP(uint256 price) internal {

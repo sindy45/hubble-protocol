@@ -85,12 +85,13 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         uint fulfillPrice
     )   external
         onlyOrderBook
+        returns (uint256 openInterest)
     {
 
-        amms[orders[0].ammIndex].validateTradeAndUpdateTwap(fulfillPrice, false);
-        try this.openPosition(orders[0], fillAmount, fulfillPrice, matchInfo[0].mode) {
+        try this.openPosition(orders[0], fillAmount, fulfillPrice, matchInfo[0].mode, false) {
             // only executed if the above doesn't revert
-            try this.openPosition(orders[1], -fillAmount, fulfillPrice, matchInfo[1].mode) {
+            try this.openPosition(orders[1], -fillAmount, fulfillPrice, matchInfo[1].mode, true) returns(uint256 _openInterest) {
+                openInterest = _openInterest;
                 // only executed if the above doesn't revert
             } catch Error(string memory reason) {
                 // will revert all state changes including those made in this.openPosition(orders[0])
@@ -106,8 +107,8 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     * @notice Open/Modify/Close Position
     * @param order Order to be executed
     */
-    function openPosition(IOrderBook.Order calldata order, int256 fillAmount, uint256 fulfillPrice, IOrderBook.OrderExecutionMode mode) public onlyMySelf {
-        _openPosition(order, fillAmount, fulfillPrice, mode);
+    function openPosition(IOrderBook.Order calldata order, int256 fillAmount, uint256 fulfillPrice, IOrderBook.OrderExecutionMode mode, bool is2ndTrade) public onlyMySelf returns(uint openInterest) {
+        return _openPosition(order, fillAmount, fulfillPrice, mode, is2ndTrade);
     }
 
     function updatePositions(address trader) override public whenNotPaused {
@@ -170,11 +171,12 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         override
         external
         onlyOrderBook
+        returns (uint256 openInterest)
     {
-        amms[order.ammIndex].validateTradeAndUpdateTwap(price, true);
         try this.liquidateSingleAmm(trader, order.ammIndex, price, liquidationAmount) {
             // only executed if the above doesn't revert
-            try this.openPosition(order, liquidationAmount, price, matchInfo.mode) {
+            try this.openPosition(order, liquidationAmount, price, matchInfo.mode, true) returns(uint256 _openInterest) {
+                openInterest = _openInterest;
             } catch Error(string memory reason) {
                 // will revert all state changes including those made in this.liquidateSingleAmm
                 revert(string(abi.encode(matchInfo.orderHash, reason)));
@@ -276,31 +278,40 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         }
     }
 
-    function _openPosition(IOrderBook.Order memory order, int256 fillAmount, uint256 fulfillPrice, IOrderBook.OrderExecutionMode mode) internal {
+    struct VarGroup {
+        int256 feeCharged;
+        int realizedPnl;
+        bool isPositionIncreased;
+    }
+
+    function _openPosition(IOrderBook.Order memory order, int256 fillAmount, uint256 fulfillPrice, IOrderBook.OrderExecutionMode mode, bool is2ndTrade) internal returns(uint openInterest) {
         updatePositions(order.trader); // settle funding payments
         uint quoteAsset = abs(fillAmount).toUint256() * fulfillPrice / 1e18;
+        int size;
+        uint openNotional;
+        VarGroup memory varGroup;
         (
-            int realizedPnl,
-            bool isPositionIncreased,
-            int size,
-            uint openNotional
-        ) = amms[order.ammIndex].openPosition(order, fillAmount, fulfillPrice);
+            varGroup.realizedPnl,
+            varGroup.isPositionIncreased,
+            size,
+            openNotional,
+            openInterest
+        ) = amms[order.ammIndex].openPosition(order, fillAmount, fulfillPrice, is2ndTrade);
 
-        int feeCharged;
         {
             int toFeeSink;
-            (toFeeSink, feeCharged) = _chargeFeeAndRealizePnL(order.trader, realizedPnl, quoteAsset, mode);
+            (toFeeSink, varGroup.feeCharged) = _chargeFeeAndRealizePnL(order.trader, varGroup.realizedPnl, quoteAsset, mode);
             if (toFeeSink != 0) {
                 marginAccount.transferOutVusd(feeSink, toFeeSink.toUint256());
             }
         }
         {
             // isPositionIncreased is true when the position is increased or reversed
-            if (isPositionIncreased) {
+            if (varGroup.isPositionIncreased) {
                 assertMarginRequirement(order.trader);
                 require(order.reduceOnly == false, "CH: reduceOnly order can only reduce position");
             }
-            emit PositionModified(order.trader, order.ammIndex, fillAmount, fulfillPrice, realizedPnl, size, openNotional, feeCharged, mode, _blockTimestamp());
+            emit PositionModified(order.trader, order.ammIndex, fillAmount, fulfillPrice, varGroup.realizedPnl, size, openNotional, varGroup.feeCharged, mode, _blockTimestamp());
         }
     }
 
