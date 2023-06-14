@@ -13,7 +13,7 @@ const deployer = '0xeAA6AE79bD3d042644D91edD786E4ed3d783Ca2d'
 const taker = '0xCe743BFA1feaed060adBadfc8974be544b251Fe8'
 const validator = '0x393bd9ac9dbBe75e84db739Bb15d22cA86D26696' // N. Virgina
 
-describe.only('hubblenext-rc.1 update', async function() {
+describe.skip('hubblenext-rc.1 update', async function() {
     let blockNumber = 368061
 
     before(async function() {
