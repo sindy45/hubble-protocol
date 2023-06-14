@@ -18,19 +18,9 @@ class Exchange {
             require('../../artifacts/contracts/MarginAccount.sol/MarginAccount.json').abi,
             this.provider
         )
-        this.marginAccountHelper = new ethers.Contract(
-            config.contracts.MarginAccountHelper,
-            require('../../artifacts/contracts/MarginAccountHelper.sol/MarginAccountHelper.json').abi,
-            this.provider
-        )
         this.clearingHouse = new ethers.Contract(
             config.contracts.ClearingHouse,
             require('../../artifacts/contracts/ClearingHouse.sol/ClearingHouse.json').abi,
-            this.provider
-        )
-        this.hubbleViewer = new ethers.Contract(
-            config.contracts.HubbleViewer,
-            require('../../artifacts/contracts/HubbleViewer.sol/HubbleViewer.json').abi,
             this.provider
         )
         this.bibliophile = new ethers.Contract(
@@ -38,6 +28,20 @@ class Exchange {
             require('../../artifacts/contracts/precompiles/IHubbleBibliophile.sol/IHubbleBibliophile.json').abi,
             this.provider
         )
+        if (config.contracts.MarginAccountHelper) {
+            this.marginAccountHelper = new ethers.Contract(
+                config.contracts.MarginAccountHelper,
+                require('../../artifacts/contracts/MarginAccountHelper.sol/MarginAccountHelper.json').abi,
+                this.provider
+            )
+        }
+        if (config.contracts.HubbleViewer) {
+            this.hubbleViewer = new ethers.Contract(
+                config.contracts.HubbleViewer,
+                require('../../artifacts/contracts/HubbleViewer.sol/HubbleViewer.json').abi,
+                this.provider
+            )
+        }
     }
 
     async getCurrentPosition(trader, market) {
@@ -105,7 +109,7 @@ class Exchange {
     }
 
     async createLimitOrder(signer, dryRun, market, baseAssetQuantity, price, reduceOnly=false, txOpts={}) {
-        console.log(`Executed ${baseAssetQuantity > 0 ? 'long' : 'short'} ${baseAssetQuantity} at $${price}`)
+        console.log(`Executing ${baseAssetQuantity > 0 ? 'long' : 'short'} ${baseAssetQuantity} at $${price}`)
         return this.createLimitOrderUnscaled(signer, dryRun, market, ethers.utils.parseEther(baseAssetQuantity.toString()), ethers.utils.parseUnits(price.toFixed(6).toString(), 6), reduceOnly, txOpts)
     }
 

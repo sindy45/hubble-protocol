@@ -22,7 +22,8 @@ describe('Liquidation Tests', async function() {
         await clearingHouse.setOrderBook(orderBook.address)
         await setDefaultClearingHouseParams(clearingHouse)
         await clearingHouse.setOrderBook(signers[0].address)
-        await amm.setLiquidationParams(1e6, 1e6)
+        await amm.setLiquidationSizeRatio(1e6)
+        await amm.setPriceSpreadParams(await amm.maxOracleSpreadRatio(), 1e4)
     })
 
     it('addCollateral', async () => {
@@ -171,7 +172,8 @@ describe('Multi-collateral Liquidation Tests', async function() {
         await setDefaultClearingHouseParams(clearingHouse)
         await clearingHouse.setOrderBook(signers[0].address)
 
-        await amm.setLiquidationParams(1e6, 1e6)
+        await amm.setLiquidationSizeRatio(1e6)
+        await amm.setPriceSpreadParams(1e6, 1e6)
 
         // addCollateral
         avax = await setupRestrictedTestToken('AVAX', 'AVAX', 6)
@@ -560,7 +562,8 @@ describe('Liquidation Price Safeguard', async function() {
     })
 
     it('cannot liquidate if liquidationPrice > 1.01 * indexPrice', async function() {
-        await amm.setLiquidationParams(25 * 1e4, 1e4)
+        await amm.setLiquidationSizeRatio(25 * 1e4)
+        await amm.setPriceSpreadParams(await amm.maxOracleSpreadRatio(), 1e4)
         const indexPrice = await oracle.getUnderlyingPrice(weth.address)
 
         expect(await amm.maxLiquidationPriceSpread()).to.eq(_1e6.div(100))

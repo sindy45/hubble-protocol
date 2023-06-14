@@ -174,7 +174,8 @@ describe('Insurance Fund Auction Tests', function() {
         await clearingHouse.setOrderBook(orderBook.address)
         await setDefaultClearingHouseParams(clearingHouse)
         await clearingHouse.setOrderBook(signers[0].address)
-        await amm.setLiquidationParams(1e6, 1e6)
+        await amm.setLiquidationSizeRatio(1e6)
+        await amm.setPriceSpreadParams(1e6, 1e6)
 
         // addCollateral
         avax = await setupRestrictedTestToken('AVAX', 'AVAX', 18)

@@ -217,11 +217,7 @@ async function setupContracts(options = {}) {
             options.amm,
             options.genesisProxies
         ))
-        const maxPriceSpread = await amm.maxOracleSpreadRatio()
-        // set maxPriceSpreadPerBlock = 100%
-        await amm.setPriceSpreadParams(maxPriceSpread, 1e6)
-        // set maxLiquidationPriceSpread = 100%
-        await amm.setLiquidationParams((await amm.maxLiquidationRatio()), 1e6)
+        await amm.setPriceSpreadParams(20 * 1e4, 20 * 1e4)
         Object.assign(res, { amm, weth })
     }
 

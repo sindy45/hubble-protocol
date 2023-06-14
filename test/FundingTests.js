@@ -194,7 +194,8 @@ describe('Funding Tests', function() {
         })
 
         it('alice shorts and paying -ve funding causes them to drop below maintenance margin and liquidated', async function() {
-            await amm.setLiquidationParams(1e6, 1e4)
+            await amm.setPriceSpreadParams(await amm.maxOracleSpreadRatio(), 1e4)
+            await amm.setLiquidationSizeRatio(1e6)
 
             const baseAssetQuantity = _1e18.mul(-5)
             const price = _1e6.mul(1000)

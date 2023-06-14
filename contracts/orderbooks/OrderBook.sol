@@ -22,7 +22,7 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
     IClearingHouse public immutable clearingHouse;
     IMarginAccount public immutable marginAccount;
 
-    mapping(bytes32 => OrderInfo) public orderInfo;
+    mapping(bytes32 => OrderInfo) public orderInfo; // SLOT_53 !!! used in precompile !!!
     mapping(address => bool) public isValidator; // SLOT_54 (not used in precompile)
 
     /**
@@ -117,12 +117,12 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         returns (uint256 fillPrice, OrderExecutionMode mode0, OrderExecutionMode mode1)
     {
         // Checks and Effects
-        require(orderInfo[orderHashes[0]].status == OrderStatus.Placed, "OB_invalid_order");
-        require(orderInfo[orderHashes[1]].status == OrderStatus.Placed, "OB_invalid_order");
         require(orders[0].baseAssetQuantity > 0, "OB_order_0_is_not_long");
         require(orders[1].baseAssetQuantity < 0, "OB_order_1_is_not_short");
-        require(orders[0].price /* buy */ >= orders[1].price /* sell */, "OB_orders_do_not_match");
         require(orders[0].ammIndex == orders[1].ammIndex, "OB_orders_for_different_amms");
+        require(orders[0].price /* buy */ >= orders[1].price /* sell */, "OB_orders_do_not_match");
+        require(orderInfo[orderHashes[0]].status == OrderStatus.Placed, "OB_invalid_order");
+        require(orderInfo[orderHashes[1]].status == OrderStatus.Placed, "OB_invalid_order");
 
         // fillAmount should be multiple of min size requirement and fillAmount should be non-zero
         require(isMultiple(fillAmount, minSizes[orders[0].ammIndex]), NOT_IS_MULTIPLE);
@@ -484,7 +484,8 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
     function setUseNewPricingAlgorithm(bool useNew) external onlyGovernance {
         if (useNew) {
             useNewPricingAlgorithm = 1;
+        } else {
+            useNewPricingAlgorithm = 0;
         }
-        useNewPricingAlgorithm = 0;
     }
 }

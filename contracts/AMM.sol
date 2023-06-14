@@ -45,7 +45,7 @@ contract AMM is IAMM, Governable {
     // vars needed in the precompiles should preferably come first and mention the SLOT_# to avoid any potential slot errors
     TWAPData public markPriceTwapData; // SLOT_1 - SLOT_4 !!! used in precompile !!!
 
-    mapping(address => Position) override public positions;  // SLOT_5 !!! used in precompile !!!
+    mapping(address => Position) override public positions; // SLOT_5 !!! used in precompile !!!
 
     int256 public cumulativePremiumFraction; // SLOT_6 !!! used in precompile !!!
 
@@ -176,12 +176,11 @@ contract AMM is IAMM, Governable {
         if (isLongPosition) {
             require(fillAmount > 0, "AMM_matching_trade_should_be_opposite");
             quoteAsset = fillAmount.toUint256() * price / 1e18;
-            realizedPnl = _reducePosition(trader, -fillAmount, price);
         } else {
             require(fillAmount < 0, "AMM_matching_trade_should_be_opposite");
             quoteAsset = (-fillAmount).toUint256() * price / 1e18;
-            realizedPnl = _reducePosition(trader, -fillAmount, price);
         }
+        realizedPnl = _reducePosition(trader, -fillAmount, price);
 
         size = positions[trader].size;
         openNotional = positions[trader].openNotional;
@@ -530,13 +529,14 @@ contract AMM is IAMM, Governable {
         oracle = IOracle(_oracle);
     }
 
-    function setPriceSpreadParams(uint _maxOracleSpreadRatio, uint /* dummy for backwards compatibility */) external onlyGovernance {
+    function setPriceSpreadParams(uint _maxOracleSpreadRatio, uint _maxLiquidationPriceSpread) external onlyGovernance {
+        require(_maxLiquidationPriceSpread <= _maxOracleSpreadRatio, "maxLiquidationPriceSpread > maxOracleSpreadRatio");
         maxOracleSpreadRatio = _maxOracleSpreadRatio;
+        maxLiquidationPriceSpread = _maxLiquidationPriceSpread;
     }
 
-    function setLiquidationParams(uint _maxLiquidationRatio, uint _maxLiquidationPriceSpread) external onlyGovernance {
+    function setLiquidationSizeRatio(uint _maxLiquidationRatio) external onlyGovernance {
         maxLiquidationRatio = _maxLiquidationRatio;
-        maxLiquidationPriceSpread = _maxLiquidationPriceSpread;
     }
 
     function setMinSizeRequirement(uint _minSizeRequirement) external onlyGovernance {

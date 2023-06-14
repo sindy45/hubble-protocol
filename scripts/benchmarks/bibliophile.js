@@ -48,6 +48,7 @@ async function main(setBiblioPhile) {
         const genesisTUP = await ethers.getContractAt('GenesisTUP', contracts[i].address)
         try {
             await genesisTUP.estimateGas.setGenesisAdmin(alice.address)
+            throw new Error('should have failed')
         } catch (e) {
             // console.log(e, Object.keys(e))
             assert.ok(e.error.toString().includes('ProviderError: execution reverted: already initialized'))
@@ -57,6 +58,7 @@ async function main(setBiblioPhile) {
     const tasks = []
     if (setBiblioPhile) {
         tasks.push(orderBook.setBibliophile(config.Bibliophile, getTxOptions()))
+        tasks.push(orderBook.setUseNewPricingAlgorithm(true, getTxOptions()))
         tasks.push(marginAccount.setBibliophile(config.Bibliophile, getTxOptions()))
         tasks.push(clearingHouse.setBibliophile(config.Bibliophile, getTxOptions()))
     }
@@ -75,7 +77,8 @@ async function main(setBiblioPhile) {
     await addMargin(alice, _1e6.mul(40000))
     await addMargin(bob, _1e6.mul(40000))
 
-    console.log(JSON.stringify(await generateConfig(hubbleViewer.address), null, 0))
+    // console.log(JSON.stringify(await generateConfig(hubbleViewer.address), null, 0))
+    console.log('useNewPricingAlgorithm', await orderBook.useNewPricingAlgorithm())
 }
 
 async function addMarginAgain() {
@@ -142,6 +145,7 @@ async function getAvailableMargin() {
     })
 }
 
+const exchange = new Exchange(ethers.provider, { contracts: config})
 async function runAnalytics() {
     signers = await ethers.getSigners()
     governance = signers[0].address
@@ -150,58 +154,100 @@ async function runAnalytics() {
     txOptions.nonce = await signers[0].getTransactionCount()
     txOptions.gasLimit = gasLimit
 
-    const ch = await ethers.getContractAt('ClearingHouse', config.ClearingHouse)
-    const ma = await ethers.getContractAt('MarginAccount', config.MarginAccount)
-    const orderBook = await ethers.getContractAt('OrderBook', config.OrderBook)
-    const oracleAddress = await ma.oracle()
+    const oracleAddress = await exchange.marginAccount.oracle()
+    const amms = await exchange.clearingHouse.getAmmsLength()
+    let lastMatchedBlock = 0
 
-    // await ch.setBibliophile('0x0300000000000000000000000000000000000003', getTxOptions())
-    // const b4events = await orderBook.queryFilter(orderBook.filters.OrdersMatched())
-    // console.log('b4events', b4events.length)
-
-    const amms = await ch.getAmmsLength()
-    const exchange = new Exchange(ethers.provider)
-    for (let i = 0; i < 10; i++) {
-        // marketId = i
+    for (let i = 0; i < 5; i++) {
         marketId = amms.toNumber() + i
+        initialRate = (marketId+1) * 10
         // console.log('deploying new amm')
         const underlying = await deployToken(`tok-${marketId}`, `tok-${marketId}`, 18)
         const ammOptions = {
             governance,
             name: `Market-${marketId}-Perp`,
             underlyingAddress: underlying.address,
-            initialRate: (marketId+1) * 10,
+            initialRate,
             oracleAddress,
-            minSize: utils.BigNumber.from(10).pow(17), // 0.1
+            minSize: 0.1,
             testAmm: false,
             whitelist: true,
         }
         await setupAMM(ammOptions)
 
-        // const amms = await ch.getAmmsLength()
-        // let marketId = amms.sub(1).toNumber()
+        // console.log('sending orders in market-id', marketId)
+        // we execute 5 different matching strategies
+        let longPrice, shortPrice
+        let longFirst = true
+        if (i == 0) {
+            longPrice = initialRate
+            shortPrice = initialRate
+            matchPrice = initialRate
+        } else if (i == 1) {
+            longPrice = initialRate * 1.2 + 1
+            shortPrice = initialRate
+            matchPrice = initialRate * 1.2
+        } else if (i == 2) {
+            longPrice = initialRate * 1.2 + 1
+            shortPrice = 1
+            matchPrice = initialRate * 1.2
+        } else if (i == 3) {
+            longFirst = false
+            shortPrice = initialRate * 1.2
+            longPrice = 500
+            matchPrice = initialRate * 1.2
+        } else if (i == 4) {
+            longFirst = false
+            shortPrice = initialRate * 0.8 - 1
+            longPrice = 500
+            matchPrice = initialRate * 0.8
+        }
 
-        console.log('sending orders in market-id', marketId)
-        // alice and bob place an order in each market
-        const tx1 = await (await exchange.createLimitOrder(alice, false, marketId, marketId+1, (marketId+1)*10)).wait()
-        // console.log(tx1)
-        const tx2 = await (await exchange.createLimitOrder(bob, false, marketId, -(marketId+1), (marketId+1)*10)).wait()
-        // console.log('orders sent')
+        const { receipt: r, orderPlacedGas: orderPlacedGas_1stTrade } = await doTrades(marketId, longPrice, shortPrice, matchPrice, longFirst)
+        // console.log(r)
+        assert.ok(r.blockNumber > lastMatchedBlock, `blockNumber ${r.blockNumber} is not greater than ${lastMatchedBlock}`)
+        lastMatchedBlock = r.blockNumber
 
-        await sleep(3)
-        // get the matched order tx
-        // get all OrdersMatched events from orderbook contract
-        const events = (await orderBook.queryFilter(orderBook.filters.OrdersMatched())).sort((a, b) => a.blockNumber - b.blockNumber)
-        // console.log('events', events.length)
-        const lastMatched = events[events.length - 1]
-        // console.log('lastMatched', lastMatched)
-        const r = await lastMatched.getTransactionReceipt()
+        const { receipt: r2, orderPlacedGas: orderPlacedGas_2ndTrade }= await doTrades(marketId, longPrice, shortPrice, matchPrice, longFirst)
+        assert.ok(r2.blockNumber > lastMatchedBlock, `blockNumber ${r2.blockNumber} is not greater than ${lastMatchedBlock}`)
+        lastMatchedBlock = r.blockNumber
+
         console.log({
-            markets: marketId+1,
-            blockNumber: r.blockNumber,
-            orderPlaced: Math.floor((tx1.gasUsed.toNumber() + tx2.gasUsed.toNumber())/2),
-            orderMatchedGas: r.gasUsed.toNumber()
+            // markets: marketId+1,
+            // blockNumber: r.blockNumber,
+            trade_1st: {
+                orderPlacedGas: orderPlacedGas_1stTrade,
+                orderMatchedGas: r.gasUsed.toNumber(),
+            },
+            trade_2nd: {
+                orderPlacedGas: orderPlacedGas_2ndTrade,
+                orderMatchedGas: r2.gasUsed.toNumber(),
+            }
         })
+    }
+}
+
+async function doTrades(marketId, longPrice, shortPrice, matchPrice, longFirst) {
+    let tx1, tx2
+    const baseQ = marketId+1
+    if (longFirst) {
+        tx1 = await (await exchange.createLimitOrder(alice, false, marketId, baseQ, longPrice)).wait()
+        tx2 = await (await exchange.createLimitOrder(bob, false, marketId, -baseQ, shortPrice)).wait()
+    } else {
+        tx1 = await (await exchange.createLimitOrder(bob, false, marketId, -baseQ, shortPrice)).wait()
+        tx2 = await (await exchange.createLimitOrder(alice, false, marketId, baseQ, longPrice)).wait()
+    }
+    await sleep(3)
+    // get the matched order tx
+    // get all OrdersMatched events from orderbook contract
+    const events = (await exchange.orderBook.queryFilter(exchange.orderBook.filters.OrdersMatched())).sort((a, b) => a.blockNumber - b.blockNumber)
+    // console.log('events', events.length)
+    const lastMatched = events[events.length - 1]
+    // console.log({ lastMatched })
+    assert.equal(lastMatched.args.price.toNumber() / 1e6, matchPrice)
+    return {
+        receipt: await lastMatched.getTransactionReceipt(),
+        orderPlacedGas: Math.floor((tx1.gasUsed.toNumber() + tx2.gasUsed.toNumber())/2)
     }
 }
 

@@ -455,7 +455,8 @@ describe('Position Tests', async function() {
         })
 
         it('liquidation', async () => {
-            await amm.setLiquidationParams(1e6, 1e6)
+            await amm.setLiquidationSizeRatio(1e6)
+            await amm.setPriceSpreadParams(1e6, 1e6)
             // alice shorts
             await clearingHouse.openPosition2(0, _1e18.mul(-5), 0)
 

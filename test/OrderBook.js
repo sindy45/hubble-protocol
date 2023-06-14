@@ -152,6 +152,32 @@ describe('Order Book', function () {
         )
         expect(_1e6.mul(4000).sub(tradeFee)).to.eq(BigNumber.from(storage))
 
+        // orderInfo
+        const ORDER_INFO_SLOT = 53
+        let baseOrderInfoSlot = ethers.utils.keccak256(ethers.utils.solidityPack(['bytes32', 'uint256'], [order1Hash, ORDER_INFO_SLOT]))
+        storage = await ethers.provider.getStorageAt(
+            orderBook.address,
+            BigNumber.from(baseOrderInfoSlot).add(1)
+        )
+        expect(shortOrder.baseAssetQuantity).to.eq(BigNumber.from(storage).fromTwos(256)) // filled amount
+        storage = await ethers.provider.getStorageAt(
+            orderBook.address,
+            BigNumber.from(baseOrderInfoSlot).add(3)
+        )
+        expect(BigNumber.from(storage)).to.eq(2) // Filled
+
+        baseOrderInfoSlot = ethers.utils.keccak256(ethers.utils.solidityPack(['bytes32', 'uint256'], [order2Hash, ORDER_INFO_SLOT]))
+        storage = await ethers.provider.getStorageAt(
+            orderBook.address,
+            BigNumber.from(baseOrderInfoSlot).add(1)
+        )
+        expect(longOrder.baseAssetQuantity).to.eq(BigNumber.from(storage)) // filled amount
+        storage = await ethers.provider.getStorageAt(
+            orderBook.address,
+            BigNumber.from(baseOrderInfoSlot).add(3)
+        )
+        expect(BigNumber.from(storage)).to.eq(2) // Filled
+
         // gets isValidator[alice]
         const VAR_IS_VALIDATOR_MAPPING_STORAGE_SLOT = 54 // this is not used in the precompile as yet
         storage = await ethers.provider.getStorageAt(
