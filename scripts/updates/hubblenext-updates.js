@@ -167,8 +167,39 @@ async function whitelistAmm() {
     }
 }
 
-// mintNative()
-updateTestOracle()
+// 2.0.0-next.rc.1 update
+async function rc1Update() {
+    const AMM = await ethers.getContractFactory('AMM')
+    const newAMM = await AMM.deploy(config.ClearingHouse)
+    console.log({ newAMM: newAMM.address })
+
+    const ClearingHouse = await ethers.getContractFactory('ClearingHouse')
+    const newClearingHouse = await ClearingHouse.deploy()
+    console.log({ newClearingHouse: newClearingHouse.address })
+
+    const OrderBook = await ethers.getContractFactory('OrderBook')
+    const newOrderBook = await OrderBook.deploy(config.ClearingHouse, config.MarginAccount)
+    console.log({ newOrderBook: newOrderBook.address })
+
+    // Phase 2
+    await sleep(5)
+    await initializeTxOptionsFor0thSigner()
+    const proxyAdmin = await ethers.getContractAt('ProxyAdmin', config.proxyAdmin)
+    const tasks = []
+    for (let i = 0; i < config.amms.length; i++) {
+        tasks.push(proxyAdmin.upgrade(config.amms[i].address, newAMM.address, getTxOptions()))
+    }
+    tasks.push(proxyAdmin.upgrade(config.ClearingHouse, newClearingHouse.address, getTxOptions()))
+    tasks.push(proxyAdmin.upgrade(config.OrderBook, newOrderBook.address, getTxOptions()))
+
+    const txs = await Promise.all(tasks)
+    for (let i = 0; i < txs.length; i++) {
+        const r = await txs[i].wait()
+        console.log(i, r.status)
+    }
+}
+
+rc1Update()
 .then(() => process.exit(0))
 .catch(error => {
     console.error(error);

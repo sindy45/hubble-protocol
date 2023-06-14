@@ -59,7 +59,7 @@ class Exchange {
 
     async fetchOrderBook(market) {
         const orders = (await this.provider.send('orderbook_getOrderBook', [market.toString()])).Orders
-        // console.log({ orderBook })
+        // console.log({ orders })
         const bids = orders
             .map(order => ({ price: parseFloat(order.Price) / 1e6, size: parseFloat(order.Size) / 1e18 }))
             .filter(order => order.size > 0)

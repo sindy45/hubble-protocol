@@ -39,11 +39,11 @@ async function _setupAmm(governance, args, ammOptions, slowMode) {
     const TransparentUpgradeableProxy = await ethers.getContractFactory('TransparentUpgradeableProxy')
 
     let admin = await ethers.provider.getStorageAt(config.OrderBook, '0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103')
-
     const ammImpl = await AMM.deploy(config.ClearingHouse, getTxOptions())
+
     let constructorArguments = [
         ammImpl.address,
-        ethers.utils.hexStripZeros(admin),
+        '0x' + admin.slice(26),
         ammImpl.interface.encodeFunctionData('initialize', args.concat([ ethers.utils.parseUnits(minSize.toString(), 18), governance ]))
     ]
     const ammProxy = await TransparentUpgradeableProxy.deploy(...constructorArguments, getTxOptions())

@@ -72,7 +72,7 @@ const hubblev2next = {
                 "address": "0xDDFC033DAd5F2Cc52e126B537f39eD6b70372ec6"
             }
         ],
-        "proxyAdmin": "0x66bd72f94c5aea2afdf7fad5b23b5e6d55ff9969",
+        "proxyAdmin": "0x66bd72f94C5AEA2AFDF7FAd5B23b5E6D55ff9969",
         "governance": "0xeAA6AE79bD3d042644D91edD786E4ed3d783Ca2d"
     },
     "systemParams": {
