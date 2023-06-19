@@ -8,6 +8,11 @@ import { VUSD } from "./VUSD.sol";
 import { IMarginAccount, IInsuranceFund, IVUSD, IRegistry } from "./Interfaces.sol";
 import { HubbleBase } from "./legos/HubbleBase.sol";
 
+/**
+ * @title Helper contract for (un)wrapping tokens (vusd) before/after deposting/withdrawing from margin account/insurance fund
+ * @notice USDC is both the gas token and the token backing vusd; which is the currency used in the margin account and insurance fund;
+ * Therefore, this contract serves as a helper to (unwrap) usdc (gas token)
+*/
 contract MarginAccountHelper is HubbleBase {
     using SafeERC20 for IERC20;
 
@@ -33,11 +38,18 @@ contract MarginAccountHelper is HubbleBase {
         IERC20(_vusd).safeApprove(_insuranceFund, type(uint).max);
     }
 
+    /**
+     * @notice Accepts gas token (usdc), wraps it for vusd and deposits it to margin account for the trader
+     * @param amount Amount of vusd to deposit. msg.value has to be exactly 1e12 times `amount`
+    */
     function addVUSDMarginWithReserve(uint256 amount) external payable {
         vusd.mintWithReserve{value: msg.value}(address(this), amount);
         marginAccount.addMarginFor(VUSD_IDX, amount, msg.sender);
     }
 
+    /**
+     * @notice Remove margin on trader's behalf, enter the withdrawal Q and process the withdrawals
+    */
     function removeMarginInUSD(uint256 amount) external {
         address trader = msg.sender;
         marginAccount.removeMarginFor(VUSD_IDX, amount, trader);
@@ -46,7 +58,7 @@ contract MarginAccountHelper is HubbleBase {
     }
 
     /**
-    * @notice deposit vusd to insurance fund using USDC
+    * @notice Deposit vusd to insurance fund using gas token (usdc)
     */
     function depositToInsuranceFund(uint256 amount) external payable {
         vusd.mintWithReserve{value: msg.value}(address(this), amount);
@@ -54,7 +66,7 @@ contract MarginAccountHelper is HubbleBase {
     }
 
     /**
-    * @notice withdraw vusd from insurance fund and get USDC
+    * @notice Withdraw vusd from insurance fund and get gas token (usdc)
     */
     function withdrawFromInsuranceFund(uint256 shares) external {
         address user = msg.sender;

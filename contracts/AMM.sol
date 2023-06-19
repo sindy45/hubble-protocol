@@ -8,6 +8,12 @@ import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 import { Governable } from "./legos/Governable.sol";
 import { ERC20Detailed, IOracle, IRegistry, IAMM, IClearingHouse, IOrderBook } from "./Interfaces.sol";
 
+/**
+ * @title Maintains the information about open positions, open notional, oracle price, funding rate, etc.
+ * @notice All methods are intended to be called by the ClearingHouse contract.
+ * @dev The name "AMM" is slightly misleading because this contract doesn't actually have a bonding curve. But it does facilitate trading b/w users. Maybe "Market" would been more appropriate.
+ * There will be 1 AMM contract for every market i.e. if Hubble Exchange has 3 markets (ETH-PERP, BTC-PERP, AVAX-PERP), there will be 3 AMM contracts.
+*/
 contract AMM is IAMM, Governable {
     using SafeCast for uint256;
     using SafeCast for int256;
@@ -16,6 +22,14 @@ contract AMM is IAMM, Governable {
     /*       Structs      */
     /* ****************** */
 
+    /**
+     * @notice Position struct
+     * @param size is signed, positive for long and negative for short. scaled by 1e18
+     * @param openNotional $ amount that the position was opened at. Always positive. scaled by 1e6
+     * openNotional / size gives the average entry price
+     * @param lastPremiumFraction is the premium fraction at which the pending fundings for the trader have been settled
+     * @param liquidationThreshold is the max position size that can be liquidated in one go. This is to support partial liquidations. scaled by 1e18
+    */
     struct Position {
         int256 size;
         uint256 openNotional;
@@ -52,7 +66,7 @@ contract AMM is IAMM, Governable {
     // maximum allowed % difference between mark price and index price. scaled 6 decimals
     uint256 public maxOracleSpreadRatio; // SLOT_7 !!! used in precompile !!!
 
-    // maximum allowd % size which can be liquidated in one tx scaled 6 decimals
+    // maximum allowd % size which can be liquidated in one tx. scaled 6 decimals
     uint256 public maxLiquidationRatio; // SLOT_8 !!! used in precompile !!!
 
     /// @notice Min amount of base asset quantity to trade
@@ -112,14 +126,15 @@ contract AMM is IAMM, Governable {
         maxOracleSpreadRatio = 20 * 1e4; // 20%
         maxLiquidationRatio = 25 * 1e4; // 25%
         maxLiquidationPriceSpread = 1 * 1e4; // 1%
-        // maxFundingRate = 50; // 0.005%
 
         fundingPeriod = 1 hours;
         spotPriceTwapInterval = 1 hours;
     }
 
     /**
-    * @dev fillAmount != 0 has been validated in orderBook.executeMatchedOrders/liquidateAndExecuteOrder
+     * @notice Executes state updates about position modifications, after all the validations have passed at the ClearingHouse/OrderBook level
+     * @param fillAmount != 0 has been validated in orderBook.executeMatchedOrders/liquidateAndExecuteOrder
+     * @param is2ndTrade true if this is the 2nd trade in the same tx. In that case, we update TWAP and return openInterest
     */
     function openPosition(IOrderBook.Order memory order, int256 fillAmount, uint256 fulfillPrice, bool is2ndTrade)
         override
@@ -163,7 +178,6 @@ contract AMM is IAMM, Governable {
         onlyClearingHouse
         returns (int realizedPnl, uint quoteAsset, int size, uint openNotional)
     {
-        // don't need an ammState check because there should be no active positions
         Position memory position = positions[trader];
         bool isLongPosition = position.size > 0 ? true : false;
         uint pozSize = uint(abs(position.size));
@@ -196,7 +210,6 @@ contract AMM is IAMM, Governable {
             fundingPayment,
             latestCumulativePremiumFraction
         ) = getPendingFundingPayment(trader);
-
         positions[trader].lastPremiumFraction = latestCumulativePremiumFraction;
     }
 
@@ -212,7 +225,6 @@ contract AMM is IAMM, Governable {
         returns(uint256 remainOpenNotional, int realizedPnl)
     {
         require(abs(positionSize) >= abs(baseAssetQuantity), "AMM.ONLY_REDUCE_POS");
-
         realizedPnl = unrealizedPnl * abs(baseAssetQuantity) / abs(positionSize);
         remainOpenNotional = openNotional - uint(openNotional.toInt256() * abs(baseAssetQuantity) / abs(positionSize));
     }
@@ -304,9 +316,9 @@ contract AMM is IAMM, Governable {
     }
 
     /**
-    * @notice returns max/min(oracle_mf, last_price_mf) depending on mode
+    * @notice Evaluates the optimal PnL depending on the purpose. Returns max/min(oracle_mf, last_price_mf) depending on mode
     * if mode = Maintenance_Margin, return values which have maximum margin fraction i.e we make the best effort to save user from the liquidation
-    * if mode = Min_Allowable_Margin, return values which have minimum margin fraction. We use this to determine whether user can take any more leverage
+    * if mode = Min_Allowable_Margin, return values which have minimum margin fraction. We use this to determine whether user can take any more leverage.
     */
     function getOptimalPnl(address trader, int256 margin, IClearingHouse.Mode mode) override external view returns (uint notionalPosition, int256 unrealizedPnl) {
         Position memory position = positions[trader];

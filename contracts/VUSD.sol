@@ -6,6 +6,10 @@ import { ReentrancyGuard } from "@openzeppelin/contracts/security/ReentrancyGuar
 import { ERC20PresetMinterPauserUpgradeable } from "@openzeppelin/contracts-upgradeable/token/ERC20/presets/ERC20PresetMinterPauserUpgradeable.sol";
 import { IVUSD } from './Interfaces.sol';
 
+/**
+ * @title VUSD is a wrapper over USDC (also the gas token). VUSD it the 0th collateral in the system and also the only coin accepted by the insurance fund.
+ * @notice In Hubble Exchange docs/contracts etc, VUSD is interchangeably referred to as hUSD
+*/
 contract VUSD is ERC20PresetMinterPauserUpgradeable, ReentrancyGuard, IVUSD {
 
     uint8 private constant PRECISION = 6;
@@ -33,10 +37,11 @@ contract VUSD is ERC20PresetMinterPauserUpgradeable, ReentrancyGuard, IVUSD {
 
     /**
     * @notice mint hUSD by depositing hubble gas token
+    * @dev keeping the function name same as v1 for compatibility
     * @param to address to mint for
     * @param amount amount to mint - precision 1e6
+    * msg.value has to be exactly 1e12 times `amount`
     */
-    /// @dev keeping the function name same as v1 for compatibility
     function mintWithReserve(address to, uint amount) external override payable whenNotPaused {
         require(msg.value == amount * SCALING_FACTOR, "vUSD: Insufficient amount transferred");
         _mint(to, amount);
@@ -47,12 +52,16 @@ contract VUSD is ERC20PresetMinterPauserUpgradeable, ReentrancyGuard, IVUSD {
     }
 
     /**
+    * @notice Burn vusd from msg.sender and Q the withdrawal to `to`
     * @dev no need to add onlyMarginAccountHelper modifier as vusd is burned from caller and sent to specified address
     */
     function withdrawTo(address to, uint amount) external override whenNotPaused {
         _withdrawTo(to, amount);
     }
 
+    /**
+     * @notice Process withdrawals in the queue. Sends gas token to the user.
+    */
     function processWithdrawals() external override whenNotPaused nonReentrant {
         uint reserve = address(this).balance;
         require(reserve >= withdrawals[start].amount, 'Cannot process withdrawals at this time: Not enough balance');

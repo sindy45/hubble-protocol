@@ -167,7 +167,10 @@ contract MarginAccount is IMarginAccount, MetaHubbleBase, ReentrancyGuard {
         _removeMarginFor(idx, amount, trader, trader);
     }
 
-    function removeMarginFor(uint idx, uint amount, address trader) override external whenNotPaused onlyMarginAccountHelper() {
+    /**
+     * @notice Priviliged withdraw function used by the MarginAccountHelper contract to unwrap the tokens before sending it to the user
+    */
+    function removeMarginFor(uint idx, uint amount, address trader) override external whenNotPaused onlyMarginAccountHelper {
         _removeMarginFor(idx, amount, trader, marginAccountHelper);
     }
 
@@ -218,15 +221,23 @@ contract MarginAccount is IMarginAccount, MetaHubbleBase, ReentrancyGuard {
         emit MarginReleased(trader, amount);
     }
 
+    /**
+     * @notice Determine the "free" margin of a trader.
+     * This is evaluated as follows: margin - unrealizedFunding - unrealizedPnL - utilizedMargin - reservedMargin
+     * utilizedMargin: the margin amount that would be used to maintain currently open positions at max leverage
+     * This is also the amount of margin that can be withdrawn
+     * @param trader trader to check
+     * @return availableMargin the amount of free/available margin
+    */
     function getAvailableMargin(address trader) public view override returns (int availableMargin) {
-        // availableMargin = margin - reservedMargin - utilizedMargin
-        // returned _margin includes funding payments and unrealized pnl and is also optimized via precompile
-        uint256 notionalPosition;
+        // return value _margin from the call to getNotionalPositionAndMargin _margin includes both the unrealizedFunding and unrealizedPnL
         int256 _margin;
+        uint256 notionalPosition;
         if (address(bibliophile) != address(0x0)) {
             // precompile magic allows us to execute this for a fixed 1k gas
             (notionalPosition, _margin) = bibliophile.getNotionalPositionAndMargin(trader, true /* includeFundingPayments */, uint8(IClearingHouse.Mode.Min_Allowable_Margin));
         } else {
+            // folowing is the fallback code if precompile is not available. Precompile is intended to perform the same computation as the following code
             (notionalPosition, _margin) = clearingHouse.getNotionalPositionAndMargin(trader, true /* includeFundingPayments */, IClearingHouse.Mode.Min_Allowable_Margin);
         }
         uint utilizedMargin = notionalPosition * minAllowableMargin / PRECISION;
@@ -643,7 +654,7 @@ contract MarginAccount is IMarginAccount, MetaHubbleBase, ReentrancyGuard {
         }
         margin[idx][trader] -= amount.toInt256();
 
-        // assert that available margin > 0 after removing margin, this will ensure that user's orders are fillable after withdrawal
+        // assert that available margin > 0 after removing margin, this will ensure that user's pending orders are fillable after withdrawal
         require(getAvailableMargin(trader) >= 0, "MA: available margin < 0, withdrawing too much");
 
         // Check minimum margin requirement after withdrawal

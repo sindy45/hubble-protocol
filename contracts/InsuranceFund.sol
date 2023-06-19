@@ -10,6 +10,9 @@ import { ERC20Upgradeable } from "@openzeppelin/contracts-upgradeable/token/ERC2
 import { VanillaGovernable } from "./legos/Governable.sol";
 import { IRegistry, IOracle, IMarginAccount, ERC20Detailed, IInsuranceFund } from "./Interfaces.sol";
 
+/**
+ * @title The Insurance Fund acts as a backstop for the protocol. Since you can take leverage on Hubble, there is a chance that the protocol will be undercollateralized in the event of a rapid market movement. The insurance fund is used to cover any shortfalls.
+*/
 contract InsuranceFund is VanillaGovernable, ERC20Upgradeable, IInsuranceFund {
     using SafeERC20 for IERC20;
 
@@ -34,6 +37,7 @@ contract InsuranceFund is VanillaGovernable, ERC20Upgradeable, IInsuranceFund {
         uint startedAt;
         uint expiryTime;
     }
+
     /// @notice token to auction mapping
     mapping(address => Auction) public auctions;
 
@@ -70,10 +74,18 @@ contract InsuranceFund is VanillaGovernable, ERC20Upgradeable, IInsuranceFund {
         auctionDuration = 2 hours;
     }
 
+    /**
+     * @notice deposit vusd to the insurance fund
+     * @param amount amount to deposit
+    */
     function deposit(uint amount) external {
         depositFor(_msgSender(), amount);
     }
 
+    /**
+     * @notice Deposit to the insurance fund on behalf of another address
+     * @param to address to deposit for
+    */
     function depositFor(address to, uint amount) override public {
         settlePendingObligation();
         // we want to protect new LPs, when the insurance fund is in deficit
@@ -98,6 +110,9 @@ contract InsuranceFund is VanillaGovernable, ERC20Upgradeable, IInsuranceFund {
         emit FundsAdded(to, amount, _blockTimestamp());
     }
 
+    /**
+     * @notice Begin the withdrawal process
+    */
     function unbondShares(uint shares) external {
         address usr = _msgSender();
         require(shares <= balanceOf(usr), "unbonding_too_much");
@@ -107,21 +122,34 @@ contract InsuranceFund is VanillaGovernable, ERC20Upgradeable, IInsuranceFund {
         emit Unbonded(usr, shares, unbondTime, _now);
     }
 
+    /**
+     * @notice Withdraw funds after unbonding period is over
+    */
     function withdraw(uint shares) external {
         address user = _msgSender();
         _withdrawFor(user, shares, user);
     }
 
+    /**
+     * @notice Priviliged withdraw function used by the MarginAccountHelper to unwrap the tokens before sending it to the user
+    */
     function withdrawFor(address user, uint shares) override external onlyMarginAccountHelper returns (uint) {
         return _withdrawFor(user, shares, marginAccountHelper);
     }
 
+    /**
+     * @notice Margin Account contract calls this function to seize bad debt
+    */
     function seizeBadDebt(uint amount) override external onlyMarginAccount {
         pendingObligation += amount;
         emit BadDebtAccumulated(amount, block.timestamp);
         settlePendingObligation();
     }
 
+    /**
+     * @notice Sometimes the insurance fund may be in deficit and there might not be enough vusd to settle the obligation.
+     * Using this function obligation can be settled with future fees.
+    */
     function settlePendingObligation() public {
         if (pendingObligation > 0) {
             uint toTransfer = Math.min(vusd.balanceOf(address(this)), pendingObligation);
@@ -132,6 +160,10 @@ contract InsuranceFund is VanillaGovernable, ERC20Upgradeable, IInsuranceFund {
         }
     }
 
+    /**
+     * @notice Insurance fund starts an auction for assets seized from a bad debt settlement
+     * @param token token to auction
+    */
     function startAuction(address token) override external onlyMarginAccount {
         if(!_isAuctionOngoing(auctions[token].startedAt, auctions[token].expiryTime)) {
             uint currentPrice = uint(oracle.getUnderlyingPrice(token));
@@ -167,7 +199,7 @@ contract InsuranceFund is VanillaGovernable, ERC20Upgradeable, IInsuranceFund {
     }
 
     /* ****************** */
-    /*   Internal         */
+    /*      Internal      */
     /* ****************** */
 
     function _withdrawFor(address user, uint shares, address to) internal returns (uint amount) {

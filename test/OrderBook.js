@@ -26,7 +26,7 @@ describe('Order Book', function () {
     before(async function () {
         signers = await ethers.getSigners()
         ;([, alice, bob] = signers)
-        ;({ orderBook, usdc, oracle, weth, marginAccount, clearingHouse } = await setupContracts({mockOrderBook: false}))
+        ;({ orderBook, usdc, oracle, weth, marginAccount, clearingHouse } = await setupContracts({ mockOrderBook: false, testClearingHouse: false }))
         domain = await getDomain()
 
         await orderBook.setValidatorStatus(signers[0].address, true)
@@ -291,7 +291,7 @@ describe('Order Book - Error Handling', function () {
     before(async function () {
         signers = await ethers.getSigners()
         ;([, alice, bob ] = signers)
-        ;({ orderBook, usdc, oracle, weth, amm, marginAccount } = await setupContracts({mockOrderBook: false}))
+        ;({ orderBook, usdc, oracle, weth, amm, marginAccount } = await setupContracts({ mockOrderBook: false }))
         domain = await getDomain()
 
         await orderBook.setValidatorStatus(signers[0].address, true)

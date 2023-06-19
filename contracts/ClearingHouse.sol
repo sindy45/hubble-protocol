@@ -9,6 +9,12 @@ import { IAMM, IMarginAccount, IClearingHouse, IHubbleReferral, IOrderBook } fro
 import { VUSD } from "./VUSD.sol";
 import { IHubbleBibliophile } from "./precompiles/IHubbleBibliophile.sol";
 
+/**
+ * @title Gets instructions from the orderbook contract and executes them.
+ * Routes various actions (realizePnL, update/Liquidate Positions etc) to corresponding contracts like margin account, amm, referral etc.
+ * @dev At several places we are using something called a bibliophile. This is a special contract (precompile) that is deployed at a specific address.
+ * But there is identical code in this contract that can be used as a fallback if the precompile is not available.
+*/
 contract ClearingHouse is IClearingHouse, HubbleBase {
     using SafeCast for uint256;
     using SafeCast for int256;
@@ -78,6 +84,16 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     /*     Positions      */
     /* ****************** */
 
+    /**
+     * @notice Pass instructions to the AMM contract to open/close/modify the position in a market.
+     * Can only be called by the orderBook contract.
+     * @dev reverts the all the state storage updates within the context of this call (and sub-calls) if an intermediate step of the call fails
+     * @param orders orders[0] is the long order and orders[1] is the short order
+     * @param matchInfo intermediate information about which order came first and which eventually decides what fee to charge
+     * @param fillAmount Amount of base asset to be traded between the two orders. Should be +ve. Scaled by 1e18
+     * @param fulfillPrice Price at which the orders should be matched. Scaled by 1e6.
+     * @return openInterest The total open interest in the market after the trade is executed
+    */
     function openComplementaryPositions(
         IOrderBook.Order[2] calldata orders,
         IOrderBook.MatchInfo[2] calldata matchInfo,
@@ -103,57 +119,52 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         }
     }
 
+    // to avoid stack too deep error
+    struct VarGroup {
+        int256 feeCharged;
+        int realizedPnl;
+        bool isPositionIncreased;
+    }
+
    /**
     * @notice Open/Modify/Close Position
-    * @param order Order to be executed
+    * @dev uses "onlyMySelf" modifier to make sure the calls come from within the same contract.
+    * This function was designed in a manner that helps us use the try-catch feature of solidity to revert all state changes if any of the sub-calls revert.
+    * @param mode Whether we are executing is a maker, taker order or a liquidation
+    * @param is2ndTrade Whether this is the second trade in a pair of trades that are executed together, which is used to update the twap in the AMM contract
     */
     function openPosition(IOrderBook.Order calldata order, int256 fillAmount, uint256 fulfillPrice, IOrderBook.OrderExecutionMode mode, bool is2ndTrade) public onlyMySelf returns(uint openInterest) {
         return _openPosition(order, fillAmount, fulfillPrice, mode, is2ndTrade);
     }
 
-    function updatePositions(address trader) override public whenNotPaused {
-        require(address(trader) != address(0), 'CH: 0x0 trader Address');
-        // lastFundingTime will always be >= lastFundingPaid[trader]
-        if (lastFundingPaid[trader] != lastFundingTime) {
-            int256 fundingPayment;
-            uint numAmms = amms.length;
-            for (uint i; i < numAmms; ++i) {
-                (int256 _fundingPayment, int256 cumulativePremiumFraction) = amms[i].updatePosition(trader);
-                if (_fundingPayment != 0) {
-                    fundingPayment += _fundingPayment;
-                    emit FundingPaid(trader, i, _fundingPayment, cumulativePremiumFraction);
-                }
-            }
-            // -ve fundingPayment means trader should receive funds
-            marginAccount.realizePnL(trader, -fundingPayment);
+    function _openPosition(IOrderBook.Order memory order, int256 fillAmount, uint256 fulfillPrice, IOrderBook.OrderExecutionMode mode, bool is2ndTrade) internal returns(uint openInterest) {
+        updatePositions(order.trader); // settle funding payments
+        uint quoteAsset = abs(fillAmount).toUint256() * fulfillPrice / 1e18;
+        int size;
+        uint openNotional;
+        VarGroup memory varGroup;
+        (
+            varGroup.realizedPnl,
+            varGroup.isPositionIncreased,
+            size,
+            openNotional,
+            openInterest
+        ) = amms[order.ammIndex].openPosition(order, fillAmount, fulfillPrice, is2ndTrade);
 
-            lastFundingPaid[trader] = lastFundingTime;
-        }
-    }
-
-    function settleFunding() override external onlyDefaultOrderBook {
-        uint numAmms = amms.length;
-        uint _nextFundingTime;
-        for (uint i; i < numAmms; ++i) {
-            int _premiumFraction;
-            int _underlyingPrice;
-            int _cumulativePremiumFraction;
-            (_premiumFraction, _underlyingPrice, _cumulativePremiumFraction, _nextFundingTime) = amms[i].settleFunding();
-            if (_nextFundingTime != 0) {
-                emit FundingRateUpdated(
-                    i,
-                    _premiumFraction,
-                    _underlyingPrice.toUint256(),
-                    _cumulativePremiumFraction,
-                    _nextFundingTime,
-                    _blockTimestamp(),
-                    block.number
-                );
+        {
+            int toFeeSink;
+            (toFeeSink, varGroup.feeCharged) = _chargeFeeAndRealizePnL(order.trader, varGroup.realizedPnl, quoteAsset, mode);
+            if (toFeeSink != 0) {
+                marginAccount.transferOutVusd(feeSink, toFeeSink.toUint256());
             }
         }
-        // nextFundingTime will be same for all amms
-        if (_nextFundingTime != 0) {
-            lastFundingTime = _blockTimestamp();
+        {
+            // isPositionIncreased is true when the position is increased or reversed
+            if (varGroup.isPositionIncreased) {
+                assertMarginRequirement(order.trader);
+                require(order.reduceOnly == false, "CH: reduceOnly order can only reduce position");
+            }
+            emit PositionModified(order.trader, order.ammIndex, fillAmount, fulfillPrice, varGroup.realizedPnl, size, openNotional, varGroup.feeCharged, mode, _blockTimestamp());
         }
     }
 
@@ -161,6 +172,17 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     /*    Liquidations    */
     /* ****************** */
 
+    /**
+     * @notice Pass instructions to the AMM contract to the liquidate 1 position and open/close/modify the other in a market.
+     * Can only be called by the orderBook contract.
+     * @dev reverts the all the state storage updates within the context of this call (and sub-calls) if an intermediate step of the call fails
+     * @param order long order if liquidating a long position, short order if liquidating a short position
+     * @param matchInfo intermediate information about the order being matched
+     * @param liquidationAmount -ve if liquidating a short pos, +ve if long. Scaled by 1e18
+     * @param price Price at which the liquidation should be executed. Scaled by 1e6.
+     * @param trader Trader being liquidated
+     * @return openInterest The total open interest in the market after the liquidation is executed
+    */
     function liquidate(
         IOrderBook.Order calldata order,
         IOrderBook.MatchInfo calldata matchInfo,
@@ -191,10 +213,6 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         _liquidateSingleAmm(trader, ammIndex, price, toLiquidate);
     }
 
-    /* ********************* */
-    /*        Internal       */
-    /* ********************* */
-
     function _liquidateSingleAmm(address trader, uint ammIndex, uint price, int toLiquidate) internal {
         updatePositions(trader); // settle funding payments
         _assertLiquidationRequirement(trader);
@@ -207,17 +225,74 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
 
         (int liquidationFee,) = _chargeFeeAndRealizePnL(trader, realizedPnl, quoteAsset, IOrderBook.OrderExecutionMode.Liquidation);
         marginAccount.transferOutVusd(feeSink, liquidationFee.toUint256()); // will revert if liquidationFee is negative
-
         emit PositionLiquidated(trader, ammIndex, toLiquidate, price, realizedPnl, size, openNotional, liquidationFee, _blockTimestamp());
     }
 
+    /* ****************** */
+    /*  Funding Payments  */
+    /* ****************** */
+
+    /**
+     * @notice Settle unrealized funding payments for a trader
+     * @dev Interestingly, anyone can call this function to settle funding payments for a trader
+     * Note, that as long as this function is called before the user attempts to remove margin;
+     * it is not strictly necessary to call this function on every trade for a trader, however we still currently do so. Might explore avoiding this in the future.
+    */
+    function updatePositions(address trader) override public whenNotPaused {
+        require(address(trader) != address(0), 'CH: 0x0 trader Address');
+        // lastFundingTime will always be >= lastFundingPaid[trader]
+        if (lastFundingPaid[trader] != lastFundingTime) {
+            int256 fundingPayment;
+            uint numAmms = amms.length;
+            for (uint i; i < numAmms; ++i) {
+                (int256 _fundingPayment, int256 cumulativePremiumFraction) = amms[i].updatePosition(trader);
+                if (_fundingPayment != 0) {
+                    fundingPayment += _fundingPayment;
+                    emit FundingPaid(trader, i, _fundingPayment, cumulativePremiumFraction);
+                }
+            }
+            // -ve fundingPayment means trader should receive funds
+            marginAccount.realizePnL(trader, -fundingPayment);
+            lastFundingPaid[trader] = lastFundingTime;
+        }
+    }
+
+    function settleFunding() override external onlyDefaultOrderBook {
+        uint numAmms = amms.length;
+        uint _nextFundingTime;
+        for (uint i; i < numAmms; ++i) {
+            int _premiumFraction;
+            int _underlyingPrice;
+            int _cumulativePremiumFraction;
+            (_premiumFraction, _underlyingPrice, _cumulativePremiumFraction, _nextFundingTime) = amms[i].settleFunding();
+            if (_nextFundingTime != 0) {
+                emit FundingRateUpdated(
+                    i,
+                    _premiumFraction,
+                    _underlyingPrice.toUint256(),
+                    _cumulativePremiumFraction,
+                    _nextFundingTime,
+                    _blockTimestamp(),
+                    block.number
+                );
+            }
+        }
+        // nextFundingTime will be same for all amms
+        if (_nextFundingTime != 0) {
+            lastFundingTime = _blockTimestamp();
+        }
+    }
+
+    /* ********************* */
+    /*        Internal       */
+    /* ********************* */
+
     /**
     * @notice calculate trade/liquidatin fee
+    * referral bonus and fee discount is applied when positive fee is charged from either maker or taker
     * @param realizedPnl realized PnL of the trade, only sent in so that call an extra call to marginAccount.realizePnL can be saved
     * @return toFeeSink fee to be sent to fee sink, always >= 0
-    * @return feeCharged total fee including referral bonus and maker fee, can be positive or negative
-    * negative feeCharged => fee is payed to the maker
-    * referral bonus and fee discount is given when positive fee is charged from either maker or taker
+    * @return feeCharged total fee including referral bonus and maker fee, can be positive or negative. -ve implies maker rebate.
     */
     function _chargeFeeAndRealizePnL(
         address trader,
@@ -278,43 +353,6 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         }
     }
 
-    struct VarGroup {
-        int256 feeCharged;
-        int realizedPnl;
-        bool isPositionIncreased;
-    }
-
-    function _openPosition(IOrderBook.Order memory order, int256 fillAmount, uint256 fulfillPrice, IOrderBook.OrderExecutionMode mode, bool is2ndTrade) internal returns(uint openInterest) {
-        updatePositions(order.trader); // settle funding payments
-        uint quoteAsset = abs(fillAmount).toUint256() * fulfillPrice / 1e18;
-        int size;
-        uint openNotional;
-        VarGroup memory varGroup;
-        (
-            varGroup.realizedPnl,
-            varGroup.isPositionIncreased,
-            size,
-            openNotional,
-            openInterest
-        ) = amms[order.ammIndex].openPosition(order, fillAmount, fulfillPrice, is2ndTrade);
-
-        {
-            int toFeeSink;
-            (toFeeSink, varGroup.feeCharged) = _chargeFeeAndRealizePnL(order.trader, varGroup.realizedPnl, quoteAsset, mode);
-            if (toFeeSink != 0) {
-                marginAccount.transferOutVusd(feeSink, toFeeSink.toUint256());
-            }
-        }
-        {
-            // isPositionIncreased is true when the position is increased or reversed
-            if (varGroup.isPositionIncreased) {
-                assertMarginRequirement(order.trader);
-                require(order.reduceOnly == false, "CH: reduceOnly order can only reduce position");
-            }
-            emit PositionModified(order.trader, order.ammIndex, fillAmount, fulfillPrice, varGroup.realizedPnl, size, openNotional, varGroup.feeCharged, mode, _blockTimestamp());
-        }
-    }
-
     /* ****************** */
     /*        View        */
     /* ****************** */
@@ -362,6 +400,9 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         return getNotionalPositionAndMarginVanilla(trader, includeFundingPayments, mode);
     }
 
+    /**
+     * @dev fallback if the precompile is not available
+    */
     function getNotionalPositionAndMarginVanilla(address trader, bool includeFundingPayments, Mode mode)
         public
         view
@@ -466,7 +507,11 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     /*     Governance     */
     /* ****************** */
 
-    function whitelistAmm(address _amm) external onlyGovernance {
+    function whitelistAmm(address _amm) external virtual onlyGovernance {
+        require(address(IAMM(_amm).oracle()) != address(0), "ch.whitelistAmm.oracle_not_set");
+        uint minSize = IAMM(_amm).minSizeRequirement();
+        require(minSize > 0, "ch.whitelistAmm.minSizeRequirement_not_set");
+
         uint l = amms.length;
         for (uint i; i < l; ++i) {
             require(address(amms[i]) != _amm, "ch.whitelistAmm.duplicate_amm");
