@@ -44,6 +44,8 @@ contract AMM is IAMM, Governable {
         uint256 lastPeriodAccumulator;
     }
 
+    enum Side { LONG, SHORT }
+
     /* ****************** */
     /*      Constants     */
     /* ****************** */
@@ -75,25 +77,26 @@ contract AMM is IAMM, Governable {
     IOracle public oracle; // SLOT_10 !!! used in precompile !!!
 
     address override public underlyingAsset; // SLOT_11 !!! used in precompile !!!
-    string public name;
+    string public name; // SLOT_12
 
-    uint256 public fundingBufferPeriod;
-    uint256 public nextFundingTime;
+    uint256 public fundingBufferPeriod; // SLOT_13
+    uint256 public nextFundingTime; // SLOT_14
 
-    uint256 public longOpenInterestNotional;
-    uint256 public shortOpenInterestNotional;
-    // maximum allowed % difference between mark price and index price before liquidation
-    uint256 public maxLiquidationPriceSpread; // scaled 6 decimals  // SLOT_17 !!! used in precompile !!!
+    uint256 public longOpenInterestNotional; // SLOT_15
+    uint256 public shortOpenInterestNotional; // SLOT_16
+    // maximum allowed % difference between mark price and index price before liquidation. scaled 6 decimals
+    uint256 public maxLiquidationPriceSpread; // SLOT_17 !!! used in precompile !!!
 
-    uint256 public spotPriceTwapInterval;
-    uint256 public fundingPeriod;
+    uint256 public spotPriceTwapInterval; // SLOT_18
+    uint256 public fundingPeriod; // SLOT_19
 
-    enum Side { LONG, SHORT }
+    // maximum hourly funding rate allowed in %, scaled to 1e6
+    int256 public maxFundingRate; // SLOT_20
 
-    // maximum hourly funding rate allowed in %
-    int256 public maxFundingRate; // in hourly %,  scaled to 1e6
+    address public redStoneAdapter; // SLOT_21
+    bytes32 public redStoneFeedId; // SLOT_22
 
-    uint256[50] private __gap;
+    uint256[48] private __gap;
 
     /* ****************** */
     /*    Storage Ends    */
@@ -537,8 +540,17 @@ contract AMM is IAMM, Governable {
     /*       Governance   */
     /* ****************** */
 
-    function changeOracle(address _oracle) public onlyGovernance {
+    /**
+     * @notice Change the oracle.
+     * @dev if redstone params are not set, precompile will assume it is a TestOracle and will read underlying price from that
+     * @param _oracle Wrapper over the real oracle, either of redstone/chainlink
+     * @param _redStoneAdapter only set this if _oracle is redstone, set 0 otherwise
+     * @param _redStoneFeedId only set this if _oracle is redstone, set 0 otherwise
+     */
+    function setOracleConfig(address _oracle, address _redStoneAdapter, bytes32 _redStoneFeedId) external onlyGovernance {
         oracle = IOracle(_oracle);
+        redStoneAdapter = _redStoneAdapter;
+        redStoneFeedId = _redStoneFeedId;
     }
 
     function setPriceSpreadParams(uint _maxOracleSpreadRatio, uint _maxLiquidationPriceSpread) external onlyGovernance {
@@ -565,5 +577,12 @@ contract AMM is IAMM, Governable {
         fundingBufferPeriod = _fundingBufferPeriod;
         maxFundingRate = _maxFundingRate;
         spotPriceTwapInterval = _spotPriceTwapInterval;
+    }
+
+    /**
+     * @dev was used for integration testing only, can be removed later. setOracleConfig should be enough
+    */
+    function setRedStoneAdapterAddress(address _redStoneAdapter) external onlyGovernance {
+        redStoneAdapter = _redStoneAdapter;
     }
 }

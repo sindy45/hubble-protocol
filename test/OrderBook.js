@@ -307,6 +307,8 @@ describe('Order Book - Error Handling', function () {
         // add margin for bob
         await wavax.mint(bob.address, wavaxMargin)
         await addMargin(bob, wavaxMargin, wavax, 1)
+        // maxOracleSpread = 20%, maxLiquidationPriceSpread = 1%
+        await amm.setPriceSpreadParams(20 * 1e4, 1 * 1e4)
     })
 
     it('alice places order', async function() {
@@ -460,6 +462,7 @@ describe('Order Book - Error Handling', function () {
         ;({ order, orderHash } = await placeOrder(size, markPrice, charlie))
 
         // liquidate
+        await oracle.setUnderlyingPrice(weth.address, markPrice)
         toLiquidate = size.mul(25e4).div(1e6) // 1/4th position liquidated
         let tx = await orderBook.liquidateAndExecuteOrder(alice.address, order, toLiquidate.abs())
 
@@ -475,7 +478,6 @@ describe('Order Book - Error Handling', function () {
     it('ch.liquidateSingleAmm fails - revert from amm', async function() {
         // force alice in liquidation zone
         await placeAndExecuteTrade(longOrder.baseAssetQuantity, markPrice)
-        await oracle.setUnderlyingPrice(weth.address, markPrice)
         expect(await clearingHouse.isAboveMaintenanceMargin(alice.address)).to.eq(false)
 
         let tx = await orderBook.liquidateAndExecuteOrder(alice.address, order, toLiquidate.mul(2).abs())
@@ -518,10 +520,29 @@ describe('Order Book - Error Handling', function () {
     })
 
     it('liquidations will fail when toLiquidate=0', async function() {
-        await addMargin(charlie, _1e6.mul(2000))
+        await addMargin(charlie, _1e6.mul(4000))
         await expect(orderBook.liquidateAndExecuteOrder(
             alice.address, order, 0)
         ).to.be.revertedWith('OB.not_multiple')
+    })
+
+    it('liquidation will fail if price > 1% bound', async function() {
+        // oraclePrice = 1180
+        const badOrder = JSON.parse(JSON.stringify(order))
+        badOrder.price = ethers.utils.parseUnits('1192', 6)
+        await orderBook.connect(charlie).placeOrder(badOrder)
+        await expect(
+            orderBook.liquidateAndExecuteOrder(alice.address, badOrder, toLiquidate.abs())
+        ).to.be.revertedWith('AMM.price_GT_bound')
+    })
+
+    it('liquidation will fail if price < 1% bound', async function() {
+        const badOrder = JSON.parse(JSON.stringify(order))
+        badOrder.price = ethers.utils.parseUnits('1168', 6)
+        await orderBook.connect(charlie).placeOrder(badOrder)
+        await expect(
+            orderBook.liquidateAndExecuteOrder(alice.address, badOrder, toLiquidate.abs())
+        ).to.be.revertedWith('AMM.price_LT_bound')
     })
 
     it('liquidations when all conditions met', async function() {

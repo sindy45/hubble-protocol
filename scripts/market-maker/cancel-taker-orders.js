@@ -8,6 +8,7 @@ const { bnToFloat } = require('../../test/utils')
 const provider = new ethers.providers.JsonRpcProvider(process.env.RPC_URL)
 const signer = new ethers.Wallet(process.env.PRIVATE_KEY_TAKER, provider);
 const exchange = new Exchange(provider, config)
+const { orderBook } = exchange
 
 const cancelAllOrders = async () => {
     return exchange.cancelAllOrders(signer);
@@ -58,6 +59,6 @@ const getAllOrders = async () => {
     console.dir(events, { depth: null})
 }
 
-cancelAllOrders()
 // getAllOrders()
+cancelAllOrders()
 .then(() => process.exit(0))

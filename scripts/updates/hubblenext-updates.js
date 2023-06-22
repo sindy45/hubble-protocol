@@ -167,7 +167,7 @@ async function whitelistAmm() {
     }
 }
 
-// 2.0.0-next.rc.1 update
+// 2.0.0-next.rc.1 update (use precompile for determining fill price)
 async function rc1Update() {
     const AMM = await ethers.getContractFactory('AMM')
     const newAMM = await AMM.deploy(config.ClearingHouse)
@@ -191,7 +191,34 @@ async function rc1Update() {
     }
     tasks.push(proxyAdmin.upgrade(config.ClearingHouse, newClearingHouse.address, getTxOptions()))
     tasks.push(proxyAdmin.upgrade(config.OrderBook, newOrderBook.address, getTxOptions()))
+    await logStatus(tasks)
+}
 
+// 2.0.0-next.rc.2 update (red stone integration)
+async function rc2Update() {
+    const NewOracle = await ethers.getContractFactory('NewOracle')
+    const newOracle = await NewOracle.deploy()
+    console.log({ newOracle: newOracle.address })
+
+    const AMM = await ethers.getContractFactory('AMM')
+    const newAMM = await AMM.deploy(config.ClearingHouse)
+    console.log({ newAMM: newAMM.address })
+
+    // Phase 2
+    await sleep(5)
+    await initializeTxOptionsFor0thSigner()
+    const proxyAdmin = await ethers.getContractAt('ProxyAdmin', config.proxyAdmin)
+    const tasks = []
+    for (let i = 0; i < 2; i++) { // only eth and avax markets
+        tasks.push(newOracle.setAggregator(config.amms[i].underlying, config.amms[i].redStoneOracle, getTxOptions()))
+        tasks.push(proxyAdmin.upgrade(config.amms[i].address, newAMM.address, getTxOptions()))
+        const amm = await ethers.getContractAt('AMM', config.amms[i].address)
+        tasks.push(amm.setOracleConfig(newOracle.address, '0x91661D7757C0ec1bdBb04D51b7a1039e30D6dcc9' /* adapter address */, config.amms[i].redStoneFeedId, getTxOptions()))
+    }
+    await logStatus(tasks)
+}
+
+async function logStatus(tasks) {
     const txs = await Promise.all(tasks)
     for (let i = 0; i < txs.length; i++) {
         const r = await txs[i].wait()
@@ -199,7 +226,7 @@ async function rc1Update() {
     }
 }
 
-rc1Update()
+rc2Update()
 .then(() => process.exit(0))
 .catch(error => {
     console.error(error);

@@ -15,12 +15,16 @@ const hubblev2next = {
             {
                 perp: "ETH-Perp",
                 address: "0xa72b463C21dA61cCc86069cFab82e9e8491152a0",
-                underlying: "0x98fC50545D4bFFE288e719b11eA05136E6eB1c35"
+                underlying: "0x98fC50545D4bFFE288e719b11eA05136E6eB1c35",
+                redStoneOracle: "0x57908F2908a05cB7E28ff139e9a38bD840A6a536",
+                redStoneFeedId: "0x4554480000000000000000000000000000000000000000000000000000000000"
             },
             {
                 perp: 'AVAX-Perp',
                 address: '0xd80e57dB448b0692C396B890eE9c791D7386dAdC',
-                underlying: '0xb251EC7F0eA692D1188ca4Bc9bEd321E501Eb790'
+                underlying: '0xb251EC7F0eA692D1188ca4Bc9bEd321E501Eb790',
+                redStoneOracle: "0xDe26f7cC0b4d48913e01679575754031c36ca473",
+                redStoneFeedId: "0x4156415800000000000000000000000000000000000000000000000000000000"
             },
             {
                 perp: 'BTC-Perp',

@@ -33,6 +33,7 @@ jobs:
     - name: Run Hardhat Tests
       env:
         ALCHEMY: ${{ secrets.ALCHEMY }}
+        RPC_URL_ARCHIVE: ${{ secrets.RPC_URL_ARCHIVE }}
       run: npm run gas-reporter
 
     - name: Install Foundry

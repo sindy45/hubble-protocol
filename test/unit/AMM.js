@@ -301,7 +301,7 @@ describe('AMM unit tests', async function() {
     }
 })
 
-describe('Oracle Price Spread Check', async function() {
+describe('Cannot trade if best of two leverage > 5x', async function() {
     beforeEach(async function() {
         signers = await ethers.getSigners()
         ;([ alice ] = signers.map(s => s.address))
@@ -330,27 +330,8 @@ describe('Oracle Price Spread Check', async function() {
         await clearingHouse.openPosition2(0, _1e18.mul(-1), 0)
     })
 
-    it('price decrease not allowed when markPrice is below price spread', async function() {
-        // markPrice = 1000, indexPrice = 1000/0.8 = 1250
-        await oracle.setUnderlyingPrice(weth.address, _1e6.mul(1250))
-        // await expect(
-        //     clearingHouse.openPosition2(0, _1e18.mul(-5), _1e6.mul(4999)) // price = 4999 / 5 = 999.8
-        // ).to.be.revertedWith('AMM.price_LT_bound')
-
-        // longs allowed
-        await clearingHouse.openPosition2(0, _1e18.mul(5), _1e6.mul(5000))
-    })
-
-    it('price increase not allowed when markPrice is above price spread', async function() {
-        // markPrice = 1000, indexPrice = 1000/1.2 = 833
-        await oracle.setUnderlyingPrice(weth.address, _1e6.mul(833))
-        // await expect(
-        //     clearingHouse.openPosition2(0, _1e18.mul(5), ethers.constants.MaxUint256)
-        // ).to.be.revertedWith('AMM.price_GT_bound')
-    })
-
-    // marginFraction < maintenanceMargin < minAllowableMargin < oracleBasedMF
-    it('amm isOverSpreadLimit on long side', async function() {
+    // marginFraction < maintenanceMargin < oracleBasedMF < minAllowableMargin
+    it('oracle based MF is best of two', async function() {
         await clearingHouse.openPosition2(0, _1e18.mul(-5), 0)
 
         // bob makes counter-trade to drastically reduce amm based marginFraction
@@ -362,9 +343,6 @@ describe('Oracle Price Spread Check', async function() {
         await marginAccount.connect(bob).addMargin(1, avaxMargin)
         await oracle.setUnderlyingPrice(weth.address, _1e6.mul(1100))
         await clearingHouse.connect(bob).openPosition2(0, _1e18.mul(120), _1e6.mul(144000)) // price = 1200
-
-        // Get amm over spread limit
-        await oracle.setUnderlyingPrice(weth.address, _1e6.mul(700))
 
         // evaluate both MFs independently from the AMM
         const margin = await marginAccount.getNormalizedMargin(alice) // avaxMargin * avaxOraclePrice * .8 - tradeFee and no funding payments
@@ -384,7 +362,8 @@ describe('Oracle Price Spread Check', async function() {
         // asserting that we have indeed created the conditions we are testing in this test case
         expect(marginFraction.lt(maintenanceMargin)).to.be.true
         expect(maintenanceMargin.lt(minAllowableMargin)).to.be.true
-        expect(minAllowableMargin.lt(oracleBasedMF)).to.be.true
+        expect(oracleBasedMF.lt(minAllowableMargin)).to.be.true
+        expect(oracleBasedMF.gt(maintenanceMargin)).to.be.true
 
         // then assert that clearingHouse has indeed to oracle based pricing for liquidations but marginFraction for trades
         expect(
@@ -412,12 +391,13 @@ describe('Oracle Price Spread Check', async function() {
         await clearingHouse.liquidate2(alice)
     })
 
-    // we will assert that oracle based pricing kicks in when lastPrice = ~998, indexPrice = 1300
-    // oracleBasedMF < maintenanceMargin < minAllowableMargin < marginFraction
-    it('amm isOverSpreadLimit on short side', async function() {
+    // oracleBasedMF < maintenanceMargin < marginFraction < minAllowableMargin
+    it('mark price based is best of two', async function() {
         await clearingHouse.openPosition2(0, _1e18.mul(-5), 0)
 
         await oracle.setUnderlyingPrice(weth.address, _1e6.mul(1300))
+        // make markPrice based mf < minAllowableMargin
+        await oracle.setUnderlyingPrice(avax.address, _1e6.mul(50))
 
         // evaluate both MFs independently from the AMM
         let margin = await marginAccount.getNormalizedMargin(alice) // avaxMargin * avaxOraclePrice * .8 - tradeFee and no funding payments
@@ -437,7 +417,8 @@ describe('Oracle Price Spread Check', async function() {
         // asserting that we have indeed created the conditions we are testing in this test case
         expect(oracleBasedMF.lt(maintenanceMargin)).to.be.true
         expect(maintenanceMargin.lt(minAllowableMargin)).to.be.true
-        expect(minAllowableMargin.lt(marginFraction)).to.be.true // trade would be allowed based on amm alone
+        expect(marginFraction.lt(minAllowableMargin)).to.be.true
+        expect(marginFraction.gt(maintenanceMargin)).to.be.true
 
         // then assert that clearingHouse has indeed to oracle based pricing for trades but marginFraction for liquidations
         expect(

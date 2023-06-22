@@ -559,28 +559,8 @@ describe('Liquidation Price Safeguard', async function() {
         await oracle.setUnderlyingPrice(weth.address, price.mul(989).div(1000)) // 1st test needs mark > 1% of index
         // alice is in liquidation zone
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
-    })
-
-    it('cannot liquidate if liquidationPrice > 1.01 * indexPrice', async function() {
         await amm.setLiquidationSizeRatio(25 * 1e4)
         await amm.setPriceSpreadParams(await amm.maxOracleSpreadRatio(), 1e4)
-        const indexPrice = await oracle.getUnderlyingPrice(weth.address)
-
-        expect(await amm.maxLiquidationPriceSpread()).to.eq(_1e6.div(100))
-        // expect((price.sub(indexPrice)).mul(1e8).div(indexPrice)).to.gt(_1e6)
-        // await expect(clearingHouse.connect(liquidator1).liquidate3(alice, price)).to.be.revertedWith(
-        //     'AMM.price_GT_bound'
-        // )
-    })
-
-    it('cannot liquidate if liquidationPrice < 0.99 * indexPrice', async function() {
-        await oracle.setUnderlyingPrice(weth.address, _1e6.mul(1150))
-        const indexPrice = await oracle.getUnderlyingPrice(weth.address)
-
-        expect((price.sub(indexPrice)).mul(1e8).div(indexPrice)).to.lt(_1e6.mul(-1))
-        // await expect(clearingHouse.connect(liquidator1).liquidate3(alice, price)).to.be.revertedWith(
-        //     'AMM.price_LT_bound'
-        // )
     })
 
     it('can liquidate if markPrice is within 1% of indexPrice and no trades before', async function() {

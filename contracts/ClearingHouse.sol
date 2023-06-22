@@ -422,7 +422,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     */
     function assertMarginRequirement(address trader) public view {
         require(
-            calcMarginFraction(trader, false, Mode.Min_Allowable_Margin) >= minAllowableMargin,
+            calcMarginFraction(trader, false, Mode.Maintenance_Margin) >= minAllowableMargin,
             "CH: Below Minimum Allowable Margin"
         );
     }
