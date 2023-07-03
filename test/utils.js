@@ -20,6 +20,7 @@ const verification = []
 /**
  * signers global var should have been intialized before the call to this fn
  * @dev getTxOptions() is a weird quirk that lets us use this script for both local testing and prod deployments
+ * @dev Note that if the txs revert that will happen silently!! :(
 */
 async function setupContracts(options = {}) {
     options = Object.assign(
@@ -31,7 +32,8 @@ async function setupContracts(options = {}) {
             setupAMM: true,
             testOracle: true,
             mockOrderBook: true,
-            testClearingHouse: true
+            testClearingHouse: true,
+            orderbookRollup: false,
         },
         options
     )
@@ -128,10 +130,18 @@ async function setupContracts(options = {}) {
         ]
         clearingHouseProxy = await TransparentUpgradeableProxy.deploy(...constructorArguments, getTxOptions())
     }
+
     initArgs = [ 'Hubble', '2.0', governance ]
     deployArgs = [ clearingHouseProxy.address, marginAccount.address ]
     if (options.genesisProxies) {
-        orderBook = await setupGenesisProxy('OrderBook', proxyAdmin, initArgs, deployArgs, orderBookProxy)
+        // only supported for genesis proxies atm the moment because we don't have unit tests for orderbook rollup
+        if (options.orderbookRollup) {
+            const RollupPrecompile = await ethers.getContractFactory('OrderBookRollupPrecompile')
+            const rollupPrecompile = await RollupPrecompile.deploy(clearingHouseProxy.address, marginAccount.address, getTxOptions())
+            orderBook = await setupGenesisProxy('OrderBookRollup', proxyAdmin, [ governance, rollupPrecompile.address ], [ clearingHouseProxy.address ], orderBookProxy)
+        } else {
+            orderBook = await setupGenesisProxy('OrderBook', proxyAdmin, initArgs, deployArgs, orderBookProxy)
+        }
     } else {
         orderBook = await setupUpgradeableProxy(
             'OrderBook',

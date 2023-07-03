@@ -20,9 +20,28 @@ interface IOracle {
 }
 
 interface IClearingHouse {
+    enum OrderExecutionMode {
+        Taker,
+        Maker,
+        SameBlock, // not used
+        Liquidation
+    }
+
+    /**
+     * @param ammIndex Market id to place the order. In Hubble, market ids are sequential and start from 0
+     * @param trader Address of the trader
+     * @param mode Whether to be executed as a Maker, Taker or Liquidation
+    */
+    struct Instruction {
+        uint256 ammIndex;
+        address trader;
+        bytes32 orderHash;
+        OrderExecutionMode mode;
+    }
+
     enum Mode { Maintenance_Margin, Min_Allowable_Margin }
 
-    event PositionModified(address indexed trader, uint indexed idx, int256 baseAsset, uint price, int256 realizedPnl, int256 size, uint256 openNotional, int256 fee, IOrderBook.OrderExecutionMode mode, uint256 timestamp);
+    event PositionModified(address indexed trader, uint indexed idx, int256 baseAsset, uint price, int256 realizedPnl, int256 size, uint256 openNotional, int256 fee, OrderExecutionMode mode, uint256 timestamp);
     event PositionLiquidated(address indexed trader, uint indexed idx, int256 baseAsset, uint256 price, int256 realizedPnl, int256 size, uint256 openNotional, int256 fee, uint256 timestamp);
     event MarketAdded(uint indexed idx, address indexed amm);
     event ReferralBonusAdded(address indexed referrer, uint referralBonus);
@@ -30,8 +49,7 @@ interface IClearingHouse {
     event FundingRateUpdated(uint indexed idx, int256 premiumFraction, uint256 underlyingPrice, int256 cumulativePremiumFraction, uint256 nextFundingTime, uint256 timestamp, uint256 blockNumber);
 
     function openComplementaryPositions(
-        IOrderBook.Order[2] memory orders,
-        IOrderBook.MatchInfo[2] memory matchInfo,
+        Instruction[2] memory orders,
         int256 fillAmount,
         uint fulfillPrice
     )  external returns (uint256 openInterest);
@@ -57,8 +75,7 @@ interface IClearingHouse {
         view
         returns(uint256 notionalPosition, int256 margin);
     function liquidate(
-        IOrderBook.Order calldata order,
-        IOrderBook.MatchInfo calldata matchInfo,
+        Instruction calldata instruction,
         int256 liquidationAmount,
         uint price,
         address trader
@@ -97,7 +114,7 @@ interface IOrderBook {
         Liquidation
     }
 
-     /**
+    /**
      * @notice Order struct
      * @param ammIndex Market id to place the order. In Hubble, market ids are sequential and start from 0
      * @param trader Address of the trader
@@ -114,11 +131,6 @@ interface IOrderBook {
         uint256 price;
         uint256 salt;
         bool reduceOnly;
-    }
-
-    struct MatchInfo {
-        bytes32 orderHash;
-        OrderExecutionMode mode;
     }
 
     struct OrderInfo {
@@ -181,10 +193,12 @@ interface IOrderBook {
     function settleFunding() external;
     function initializeMinSize(int256 minSize) external;
     function updateParams(uint minAllowableMargin, uint takerFee) external;
+    function isTradingAuthority(address signer, address trader) external view returns(bool);
+    function isValidator(address validator) external view returns(bool);
 }
 
 interface IAMM {
-    function openPosition(IOrderBook.Order memory order, int256 fillAmount, uint256 fulfillPrice, bool is2ndTrade)
+    function openPosition(address trader, int256 fillAmount, uint256 fulfillPrice, bool is2ndTrade)
         external
         returns (int realizedPnl, bool isPositionIncreased, int size, uint openNotional, uint openInterest);
     function getNotionalPositionAndUnrealizedPnl(address trader)

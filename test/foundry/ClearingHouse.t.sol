@@ -216,13 +216,14 @@ contract ClearingHouseTests is Utils {
         );
 
         // add weth margin
-        temp[0] = orderBook.getRequiredMargin(size, price) * 1e18 / uint(defaultWethPrice) + 1e12; // required weth margin in 1e18, add 1e12 for any precision loss
+        temp[0] = orderBook.getRequiredMargin(size, price, getUpperBound()) * 1e18 / uint(defaultWethPrice) + 1e12; // required weth margin in 1e18, add 1e12 for any precision loss
         addMargin(alice, temp[0], 1, address(weth));
+        temp[0] = orderBook.getRequiredMargin(-size, price, getUpperBound()) * 1e18 / uint(defaultWethPrice) + 1e12;
         addMargin(bob, temp[0], 1, address(weth));
         placeAndExecuteOrder(0, aliceKey, bobKey, size, price, true, false, size, false);
 
         // make alice and bob in liquidatin zone
-        oracle.setUnderlyingPrice(address(weth), defaultWethPrice / 2);
+        oracle.setUnderlyingPrice(address(weth), defaultWethPrice / 3);
         assertFalse(clearingHouse.isAboveMaintenanceMargin(alice));
         assertFalse(clearingHouse.isAboveMaintenanceMargin(bob));
 

@@ -139,32 +139,32 @@ contract AMM is IAMM, Governable {
      * @param fillAmount != 0 has been validated in orderBook.executeMatchedOrders/liquidateAndExecuteOrder
      * @param is2ndTrade true if this is the 2nd trade in the same tx. In that case, we update TWAP and return openInterest
     */
-    function openPosition(IOrderBook.Order memory order, int256 fillAmount, uint256 fulfillPrice, bool is2ndTrade)
+    function openPosition(address trader, int256 fillAmount, uint256 fulfillPrice, bool is2ndTrade)
         override
         external
         onlyClearingHouse
         returns (int realizedPnl, bool isPositionIncreased, int size, uint openNotional, uint openInterest)
     {
-        Position memory position = positions[order.trader];
+        Position memory position = positions[trader];
         bool isNewPosition = position.size == 0 ? true : false;
         Side side = fillAmount > 0 ? Side.LONG : Side.SHORT;
 
         if (isNewPosition || (position.size > 0 ? Side.LONG : Side.SHORT) == side) {
             // realizedPnl = 0;
-            _increasePosition(order.trader, fillAmount, fulfillPrice);
+            _increasePosition(trader, fillAmount, fulfillPrice);
             isPositionIncreased = true;
         } else {
-            (realizedPnl, isPositionIncreased) = _openReversePosition(order.trader, fillAmount, fulfillPrice);
+            (realizedPnl, isPositionIncreased) = _openReversePosition(trader, fillAmount, fulfillPrice);
         }
 
-        size = positions[order.trader].size;
-        openNotional = positions[order.trader].openNotional;
+        size = positions[trader].size;
+        openNotional = positions[trader].openNotional;
 
         uint totalPosSize = uint(abs(size));
         require(totalPosSize == 0 || totalPosSize >= minSizeRequirement, "position_less_than_minSize");
         // update liquidation threshold
         // no need to make liquidationThreshold multiple of minSizeRequirement as its the max limit
-        positions[order.trader].liquidationThreshold = Math.max(
+        positions[trader].liquidationThreshold = Math.max(
             (totalPosSize * maxLiquidationRatio / 1e6) + 1,
             minSizeRequirement
         );

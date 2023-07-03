@@ -167,8 +167,10 @@ async function whitelistAmm() {
     }
 }
 
+// same script utilized for both rc.1 and rc.3 upgrade
 // 2.0.0-next.rc.1 update (use precompile for determining fill price)
-async function rc1Update() {
+// 2.0.0-next.rc.3 update (efficient data structures)
+async function rc3Update() {
     const AMM = await ethers.getContractFactory('AMM')
     const newAMM = await AMM.deploy(config.ClearingHouse)
     console.log({ newAMM: newAMM.address })
@@ -219,14 +221,15 @@ async function rc2Update() {
 }
 
 async function logStatus(tasks) {
+    console.log()
     const txs = await Promise.all(tasks)
     for (let i = 0; i < txs.length; i++) {
         const r = await txs[i].wait()
-        console.log(i, r.status)
+        console.log(`task=${i}, status=${r.status ? 'success' : 'fail'}`)
     }
 }
 
-rc2Update()
+rc3Update()
 .then(() => process.exit(0))
 .catch(error => {
     console.error(error);

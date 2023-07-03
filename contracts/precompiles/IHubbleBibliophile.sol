@@ -12,6 +12,7 @@ interface IHubbleBibliophile {
         returns(uint256 notionalPosition, int256 margin);
 
     function getPositionSizes(address trader) external view returns(int[] memory posSizes);
+    function getPositionSizesAndUpperBoundsForMarkets(address trader) external view returns(int[] memory posSizes, uint[] memory upperBounds);
 
     function validateOrdersAndDetermineFillPrice(
         IOrderBook.Order[2] memory orders,

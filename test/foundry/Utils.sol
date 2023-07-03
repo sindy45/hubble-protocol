@@ -353,4 +353,10 @@ abstract contract Utils is Test {
         }
         placeAndExecuteOrder(ammIndex, temp[0], temp[1], size, price, false, true, size, false);
     }
+
+    function getUpperBound() internal view returns (uint upperBound) {
+        uint spreadLimit = amm.maxOracleSpreadRatio();
+        uint256 oraclePrice = amm.getUnderlyingPrice();
+        upperBound = oraclePrice * (1e6 + spreadLimit) / 1e6;
+    }
 }

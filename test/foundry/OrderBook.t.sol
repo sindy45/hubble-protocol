@@ -31,12 +31,13 @@ contract OrderBookTests is Utils {
             stdMath.abs(size) >= uint(MIN_SIZE) &&
             size != type(int).min /** abs(size) fails */ &&
             price < type(uint).max / stdMath.abs(size) &&
+            stdMath.abs(size) < type(uint).max / getUpperBound() &&
             price > 1e6
         );
         // place order with size < minSize
         (address trader, IOrderBook.Order memory order,, bytes32 orderHash) = prepareOrder(0, traderKey, MIN_SIZE - 1, price, false);
 
-        vm.expectRevert("OB_sender_is_not_trader");
+        vm.expectRevert("OB.not_trader_or_tradingAuthority");
         orderBook.placeOrder(order);
 
         vm.startPrank(trader);
@@ -55,8 +56,11 @@ contract OrderBookTests is Utils {
 
         (trader, order,, orderHash) = prepareOrder(0, traderKey, size, price, false);
 
-        uint quote = stdMath.abs(size) * price / 1e18;
-        uint marginRequired = quote / 5 + quote * uint(takerFee) / 1e6;
+        uint marginRequired = getRequiredMargin(size, price);
+        if (size < 0 && price < getUpperBound()) {
+            emit log_uint(marginRequired);
+            marginRequired = getRequiredMargin(size, getUpperBound());
+        }
         addMargin(trader, marginRequired - 1, 0, address(0));
 
         vm.startPrank(trader);
@@ -99,6 +103,23 @@ contract OrderBookTests is Utils {
         vm.expectRevert("OB_Order_already_exists");
         orderBook.placeOrder(order);
         vm.stopPrank();
+
+        // order can be placed via trading authority
+        order.salt += 1;
+        orderHash = orderBook.getOrderHash(order);
+        // add trading authority
+        vm.prank(trader);
+        orderBook.whitelistTradingAuthority(address(this));
+        assertTrue(orderBook.isTradingAuthority(trader, address(this)));
+
+        vm.expectEmit(true, true, false, true, address(orderBook));
+        emit OrderPlaced(trader, orderHash, order, block.timestamp);
+        orderBook.placeOrder(order);
+
+        // revoke trading authority
+        vm.prank(trader);
+        orderBook.revokeTradingAuthority(address(this));
+        assertFalse(orderBook.isTradingAuthority(trader, address(this)));
     }
 
     // used uint32 for price here to avoid many rejections in vm.assume
@@ -125,8 +146,9 @@ contract OrderBookTests is Utils {
         (orders[1],, orderHashes[1]) = placeOrder(0, bobKey, -size, price, false);
 
         // assert reserved margin
-        uint marginRequired = quote / uint(MAX_LEVERAGE) + quote * uint(takerFee) / 1e6;
+        uint marginRequired = getRequiredMargin(size, price);
         assertEq(marginAccount.reservedMargin(alice), marginRequired);
+        marginRequired = getRequiredMargin(size, getUpperBound());
         assertEq(marginAccount.reservedMargin(bob), marginRequired);
 
         vm.expectRevert("OB_filled_amount_higher_than_order_base");
@@ -185,8 +207,9 @@ contract OrderBookTests is Utils {
         (orders[1],, orderHashes[1]) = placeOrder(0, bobKey, -size, price, false);
 
         // assert reserved margin
-        uint marginRequired = quote / uint(MAX_LEVERAGE) + quote * uint(takerFee) / 1e6;
+        uint marginRequired = getRequiredMargin(size, price);
         assertEq(marginAccount.reservedMargin(alice), marginRequired);
+        marginRequired = getRequiredMargin(size, getUpperBound());
         assertEq(marginAccount.reservedMargin(bob), marginRequired);
 
         vm.expectRevert("OB_filled_amount_higher_than_order_base");
@@ -234,8 +257,9 @@ contract OrderBookTests is Utils {
         int size = int(uint(size_)) / MIN_SIZE * MIN_SIZE +  10 * MIN_SIZE; // to avoid min size error
 
         // add weth margin
-        temp[0] = orderBook.getRequiredMargin(size, price) * 1e18 / uint(defaultWethPrice) + 1e10; // required weth margin in 1e18, add 1e10 for any precision loss
+        temp[0] = orderBook.getRequiredMargin(size, price, getUpperBound()) * 1e18 / uint(defaultWethPrice) + 1e10; // required weth margin in 1e18, add 1e10 for any precision loss
         addMargin(alice, temp[0], 1, address(weth));
+        temp[0] = orderBook.getRequiredMargin(-size, price, getUpperBound()) * 1e18 / uint(defaultWethPrice) + 1e10;
         addMargin(bob, temp[0], 1, address(weth));
         placeAndExecuteOrder(0, aliceKey, bobKey, size, price, true, false, size, false);
 
@@ -269,8 +293,7 @@ contract OrderBookTests is Utils {
             (,int filledAmount, uint reservedMargin, OrderBook.OrderStatus status) = orderBook.orderInfo(orderHash);
             assertEq(uint(status), 1);
             assertEq(filledAmount, int(toLiquidate));
-            temp[1] = stdMath.abs(size) * price / 1e18; // quote
-            temp[0] = temp[1] / 5 + temp[1] * uint(takerFee) / 1e6; // margin required
+            temp[0] = getRequiredMargin(size, price);
             assertEq(marginAccount.reservedMargin(charlie), temp[0] - temp[0] * toLiquidate / stdMath.abs(size));
             assertEq(reservedMargin, temp[0] - temp[0] * toLiquidate / stdMath.abs(size));
         }
@@ -304,6 +327,9 @@ contract OrderBookTests is Utils {
             (,int filledAmount, uint reservedMargin, OrderBook.OrderStatus status) = orderBook.orderInfo(orderHash);
             assertEq(uint(status), 1);
             assertEq(filledAmount, -int(toLiquidate));
+            if (price < getUpperBound()) {
+                temp[0] = getRequiredMargin(size, getUpperBound());
+            }
             assertEq(marginAccount.reservedMargin(peter), temp[0] - temp[0] * toLiquidate / stdMath.abs(size));
             assertEq(reservedMargin, temp[0] - temp[0] * toLiquidate / stdMath.abs(size));
         }
@@ -433,9 +459,12 @@ contract OrderBookTests is Utils {
 
         // alice longs, bob shorts, fillAmount = size / 2
         int fillAmount = (size / 2) / MIN_SIZE * MIN_SIZE;
-        uint requiredMargin = orderBook.getRequiredMargin(size, price);
+        uint requiredMargin = getRequiredMargin(size, price);
         placeAndExecuteOrder(0, aliceKey, bobKey, size, price, false, true, fillAmount, false);
         assertEq(marginAccount.reservedMargin(alice), requiredMargin - requiredMargin * uint(fillAmount) / uint(size));
+        if (price < getUpperBound()) {
+            requiredMargin = getRequiredMargin(size, getUpperBound());
+        }
         assertEq(marginAccount.reservedMargin(bob), requiredMargin - requiredMargin * uint(fillAmount) / uint(size));
 
         IOrderBook.Order[2] memory orders;
@@ -532,5 +561,10 @@ contract OrderBookTests is Utils {
         orderBook.cancelOrder(orders[0]);
         assertEq(orderBook.reduceOnlyAmount(alice, 0), 0);
         assertEq(orderBook.reduceOnlyAmount(bob, 0), 0);
+    }
+
+    function getRequiredMargin(int size, uint price) internal view returns (uint) {
+        uint quote = stdMath.abs(size) * price / 1e18;
+        return (quote / uint(MAX_LEVERAGE) + quote * uint(takerFee) / 1e6);
     }
 }

@@ -38,7 +38,7 @@ contract MarginAccountTests is Utils {
         // place another order to make reservedMargin non-zero
         placeOrder(0, aliceKey, size + MIN_SIZE, price, false);
         placeOrder(0, bobKey, size + MIN_SIZE, price, false);
-        uint reservedMargin = orderBook.getRequiredMargin(size + MIN_SIZE, price);
+        uint reservedMargin = orderBook.getRequiredMargin(size + MIN_SIZE, price, getUpperBound());
         assertAvailableMargin(alice, 0, int(reservedMargin), utilizedMargin);
         assertAvailableMargin(bob, 0, int(reservedMargin), utilizedMargin);
 

@@ -52,7 +52,7 @@ describe('Order Book', function () {
     })
 
     it('place an order', async function() {
-        await expect(orderBook.placeOrder(shortOrder)).to.revertedWith('OB_sender_is_not_trader')
+        await expect(orderBook.placeOrder(shortOrder)).to.revertedWith('OB.not_trader_or_tradingAuthority')
         shortOrder2 = JSON.parse(JSON.stringify(shortOrder))
         shortOrder2.salt = shortOrder.salt.add(1)
         shortOrder2Hash = await orderBook.getOrderHash(shortOrder2)
@@ -267,7 +267,7 @@ describe('Order Book', function () {
         const { size } = await amm.positions(alice.address)
 
         const charlie = signers[7]
-        await addMargin(charlie, _1e6.mul(4000))
+        await addMargin(charlie, _1e6.mul(4260))
         const { order } = await placeOrder(size, markPrice, charlie)
 
         // liquidate
@@ -301,7 +301,7 @@ describe('Order Book - Error Handling', function () {
         await oracle.setUnderlyingPrice(wavax.address, initialAvaxPrice)
         await marginAccount.whitelistCollateral(wavax.address, 0.7 * 1e6) // weight = 0.7
         // add margin for alice
-        const wavaxMargin = _1e18.mul(150) // 10 * 150 * 0.7 = 1050
+        const wavaxMargin = _1e18.mul(180) // 10 * 150 * 0.7 = 1050
         await wavax.mint(alice.address, wavaxMargin)
         await addMargin(alice, wavaxMargin, wavax, 1)
         // add margin for bob
@@ -322,7 +322,7 @@ describe('Order Book - Error Handling', function () {
         }
         order1Hash = await orderBook.getOrderHash(shortOrder)
 
-        await expect(orderBook.placeOrder(shortOrder)).to.revertedWith('OB_sender_is_not_trader')
+        await expect(orderBook.placeOrder(shortOrder)).to.revertedWith('OB.not_trader_or_tradingAuthority')
         const tx = await orderBook.connect(alice).placeOrder(shortOrder)
         const _timestamp = (await ethers.provider.getBlock(tx.blockNumber)).timestamp
         await expect(tx).to.emit(orderBook, "OrderPlaced").withArgs(

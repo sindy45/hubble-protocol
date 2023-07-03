@@ -45,7 +45,11 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
     IHubbleBibliophile public bibliophile;
 
     uint256 public useNewPricingAlgorithm; // declared as uint256 to take 1 full slot
-    uint256[49] private __gap;
+
+    // trader => tradingAuthority => true/false
+    mapping(address => mapping(address => bool)) public isTradingAuthority;
+
+    uint256[48] private __gap;
 
     modifier onlyValidator {
         require(isValidator[msg.sender], "OB.only_validator");
@@ -88,38 +92,47 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
      * @inheritdoc IOrderBook
     */
     function placeOrders(Order[] memory orders) public whenNotPaused {
+        address sender = _msgSender();
         address trader = orders[0].trader;
-        int[] memory posSizes = _getPositionSizes(trader);
+        require(sender == trader || isTradingAuthority[trader][sender], "OB.not_trader_or_tradingAuthority");
+        (int[] memory posSizes, uint[] memory upperBounds) = _getPositionSizesAndUpperBoundsForMarkets(trader);
         uint reserveAmount;
         for (uint i = 0; i < orders.length; i++) {
             require(orders[i].trader == trader, "OB_trader_mismatch");
-            reserveAmount += _placeOrder(orders[i], posSizes[orders[i].ammIndex]);
+            reserveAmount += _placeOrder(orders[i], posSizes[orders[i].ammIndex], upperBounds[orders[i].ammIndex]);
         }
         if (reserveAmount != 0) {
             marginAccount.reserveMargin(trader, reserveAmount);
         }
     }
 
-    function _getPositionSizes(address trader) internal view returns (int[] memory) {
-        if (address(bibliophile) != address(0)) {
+    function _getPositionSizes(address trader) internal view returns (int[] memory posSizes) {
+        (posSizes,) = _getPositionSizesAndUpperBoundsForMarkets(trader);
+    }
+
+    function _getPositionSizesAndUpperBoundsForMarkets(address trader) internal view returns(int[] memory posSizes, uint[] memory upperBounds) {
+        address _precompile = address(bibliophile);
+        if (_precompile != address(0)) {
             // precompile magic allows us to execute this for a fixed gas
-            return bibliophile.getPositionSizes(trader);
+            return IHubbleBibliophile(_precompile).getPositionSizesAndUpperBoundsForMarkets(trader);
         }
         // folowing is the fallback code if precompile is not available. Precompile is intended to perform the same computation as the following code
         uint numAmms = clearingHouse.getAmmsLength();
-        int[] memory posSizes = new int[](numAmms);
+        posSizes = new int[](numAmms);
+        upperBounds = new uint[](numAmms);
         for (uint i; i < numAmms; ++i) {
-            (posSizes[i],,,) = IAMM(clearingHouse.amms(i)).positions(trader);
+            IAMM amm = IAMM(clearingHouse.amms(i));
+            (posSizes[i],,,) = amm.positions(trader);
+            uint spreadLimit = amm.maxOracleSpreadRatio();
+            uint256 oraclePrice = amm.getUnderlyingPrice();
+            upperBounds[i] = oraclePrice * (1e6 + spreadLimit) / 1e6;
         }
-        return posSizes;
     }
 
     /**
      * @dev has some special handling for reduceOnly orders
     */
-    function _placeOrder(Order memory order, int size) internal returns (uint reserveAmount) {
-        require(msg.sender == order.trader, "OB_sender_is_not_trader");
-
+    function _placeOrder(Order memory order, int size, uint upperBound) internal returns (uint reserveAmount) {
         // orders should be multiple of pre-defined minimum quantity to prevent spam with dust orders
         require(isMultiple(order.baseAssetQuantity, minSizes[order.ammIndex]), NOT_IS_MULTIPLE);
 
@@ -145,7 +158,7 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
                 require(reduceOnlyAmount[order.trader][order.ammIndex] == 0, "OB_cancel_reduce_only_order_first");
             }
             // reserve margin for the order
-            reserveAmount = getRequiredMargin(order.baseAssetQuantity, order.price);
+            reserveAmount = getRequiredMargin(order.baseAssetQuantity, order.price, upperBound);
         }
 
         // add orderInfo for the corresponding orderHash
@@ -220,22 +233,33 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         whenNotPaused
         onlyValidator
     {
-        MatchInfo[2] memory matchInfo;
-        matchInfo[0].orderHash = getOrderHash(orders[0]);
-        matchInfo[1].orderHash = getOrderHash(orders[1]);
+        IClearingHouse.Instruction[2] memory instructions;
+        instructions[0] = IClearingHouse.Instruction({
+            ammIndex: orders[0].ammIndex,
+            trader: orders[0].trader,
+            orderHash: getOrderHash(orders[0]),
+            mode : IClearingHouse.OrderExecutionMode(0) // will be ovewritten
+        });
+        instructions[1] = IClearingHouse.Instruction({
+            ammIndex: orders[1].ammIndex,
+            trader: orders[1].trader,
+            orderHash: getOrderHash(orders[1]),
+            mode: IClearingHouse.OrderExecutionMode(0) // will be ovewritten
+        });
 
-        uint fillPrice;
-        (fillPrice, matchInfo[0].mode, matchInfo[1].mode) = useNewPricingAlgorithm == 1 ?
-            bibliophile.validateOrdersAndDetermineFillPrice(orders, [matchInfo[0].orderHash, matchInfo[1].orderHash], fillAmount) :
+        (uint fillPrice, OrderExecutionMode mode0, OrderExecutionMode mode1) = useNewPricingAlgorithm == 1 ?
+            bibliophile.validateOrdersAndDetermineFillPrice(orders, [instructions[0].orderHash, instructions[1].orderHash], fillAmount) :
             // folowing is the fallback code if precompile is not available. Precompile is intended to perform the same computation as the following code
-            _validateOrdersAndDetermineFillPrice(orders, [matchInfo[0].orderHash, matchInfo[1].orderHash], fillAmount);
+            _validateOrdersAndDetermineFillPrice(orders, [instructions[0].orderHash, instructions[1].orderHash], fillAmount);
+        instructions[0].mode = IClearingHouse.OrderExecutionMode(uint8(mode0));
+        instructions[1].mode = IClearingHouse.OrderExecutionMode(uint8(mode1));
 
-        try clearingHouse.openComplementaryPositions(orders, matchInfo, fillAmount, fillPrice) returns (uint256 openInterestNotional) {
-            _updateOrder(orders[0], matchInfo[0].orderHash, fillAmount);
-            _updateOrder(orders[1], matchInfo[1].orderHash, -fillAmount);
+        try clearingHouse.openComplementaryPositions(instructions, fillAmount, fillPrice) returns (uint256 openInterestNotional) {
+            _updateOrder(orders[0], instructions[0].orderHash, fillAmount);
+            _updateOrder(orders[1], instructions[1].orderHash, -fillAmount);
             emit OrdersMatched(
-                matchInfo[0].orderHash,
-                matchInfo[1].orderHash,
+                instructions[0].orderHash,
+                instructions[1].orderHash,
                 fillAmount.toUint256(), // asserts fillAmount is +ve
                 fillPrice,
                 openInterestNotional,
@@ -274,13 +298,24 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
         // Checks and Effects
         require(orders[0].baseAssetQuantity > 0, "OB_order_0_is_not_long");
         require(orders[1].baseAssetQuantity < 0, "OB_order_1_is_not_short");
-        require(orders[0].ammIndex == orders[1].ammIndex, "OB_orders_for_different_amms");
+        uint ammIndex = orders[0].ammIndex;
+        require(ammIndex == orders[1].ammIndex, "OB_orders_for_different_amms");
         require(orders[0].price /* buy */ >= orders[1].price /* sell */, "OB_orders_do_not_match");
         require(orderInfo[orderHashes[0]].status == OrderStatus.Placed, "OB_invalid_order");
         require(orderInfo[orderHashes[1]].status == OrderStatus.Placed, "OB_invalid_order");
 
+        int[] memory posSizes;
+        if (orders[0].reduceOnly) {
+            posSizes = _getPositionSizes(orders[0].trader);
+            require(posSizes[ammIndex] <= -fillAmount, "OB_reduce_only_amount_exceeded");
+        }
+        if (orders[1].reduceOnly) {
+            posSizes = _getPositionSizes(orders[1].trader);
+            // fillAmount > 0, so no need to check if posSizes[orders[1].ammIndex] > 0
+            require(posSizes[ammIndex] >= fillAmount, "OB_reduce_only_amount_exceeded");
+        }
         // fillAmount should be multiple of min size requirement and fillAmount should be non-zero
-        require(isMultiple(fillAmount, minSizes[orders[0].ammIndex]), NOT_IS_MULTIPLE);
+        require(isMultiple(fillAmount, minSizes[ammIndex]), NOT_IS_MULTIPLE);
 
         uint blockPlaced0 = orderInfo[orderHashes[0]].blockPlaced;
         uint blockPlaced1 = orderInfo[orderHashes[1]].blockPlaced;
@@ -298,7 +333,7 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
             // Bulls (Longs) are our friends. We give them a favorable price in this corner case
             fillPrice = orders[1].price;
         }
-        _validateSpread(orders[0].ammIndex, fillPrice, false);
+        _validateSpread(ammIndex, fillPrice, false);
     }
 
     /**
@@ -350,16 +385,17 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
             fillAmount *= -1;
         }
 
-        MatchInfo memory matchInfo = MatchInfo({
-            orderHash: orderHash,
-            mode: OrderExecutionMode.Maker // execute matching order as maker order
+        IClearingHouse.Instruction memory instruction = IClearingHouse.Instruction({
+            ammIndex: order.ammIndex,
+            trader: order.trader,
+            orderHash: getOrderHash(order),
+            mode: IClearingHouse.OrderExecutionMode.Maker
         });
-
-        try clearingHouse.liquidate(order, matchInfo, fillAmount, fillPrice, trader) returns (uint256 openInterestNotional) {
-            _updateOrder(order, matchInfo.orderHash, fillAmount);
+        try clearingHouse.liquidate(instruction, fillAmount, fillPrice, trader) returns (uint256 openInterestNotional) {
+            _updateOrder(order, instruction.orderHash, fillAmount);
             emit LiquidationOrderMatched(
                 trader,
-                matchInfo.orderHash,
+                instruction.orderHash,
                 liquidationAmount,
                 order.price,
                 openInterestNotional,
@@ -368,7 +404,7 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
             );
         } catch Error(string memory err) { // catches errors emitted from "revert/require"
             try this.parseMatchingError(err) returns(bytes32 _orderHash, string memory reason) {
-                if (matchInfo.orderHash == _orderHash) { // err in openPosition for the order
+                if (instruction.orderHash == _orderHash) { // err in openPosition for the order
                     emit OrderMatchingError(_orderHash, reason);
                     reason = "OrderMatchingError";
                 } // else err in liquidating the trader; but we emit this either ways so that we can track liquidation didnt succeed for whatever reason
@@ -420,9 +456,13 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
 
     /**
     * @notice Get the margin required to place an order
-    * @dev includes trade fee (taker fee)
+    * @dev includes trade fee (taker fee).
+    * For a short order, margin is calculated using the upper bound price of the market.
     */
-    function getRequiredMargin(int256 baseAssetQuantity, uint256 price) public view returns(uint256 requiredMargin) {
+    function getRequiredMargin(int256 baseAssetQuantity, uint256 price, uint upperBound) public view returns(uint256 requiredMargin) {
+        if (baseAssetQuantity < 0 && price < upperBound) {
+            price = upperBound;
+        }
         uint quoteAsset = abs(baseAssetQuantity).toUint256() * price / 1e18;
         requiredMargin = quoteAsset * minAllowableMargin / 1e6;
         requiredMargin += quoteAsset * takerFee / 1e6;
@@ -470,6 +510,28 @@ contract OrderBook is IOrderBook, VanillaGovernable, Pausable, EIP712Upgradeable
     function _deleteOrderInfo(bytes32 orderHash) internal {
         delete orderInfo[orderHash].blockPlaced;
         delete orderInfo[orderHash].reservedMargin;
+    }
+
+    /* ****************** */
+    /*  Trading Authority */
+    /* ****************** */
+
+    /**
+     * @notice Whitelist a trading authority to be able to place orders on behalf of the caller and optionally transfer some gas token to the authority
+    */
+    function whitelistTradingAuthority(address authority) payable external {
+        isTradingAuthority[_msgSender()][authority] = true;
+        if (msg.value > 0) {
+            (bool success, ) = payable(authority).call{value: msg.value}("");
+            require(success, "OrderBook: failed to airdrop gas to authority");
+        }
+    }
+
+    /**
+     * @notice Revoke trading authority of an address
+    */
+    function revokeTradingAuthority(address authority) external {
+        isTradingAuthority[_msgSender()][authority] = false;
     }
 
     /* ****************** */

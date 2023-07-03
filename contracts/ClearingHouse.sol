@@ -89,14 +89,12 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
      * Can only be called by the orderBook contract.
      * @dev reverts the all the state storage updates within the context of this call (and sub-calls) if an intermediate step of the call fails
      * @param orders orders[0] is the long order and orders[1] is the short order
-     * @param matchInfo intermediate information about which order came first and which eventually decides what fee to charge
      * @param fillAmount Amount of base asset to be traded between the two orders. Should be +ve. Scaled by 1e18
      * @param fulfillPrice Price at which the orders should be matched. Scaled by 1e6.
      * @return openInterest The total open interest in the market after the trade is executed
     */
     function openComplementaryPositions(
-        IOrderBook.Order[2] calldata orders,
-        IOrderBook.MatchInfo[2] calldata matchInfo,
+        Instruction[2] calldata orders,
         int256 fillAmount,
         uint fulfillPrice
     )   external
@@ -104,18 +102,18 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         returns (uint256 openInterest)
     {
 
-        try this.openPosition(orders[0], fillAmount, fulfillPrice, matchInfo[0].mode, false) {
+        try this.openPosition(orders[0], fillAmount, fulfillPrice, false) {
             // only executed if the above doesn't revert
-            try this.openPosition(orders[1], -fillAmount, fulfillPrice, matchInfo[1].mode, true) returns(uint256 _openInterest) {
+            try this.openPosition(orders[1], -fillAmount, fulfillPrice, true) returns(uint256 _openInterest) {
                 openInterest = _openInterest;
                 // only executed if the above doesn't revert
             } catch Error(string memory reason) {
                 // will revert all state changes including those made in this.openPosition(orders[0])
-                revert(string(abi.encode(matchInfo[1].orderHash, reason)));
+                revert(string(abi.encode(orders[1].orderHash, reason)));
             }
         } catch Error(string memory reason) {
             // surface up the error to the calling contract
-            revert(string(abi.encode(matchInfo[0].orderHash, reason)));
+            revert(string(abi.encode(orders[0].orderHash, reason)));
         }
     }
 
@@ -124,47 +122,44 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         int256 feeCharged;
         int realizedPnl;
         bool isPositionIncreased;
+        int size;
+        uint openNotional;
     }
 
    /**
     * @notice Open/Modify/Close Position
     * @dev uses "onlyMySelf" modifier to make sure the calls come from within the same contract.
     * This function was designed in a manner that helps us use the try-catch feature of solidity to revert all state changes if any of the sub-calls revert.
-    * @param mode Whether we are executing is a maker, taker order or a liquidation
     * @param is2ndTrade Whether this is the second trade in a pair of trades that are executed together, which is used to update the twap in the AMM contract
     */
-    function openPosition(IOrderBook.Order calldata order, int256 fillAmount, uint256 fulfillPrice, IOrderBook.OrderExecutionMode mode, bool is2ndTrade) public onlyMySelf returns(uint openInterest) {
-        return _openPosition(order, fillAmount, fulfillPrice, mode, is2ndTrade);
+    function openPosition(Instruction calldata order, int256 fillAmount, uint256 fulfillPrice, bool is2ndTrade) public onlyMySelf returns(uint openInterest) {
+        return _openPosition(order, fillAmount, fulfillPrice, is2ndTrade);
     }
 
-    function _openPosition(IOrderBook.Order memory order, int256 fillAmount, uint256 fulfillPrice, IOrderBook.OrderExecutionMode mode, bool is2ndTrade) internal returns(uint openInterest) {
+    function _openPosition(Instruction memory order, int256 fillAmount, uint256 fulfillPrice, bool is2ndTrade) internal returns(uint openInterest) {
         updatePositions(order.trader); // settle funding payments
         uint quoteAsset = abs(fillAmount).toUint256() * fulfillPrice / 1e18;
-        int size;
-        uint openNotional;
         VarGroup memory varGroup;
         (
             varGroup.realizedPnl,
             varGroup.isPositionIncreased,
-            size,
-            openNotional,
+            varGroup.size,
+            varGroup.openNotional,
             openInterest
-        ) = amms[order.ammIndex].openPosition(order, fillAmount, fulfillPrice, is2ndTrade);
-
+        ) = amms[order.ammIndex].openPosition(order.trader, fillAmount, fulfillPrice, is2ndTrade);
         {
             int toFeeSink;
-            (toFeeSink, varGroup.feeCharged) = _chargeFeeAndRealizePnL(order.trader, varGroup.realizedPnl, quoteAsset, mode);
+            (toFeeSink, varGroup.feeCharged) = _chargeFeeAndRealizePnL(order.trader, varGroup.realizedPnl, quoteAsset, order.mode);
             if (toFeeSink != 0) {
                 marginAccount.transferOutVusd(feeSink, toFeeSink.toUint256());
             }
         }
         {
-            // isPositionIncreased is true when the position is increased or reversed
             if (varGroup.isPositionIncreased) {
+                // best of two margin fractions should be above min allowable margin
                 assertMarginRequirement(order.trader);
-                require(order.reduceOnly == false, "CH: reduceOnly order can only reduce position");
             }
-            emit PositionModified(order.trader, order.ammIndex, fillAmount, fulfillPrice, varGroup.realizedPnl, size, openNotional, varGroup.feeCharged, mode, _blockTimestamp());
+            emit PositionModified(order.trader, order.ammIndex, fillAmount, fulfillPrice, varGroup.realizedPnl, varGroup.size, varGroup.openNotional, varGroup.feeCharged, order.mode, _blockTimestamp());
         }
     }
 
@@ -176,16 +171,13 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
      * @notice Pass instructions to the AMM contract to the liquidate 1 position and open/close/modify the other in a market.
      * Can only be called by the orderBook contract.
      * @dev reverts the all the state storage updates within the context of this call (and sub-calls) if an intermediate step of the call fails
-     * @param order long order if liquidating a long position, short order if liquidating a short position
-     * @param matchInfo intermediate information about the order being matched
      * @param liquidationAmount -ve if liquidating a short pos, +ve if long. Scaled by 1e18
      * @param price Price at which the liquidation should be executed. Scaled by 1e6.
      * @param trader Trader being liquidated
      * @return openInterest The total open interest in the market after the liquidation is executed
     */
     function liquidate(
-        IOrderBook.Order calldata order,
-        IOrderBook.MatchInfo calldata matchInfo,
+        Instruction calldata instruction,
         int256 liquidationAmount,
         uint price,
         address trader
@@ -195,13 +187,13 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         onlyOrderBook
         returns (uint256 openInterest)
     {
-        try this.liquidateSingleAmm(trader, order.ammIndex, price, liquidationAmount) {
+        try this.liquidateSingleAmm(trader, instruction.ammIndex, price, liquidationAmount) {
             // only executed if the above doesn't revert
-            try this.openPosition(order, liquidationAmount, price, matchInfo.mode, true) returns(uint256 _openInterest) {
+            try this.openPosition(instruction, liquidationAmount, price, true) returns(uint256 _openInterest) {
                 openInterest = _openInterest;
             } catch Error(string memory reason) {
                 // will revert all state changes including those made in this.liquidateSingleAmm
-                revert(string(abi.encode(matchInfo.orderHash, reason)));
+                revert(string(abi.encode(instruction.orderHash, reason)));
             }
         } catch Error(string memory reason) {
             // surface up the error to the calling contract
@@ -223,7 +215,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
             uint openNotional
         ) = amms[ammIndex].liquidatePosition(trader, price, toLiquidate);
 
-        (int liquidationFee,) = _chargeFeeAndRealizePnL(trader, realizedPnl, quoteAsset, IOrderBook.OrderExecutionMode.Liquidation);
+        (int liquidationFee,) = _chargeFeeAndRealizePnL(trader, realizedPnl, quoteAsset, OrderExecutionMode.Liquidation);
         marginAccount.transferOutVusd(feeSink, liquidationFee.toUint256()); // will revert if liquidationFee is negative
         emit PositionLiquidated(trader, ammIndex, toLiquidate, price, realizedPnl, size, openNotional, liquidationFee, _blockTimestamp());
     }
@@ -298,24 +290,24 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         address trader,
         int realizedPnl,
         uint quoteAsset,
-        IOrderBook.OrderExecutionMode mode
+        OrderExecutionMode mode
     )
         internal
         returns (int toFeeSink, int feeCharged)
     {
-        if (mode == IOrderBook.OrderExecutionMode.Taker) {
+        if (mode == OrderExecutionMode.Taker) {
             feeCharged = _calculateTakerFee(quoteAsset);
             if (makerFee < 0) {
                 // when maker fee is -ve, don't send to fee sink
                 // it will be credited to the maker when processing the other side of the trade
                 toFeeSink = _calculateMakerFee(quoteAsset); // toFeeSink is now -ve
             }
-        } else if (mode == IOrderBook.OrderExecutionMode.SameBlock) {
+        } else if (mode == OrderExecutionMode.SameBlock) {
             // charge taker fee without expecting a corresponding maker component
             feeCharged = _calculateTakerFee(quoteAsset);
-        } else if (mode == IOrderBook.OrderExecutionMode.Maker) {
+        } else if (mode == OrderExecutionMode.Maker) {
             feeCharged = _calculateMakerFee(quoteAsset); // can be -ve or +ve
-        }  else if (mode == IOrderBook.OrderExecutionMode.Liquidation){
+        }  else if (mode == OrderExecutionMode.Liquidation){
             feeCharged = _calculateLiquidationPenalty(quoteAsset);
             if (makerFee < 0) {
                 // when maker fee is -ve, don't send to fee sink
@@ -326,7 +318,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
 
         if (feeCharged > 0) {
             toFeeSink += feeCharged;
-            if (mode != IOrderBook.OrderExecutionMode.Liquidation) {
+            if (mode != OrderExecutionMode.Liquidation) {
                 (uint discount, uint referralBonus) = _payReferralBonus(trader, feeCharged.toUint256());
                 feeCharged -= discount.toInt256();
                 // deduct referral bonus (already credit to referrer) from fee sink share
@@ -418,7 +410,12 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     }
 
     /**
-    * @dev This method assumes that pending funding has been settled
+    * @dev This method assumes that pending funding has been settled.
+    * Takes the best pnl of (oracle_price, mark_price) for each market.
+    * Utilized in: (If this changes please update here)
+    * 1. ClearingHouse on increase position
+    * 2. MarginAccount while withdrawing margin.
+    * The idea is that if best_leverage <= 5x then worst_lev >= 10x only possible if maxOracleSpreadRatio is >= 12.5%
     */
     function assertMarginRequirement(address trader) public view {
         require(
@@ -557,5 +554,13 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
 
     function setBibliophile(address _bibliophile) external onlyGovernance {
         bibliophile = IHubbleBibliophile(_bibliophile);
+    }
+
+    function setOrderBookWhitelist(address _orderBook, bool _status) external onlyGovernance {
+        isWhitelistedOrderBook[_orderBook] = _status;
+    }
+
+    function setFeeSink(address _feeSink) external onlyGovernance {
+        feeSink = _feeSink;
     }
 }
