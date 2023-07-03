@@ -1,6 +1,6 @@
 {
   "name": "core",
-  "version": "2.0.0-next-rc.2",
+  "version": "2.0.0-next-rc.3",
   "description": "",
   "main": "index.js",
   "scripts": {
