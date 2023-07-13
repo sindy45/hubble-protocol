@@ -6,7 +6,7 @@ import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 
 import { Governable } from "./legos/Governable.sol";
-import { ERC20Detailed, IOracle, IRegistry, IAMM, IClearingHouse, IOrderBook } from "./Interfaces.sol";
+import { ERC20Detailed, IOracle, IRegistry, IAMM, IClearingHouse } from "./Interfaces.sol";
 
 /**
  * @title Maintains the information about open positions, open notional, oracle price, funding rate, etc.

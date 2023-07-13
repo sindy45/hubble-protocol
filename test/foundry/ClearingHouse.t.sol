@@ -236,7 +236,6 @@ contract ClearingHouseTests is Utils {
         // liquidate alice
         uint toLiquidate;
         {
-            vm.roll(block.number + 1); // to avoid AMM.liquidation_not_allowed_after_trade
             (,,,uint liquidationThreshold) = amm.positions(alice);
             toLiquidate = Math.min(stdMath.abs(size), liquidationThreshold);
             toLiquidate = toLiquidate / uint(MIN_SIZE) * uint(MIN_SIZE);
@@ -244,7 +243,7 @@ contract ClearingHouseTests is Utils {
 
         vm.expectEmit(true, true, false, true, address(orderBook));
         emit LiquidationOrderMatched(address(alice), orderHash, toLiquidate, price, stdMath.abs(2 * size), address(this), block.timestamp);
-        orderBook.liquidateAndExecuteOrder(alice, order, toLiquidate);
+        orderBook.liquidateAndExecuteOrder(alice, encodeLimitOrder(order), toLiquidate);
 
         {
             (,int filledAmount, uint reservedMargin, OrderBook.OrderStatus status) = orderBook.orderInfo(orderHash);

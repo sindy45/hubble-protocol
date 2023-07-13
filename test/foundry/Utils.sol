@@ -6,6 +6,10 @@ import "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.so
 import "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
 import "@layerzerolabs/solidity-examples/contracts/mocks/LZEndpointMock.sol";
 import "../../contracts/orderbooks/OrderBook.sol";
+import "../../contracts/orderbooks/LimitOrderBook.sol";
+import "../../contracts/orderbooks/ImmediateOrCancelOrders.sol";
+import "../../contracts/precompiles/IHubbleBibliophile.sol";
+import "../../contracts/precompiles/Juror.sol";
 import "../../contracts/ClearingHouse.sol";
 import "../../contracts/AMM.sol";
 import "../../contracts/MarginAccount.sol";
@@ -37,6 +41,9 @@ abstract contract Utils is Test {
     Registry public registry;
     HubbleViewer public hubbleViewer;
     RestrictedErc20 public wavax;
+    Juror public juror;
+    Bibliophile public bibliophile;
+    ImmediateOrCancelOrders public iocOrderBook;
     address public feeSink = makeAddr("feeSink");
     address public governance = makeAddr("governance");
     int public makerFee = 0.06 * 1e4; // 0.06%
@@ -129,7 +136,7 @@ abstract contract Utils is Test {
         proxy = new TransparentUpgradeableProxy(
             address(obImpl),
             address(proxyAdmin),
-            abi.encodeWithSelector(OrderBook.initialize.selector, "Hubble", "2.0", governance)
+            abi.encodeWithSelector(LimitOrderBook.initialize.selector, "Hubble", "2.0", governance)
         );
         orderBook = OrderBook(address(proxy));
 
@@ -149,7 +156,20 @@ abstract contract Utils is Test {
 
         hubbleViewer = new HubbleViewer(address(clearingHouse), address(marginAccount), address(registry));
 
+        juror = new Juror(address(clearingHouse), address(orderBook), governance);
+        bibliophile = new Bibliophile(address(clearingHouse));
+
+        ImmediateOrCancelOrders iocOBImpl = new ImmediateOrCancelOrders();
+        proxy = new TransparentUpgradeableProxy(
+            address(iocOBImpl),
+            address(proxyAdmin),
+            abi.encodeWithSelector(ImmediateOrCancelOrders.initialize.selector, governance, address(orderBook), address(juror))
+        );
+
+        iocOrderBook = ImmediateOrCancelOrders(address(proxy));
+
         vm.startPrank(governance);
+        juror.setIOCOrderBook(address(iocOrderBook));
         marginAccount.syncDeps(address(registry), 5e4); // liquidationIncentive = 5% = .05 scaled 6
         insuranceFund.syncDeps(address(registry));
         clearingHouse.setParams(
@@ -162,6 +182,12 @@ abstract contract Utils is Test {
             0.05 * 1e6 // liquidationPenalty = 5%
         );
         oracle.setUpdater(address(this), true);
+        orderBook.setJuror(address(juror));
+        orderBook.setBibliophile(address(bibliophile));
+        // IOC orderType = 1
+        orderBook.setOrderHandler(1, address(iocOrderBook));
+        clearingHouse.setBibliophile(address(bibliophile));
+        marginAccount.setBibliophile(address(bibliophile));
         vm.stopPrank();
 
         wavax = setupRestrictedTestToken('Hubble Avax', 'hWAVAX', 18);
@@ -261,7 +287,7 @@ abstract contract Utils is Test {
         bytes32 orderHash
     ) {
         trader = vm.addr(traderKey);
-        order = IOrderBook.Order(
+        order = ILimitOrderBook.Order(
             ammIndex,
             trader,
             size,
@@ -309,7 +335,7 @@ abstract contract Utils is Test {
         }
         (orders[1], signatures[1], ordersHash[1]) = placeOrder(ammIndex, trader2Key, -int(stdMath.abs(size)), price, reduceOnly);
 
-        orderBook.executeMatchedOrders([orders[0], orders[1]], int(stdMath.abs(fillAmount)));
+        orderBook.executeMatchedOrders([encodeLimitOrder(orders[0]), encodeLimitOrder(orders[1])], int(stdMath.abs(fillAmount)));
     }
 
     function assertPositions(address trader, int size, uint openNotional, int unrealizedPnl, uint avgOpen) internal {
@@ -358,5 +384,9 @@ abstract contract Utils is Test {
         uint spreadLimit = amm.maxOracleSpreadRatio();
         uint256 oraclePrice = amm.getUnderlyingPrice();
         upperBound = oraclePrice * (1e6 + spreadLimit) / 1e6;
+    }
+
+    function encodeLimitOrder(ILimitOrderBook.Order memory order) internal pure returns (bytes memory) {
+        return abi.encode(0, abi.encode(order));
     }
 }

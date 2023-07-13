@@ -10,9 +10,6 @@ const _1e18 = ethers.constants.WeiPerEther
 const feeSink = new ethers.Wallet.createRandom()
 
 const DEFAULT_TRADE_FEE = 0.0005 * 1e6 /* 0.05% */
-const OBGenesisProxyAddress = '0x0300000000000000000000000000000000000000'
-const MAGenesisProxyAddress = '0x0300000000000000000000000000000000000001'
-const CHGenesisProxyAddress = '0x0300000000000000000000000000000000000002'
 
 let txOptions = {}
 const verification = []
@@ -51,14 +48,18 @@ async function setupContracts(options = {}) {
         AMM,
         MinimalForwarder,
         TransparentUpgradeableProxy,
-        ProxyAdmin
+        ProxyAdmin,
+        Bibliophile,
+        Juror
     ] = await Promise.all([
         ethers.getContractFactory('Registry'),
         ethers.getContractFactory('ERC20Mintable'),
         ethers.getContractFactory(options.amm && options.amm.testAmm ? 'TestAmm' : 'AMM'),
         ethers.getContractFactory('contracts/MinimalForwarder.sol:MinimalForwarder'),
         ethers.getContractFactory('TransparentUpgradeableProxy'),
-        ethers.getContractFactory('ProxyAdmin')
+        ethers.getContractFactory('ProxyAdmin'),
+        ethers.getContractFactory('Bibliophile'),
+        ethers.getContractFactory('Juror')
     ]))
 
     ;([ proxyAdmin, forwarder, usdc ] = await Promise.all([
@@ -73,38 +74,77 @@ async function setupContracts(options = {}) {
         ['Hubble USD', 'hUSD']
     )
 
+    let bibliophile, juror
     // setup genesis proxies on the hubblenet if requested
     let clearingHouseProxy, orderBookProxy, marginAccountProxy
     if (options.genesisProxies) {
-        ;([orderBookProxy, marginAccountProxy, clearingHouseProxy] = await Promise.all([
-            ethers.getContractAt('GenesisTUP', OBGenesisProxyAddress),
-            ethers.getContractAt('GenesisTUP', MAGenesisProxyAddress),
-            ethers.getContractAt('GenesisTUP', CHGenesisProxyAddress)
+        const genesisContracts = [
+            'orderBookGenesisAddress',
+            'marginAccountGenesisAddress',
+            'clearingHouseGenesisAddress',
+            'bibliophilePrecompileAddress',
+            'jurorPrecompileAddress',
+            'iocOrderBookGenesisAddress',
+        ]
+        genesisContracts.forEach((contract) => {
+            if (!options.genesisProxies[contract]) {
+                throw new Error(`missing ${contract} when using genesis proxies`)
+            }
+        })
+        bibliophile = await ethers.getContractAt('Bibliophile', options.genesisProxies.bibliophilePrecompileAddress)
+        juror = await ethers.getContractAt('Juror', options.genesisProxies.jurorPrecompileAddress)
+
+        ;([orderBookProxy, marginAccountProxy, clearingHouseProxy, iocOrderBookProxy ] = await Promise.all([
+            ethers.getContractAt('GenesisTUP', options.genesisProxies.orderBookGenesisAddress),
+            ethers.getContractAt('GenesisTUP', options.genesisProxies.marginAccountGenesisAddress),
+            ethers.getContractAt('GenesisTUP', options.genesisProxies.clearingHouseGenesisAddress),
+            ethers.getContractAt('GenesisTUP', options.genesisProxies.iocOrderBookGenesisAddress)
         ]))
         await Promise.all([
             orderBookProxy.setGenesisAdmin(proxyAdmin.address, getTxOptions()),
             marginAccountProxy.setGenesisAdmin(proxyAdmin.address, getTxOptions()),
-            clearingHouseProxy.setGenesisAdmin(proxyAdmin.address, getTxOptions())
+            clearingHouseProxy.setGenesisAdmin(proxyAdmin.address, getTxOptions()),
+            iocOrderBookProxy.setGenesisAdmin(proxyAdmin.address, getTxOptions())
         ])
-    }
-
-    let initArgs = [ governance, vusd.address ]
-    let deployArgs = [ forwarder.address ]
-    if (options.genesisProxies) {
-        marginAccount = await setupGenesisProxy('MarginAccount', proxyAdmin, initArgs, deployArgs, marginAccountProxy)
+        ;([marginAccount, orderBook, iocOrderBook] = await Promise.all([
+            setupGenesisProxy('MarginAccount', proxyAdmin, [ governance, vusd.address ], [ forwarder.address ], marginAccountProxy),
+            setupGenesisProxy('OrderBook', proxyAdmin, [ 'Hubble', '2.0', governance ], [ clearingHouseProxy.address, marginAccountProxy.address ], orderBookProxy),
+            setupGenesisProxy('ImmediateOrCancelOrders', proxyAdmin, [ governance, orderBookProxy.address, juror.address ], [], iocOrderBookProxy)
+        ]))
     } else {
         marginAccount = await setupUpgradeableProxy(
             `${options.mockMarginAccount ? 'Mock' : ''}MarginAccount`,
             proxyAdmin.address,
-            initArgs,
-            deployArgs,
+            [ governance, vusd.address ],
+            [ forwarder.address ],
             marginAccountProxy
         )
+        let constructorArguments = [
+            proxyAdmin.address /* random contract address */,
+            proxyAdmin.address,
+            '0x'
+        ]
+        clearingHouseProxy = await TransparentUpgradeableProxy.deploy(...constructorArguments, getTxOptions())
+        orderBook = await setupUpgradeableProxy(
+            'OrderBook',
+            proxyAdmin.address,
+            [ 'Hubble', '2.0', governance ],
+            [ clearingHouseProxy.address, marginAccount.address ]
+        )
+        juror = await Juror.deploy(clearingHouseProxy.address, orderBook.address, governance, getTxOptions())
+        bibliophile = await Bibliophile.deploy(clearingHouseProxy.address, getTxOptions())
+        iocOrderBook = await setupUpgradeableProxy(
+            'ImmediateOrCancelOrders',
+            proxyAdmin.address,
+            [governance, orderBook.address, juror.address],
+            []
+        )
+        await juror.setIOCOrderBook(iocOrderBook.address, getTxOptions()) // only required when deploying an actual juror contract i.e. not using the precompile
     }
 
     insuranceFund = await setupUpgradeableProxy('InsuranceFund', proxyAdmin.address, [ governance ])
 
-    initArgs = [ governance, vusd.address, marginAccount.address, insuranceFund.address ]
+    let initArgs = [ governance, vusd.address, marginAccount.address, insuranceFund.address ]
     marginAccountHelper = await setupUpgradeableProxy('MarginAccountHelper', proxyAdmin.address, initArgs)
 
     if (options.restrictedVUSD) {
@@ -122,35 +162,6 @@ async function setupContracts(options = {}) {
 
     const hubbleReferral = await setupUpgradeableProxy('HubbleReferral', proxyAdmin.address)
 
-    if (!clearingHouseProxy) { // a genesis proxy hasnt been setup
-        let constructorArguments = [
-            oracle.address /* random contract address */,
-            proxyAdmin.address,
-            '0x'
-        ]
-        clearingHouseProxy = await TransparentUpgradeableProxy.deploy(...constructorArguments, getTxOptions())
-    }
-
-    initArgs = [ 'Hubble', '2.0', governance ]
-    deployArgs = [ clearingHouseProxy.address, marginAccount.address ]
-    if (options.genesisProxies) {
-        // only supported for genesis proxies atm the moment because we don't have unit tests for orderbook rollup
-        if (options.orderbookRollup) {
-            const RollupPrecompile = await ethers.getContractFactory('OrderBookRollupPrecompile')
-            const rollupPrecompile = await RollupPrecompile.deploy(clearingHouseProxy.address, marginAccount.address, getTxOptions())
-            orderBook = await setupGenesisProxy('OrderBookRollup', proxyAdmin, [ governance, rollupPrecompile.address ], [ clearingHouseProxy.address ], orderBookProxy)
-        } else {
-            orderBook = await setupGenesisProxy('OrderBook', proxyAdmin, initArgs, deployArgs, orderBookProxy)
-        }
-    } else {
-        orderBook = await setupUpgradeableProxy(
-            'OrderBook',
-            proxyAdmin.address,
-            initArgs,
-            deployArgs
-        )
-    }
-
     initArgs = [
         governance,
         feeSink.address,
@@ -159,16 +170,14 @@ async function setupContracts(options = {}) {
         vusd.address,
         hubbleReferral.address,
     ]
-
-    deployArgs = []
     if (options.genesisProxies) {
-        clearingHouse = await setupGenesisProxy('ClearingHouse', proxyAdmin, initArgs, deployArgs, clearingHouseProxy)
+        clearingHouse = await setupGenesisProxy('ClearingHouse', proxyAdmin, initArgs, [], clearingHouseProxy)
     } else {
         clearingHouse = await setupUpgradeableProxy(
             options.testClearingHouse ? 'TestClearingHouse' : 'ClearingHouse',
             proxyAdmin.address,
             initArgs,
-            deployArgs,
+            [],
             clearingHouseProxy
         )
     }
@@ -217,6 +226,9 @@ async function setupContracts(options = {}) {
         insuranceFund,
         forwarder,
         tradeFee: options.tradeFee,
+        juror,
+        bibliophile,
+        iocOrderBook
     }
 
     if (options.setupAMM) {
@@ -231,7 +243,16 @@ async function setupContracts(options = {}) {
         Object.assign(res, { amm, weth })
     }
 
-    // console.log(await generateConfig(leaderboard.address))
+    const txs = await Promise.all([
+        orderBook.setBibliophile(bibliophile.address, getTxOptions()),
+        clearingHouse.setBibliophile(bibliophile.address, getTxOptions()),
+        marginAccount.setBibliophile(bibliophile.address, getTxOptions()),
+        orderBook.setOrderHandler(1, iocOrderBook.address, getTxOptions()),
+
+        orderBook.setJuror(juror.address, getTxOptions()),
+        // for ioc order book, juror goes in initialize
+    ])
+    res.lastTimestamp = (await ethers.provider.getBlock(txs[3].blockNumber)).timestamp
     return res
 }
 
@@ -647,6 +668,66 @@ async function gotoNextIFUnbondEpoch(insuranceFund, usr) {
     );
 }
 
+function encodeLimitOrder(order) {
+    const encodedOrder = ethers.utils.defaultAbiCoder.encode(
+        [
+          'uint256',
+          'address',
+          'int256',
+          'uint256',
+          'uint256',
+          'bool',
+        ],
+        [
+            order.ammIndex,
+            order.trader,
+            order.baseAssetQuantity,
+            order.price,
+            order.salt,
+            order.reduceOnly,
+        ]
+    )
+    const typedEncodedOrder = ethers.utils.defaultAbiCoder.encode(['uint8', 'bytes'], [0, encodedOrder])
+    // console.log({
+    //     order,
+    //     encodedOrder,
+    //     typedEncodedOrder
+    // })
+    return typedEncodedOrder
+}
+
+function encodeIOCOrder(order) {
+    const encodedOrder = ethers.utils.defaultAbiCoder.encode(
+        [
+          'uint8',
+          'uint256',
+          'uint256',
+          'address',
+          'int256',
+          'uint256',
+          'uint256',
+          'bool',
+        ],
+        [
+            order.orderType,
+            order.expireAt,
+            order.ammIndex,
+            order.trader,
+            order.baseAssetQuantity,
+            order.price,
+            order.salt,
+            order.reduceOnly,
+        ]
+    )
+    const typedEncodedOrder = ethers.utils.defaultAbiCoder.encode(['uint8', 'bytes'], [1, encodedOrder])
+    console.log({
+        order,
+        encodedOrder,
+        typedEncodedOrder
+    })
+    return typedEncodedOrder
+}
+
 module.exports = {
     constants: { _1e6, _1e8, _1e12, _1e18, ZERO, feeSink: feeSink.address },
     BigNumber,
@@ -680,5 +761,7 @@ module.exports = {
     setBalance,
     setDefaultClearingHouseParams,
     calcGasPaid,
-    gotoNextIFUnbondEpoch
+    gotoNextIFUnbondEpoch,
+    encodeLimitOrder,
+    encodeIOCOrder,
 }

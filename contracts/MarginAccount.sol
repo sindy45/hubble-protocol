@@ -17,8 +17,7 @@ import {
     IRegistry,
     IMarginAccount,
     IERC20FlexibleSupply,
-    IWAVAX,
-    IOrderBook
+    IWAVAX
 } from "./Interfaces.sol";
 import { IHubbleBibliophile } from "./precompiles/IHubbleBibliophile.sol";
 
@@ -60,7 +59,7 @@ contract MarginAccount is IMarginAccount, MetaHubbleBase, ReentrancyGuard {
     /* ****************** */
 
     IClearingHouse public clearingHouse;
-    IOrderBook public orderBook;
+    address public orderBook;
     IOracle public oracle;
     IInsuranceFund public insuranceFund;
     IERC20FlexibleSupply public vusd;
@@ -233,13 +232,7 @@ contract MarginAccount is IMarginAccount, MetaHubbleBase, ReentrancyGuard {
         // return value _margin from the call to getNotionalPositionAndMargin _margin includes both the unrealizedFunding and unrealizedPnL
         int256 _margin;
         uint256 notionalPosition;
-        if (address(bibliophile) != address(0x0)) {
-            // precompile magic allows us to execute this for a fixed 1k gas
-            (notionalPosition, _margin) = bibliophile.getNotionalPositionAndMargin(trader, true /* includeFundingPayments */, uint8(IClearingHouse.Mode.Min_Allowable_Margin));
-        } else {
-            // folowing is the fallback code if precompile is not available. Precompile is intended to perform the same computation as the following code
-            (notionalPosition, _margin) = clearingHouse.getNotionalPositionAndMargin(trader, true /* includeFundingPayments */, IClearingHouse.Mode.Min_Allowable_Margin);
-        }
+        (notionalPosition, _margin) = bibliophile.getNotionalPositionAndMargin(trader, true /* includeFundingPayments */, uint8(IClearingHouse.Mode.Min_Allowable_Margin));
         uint utilizedMargin = notionalPosition * minAllowableMargin / PRECISION;
         availableMargin = _margin - utilizedMargin.toInt256() - reservedMargin[trader].toInt256();
     }
@@ -672,7 +665,7 @@ contract MarginAccount is IMarginAccount, MetaHubbleBase, ReentrancyGuard {
         require(registry.marginAccount() == address(this), "Incorrect setup");
 
         clearingHouse = IClearingHouse(registry.clearingHouse());
-        orderBook = IOrderBook(registry.orderBook());
+        orderBook = registry.orderBook();
         oracle = IOracle(registry.oracle());
         insuranceFund = IInsuranceFund(registry.insuranceFund());
         liquidationIncentive = _liquidationIncentive;

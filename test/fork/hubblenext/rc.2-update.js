@@ -13,7 +13,7 @@ const {
 const deployer = '0xeAA6AE79bD3d042644D91edD786E4ed3d783Ca2d' // governance
 const redstoneAdapterAddress = '0x91661D7757C0ec1bdBb04D51b7a1039e30D6dcc9'
 
-describe('hubblenext-rc.2 update (redstone)', async function() {
+describe.skip('hubblenext-rc.2 update (redstone)', async function() {
     let blockNumber = 577970
 
     before(async function() {

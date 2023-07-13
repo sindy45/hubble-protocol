@@ -5,9 +5,10 @@ pragma solidity 0.8.9;
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 import { HubbleBase } from "./legos/HubbleBase.sol";
-import { IAMM, IMarginAccount, IClearingHouse, IHubbleReferral, IOrderBook } from "./Interfaces.sol";
+import { IAMM, IMarginAccount, IClearingHouse, IHubbleReferral } from "./Interfaces.sol";
 import { VUSD } from "./VUSD.sol";
 import { IHubbleBibliophile } from "./precompiles/IHubbleBibliophile.sol";
+import { IOrderBook } from "./orderbooks/OrderBook.sol";
 
 /**
  * @title Gets instructions from the orderbook contract and executes them.
@@ -49,7 +50,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
     VUSD public vusd;
     address override public feeSink;
     IMarginAccount public marginAccount;
-    IOrderBook public defaultOrderBook;
+    address public defaultOrderBook;
     IAMM[] override public amms;  // SLOT_12 !!! used in precompile !!!
     IHubbleReferral public hubbleReferral;
     uint public lastFundingTime;
@@ -74,7 +75,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
 
         feeSink = _feeSink;
         marginAccount = IMarginAccount(_marginAccount);
-        defaultOrderBook = IOrderBook(_defaultOrderBook);
+        defaultOrderBook = _defaultOrderBook;
         vusd = VUSD(_vusd);
         hubbleReferral = IHubbleReferral(_hubbleReferral);
         isWhitelistedOrderBook[_defaultOrderBook] = true;
@@ -385,17 +386,14 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         view
         returns(uint256 notionalPosition, int256 margin)
     {
-        if (address(bibliophile) != address(0x0)) {
-            // precompile magic allows us to execute this for a fixed 1k gas
-            return bibliophile.getNotionalPositionAndMargin(trader, includeFundingPayments, uint8(mode));
-        }
-        return getNotionalPositionAndMarginVanilla(trader, includeFundingPayments, mode);
+        return bibliophile.getNotionalPositionAndMargin(trader, includeFundingPayments, uint8(mode));
     }
 
     /**
      * @dev fallback if the precompile is not available
     */
     function getNotionalPositionAndMarginVanilla(address trader, bool includeFundingPayments, Mode mode)
+        override
         public
         view
         returns(uint256 notionalPosition, int256 margin)
@@ -440,7 +438,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         return calcMarginFraction(trader, true, Mode.Maintenance_Margin) >= maintenanceMargin;
     }
 
-    function orderBook() external view returns(IOrderBook) {
+    function orderBook() external view returns(address) {
         return defaultOrderBook;
     }
 
@@ -548,7 +546,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         tradingFeeDiscount = _tradingFeeDiscount;
         liquidationPenalty = _liquidationPenalty;
 
-        defaultOrderBook.updateParams(_minAllowableMargin.toUint256(), _takerFee.toUint256());
+        IOrderBook(defaultOrderBook).updateParams(_minAllowableMargin.toUint256(), _takerFee.toUint256());
         marginAccount.updateParams(_minAllowableMargin.toUint256());
     }
 

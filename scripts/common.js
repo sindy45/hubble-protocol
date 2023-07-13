@@ -9,7 +9,9 @@ const config = {
     OrderBook: '0x0300000000000000000000000000000000000000',
     MarginAccount: '0x0300000000000000000000000000000000000001',
     ClearingHouse: '0x0300000000000000000000000000000000000002',
-    Bibliophile: '0x0300000000000000000000000000000000000003'
+    Bibliophile: '0x0300000000000000000000000000000000000004',
+    Juror: '0x0300000000000000000000000000000000000005',
+    IocOrderBook: '0x0300000000000000000000000000000000000006' // on local, not on hubblenext
 }
 
 async function deployToken(name, symbol, decimals) {
@@ -40,7 +42,6 @@ async function _setupAmm(governance, args, ammOptions, slowMode) {
 
     let admin = await ethers.provider.getStorageAt(config.OrderBook, '0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103')
     const ammImpl = await AMM.deploy(config.ClearingHouse, getTxOptions())
-
     let constructorArguments = [
         ammImpl.address,
         '0x' + admin.slice(26),

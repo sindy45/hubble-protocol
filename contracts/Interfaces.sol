@@ -74,6 +74,10 @@ interface IClearingHouse {
         external
         view
         returns(uint256 notionalPosition, int256 margin);
+    function getNotionalPositionAndMarginVanilla(address trader, bool includeFundingPayments, Mode mode)
+        external
+        view
+        returns(uint256 notionalPosition, int256 margin);
     function liquidate(
         Instruction calldata instruction,
         int256 liquidationAmount,
@@ -83,7 +87,7 @@ interface IClearingHouse {
     function feeSink() external view returns(address);
     function calcMarginFraction(address trader, bool includeFundingPayments, Mode mode) external view returns(int256);
     function getUnderlyingPrice() external view returns(uint[] memory prices);
-    function orderBook() external view returns(IOrderBook);
+    function orderBook() external view returns(address);
 }
 
 interface ERC20Detailed {
@@ -97,104 +101,6 @@ interface IInsuranceFund {
     function buyCollateralFromAuction(address token, uint amount) external;
     function depositFor(address to, uint amount) external;
     function withdrawFor(address to, uint shares) external returns(uint);
-}
-
-interface IOrderBook {
-    enum OrderStatus {
-        Invalid,
-        Placed,
-        Filled,
-        Cancelled
-    }
-
-    enum OrderExecutionMode {
-        Taker,
-        Maker,
-        SameBlock,
-        Liquidation
-    }
-
-    /**
-     * @notice Order struct
-     * @param ammIndex Market id to place the order. In Hubble, market ids are sequential and start from 0
-     * @param trader Address of the trader
-     * @param baseAssetQuantity Amount of base asset to buy/sell. Positive for buy, negative for sell. Has to be multiplied by 10^18.
-     *        It has to be a multiple of the minimum order size of a market.
-     * @param price Price of the order. Has to be multiplied by 10^6
-     * @param salt Random number to ensure unique order hashes
-     * @param reduceOnly Whether the order is reduce only or not. Reduce only orders do not reserve any margin.
-    */
-    struct Order {
-        uint256 ammIndex;
-        address trader;
-        int256 baseAssetQuantity;
-        uint256 price;
-        uint256 salt;
-        bool reduceOnly;
-    }
-
-    struct OrderInfo {
-        uint blockPlaced;
-        int256 filledAmount;
-        uint256 reservedMargin;
-        OrderStatus status;
-    }
-
-    event OrderPlaced(address indexed trader, bytes32 indexed orderHash, Order order, uint timestamp);
-    event OrderCancelled(address indexed trader, bytes32 indexed orderHash, uint timestamp);
-    event OrdersMatched(bytes32 indexed orderHash0, bytes32 indexed orderHash1, uint256 fillAmount, uint price, uint openInterestNotional, address relayer, uint timestamp);
-    event LiquidationOrderMatched(address indexed trader, bytes32 indexed orderHash, uint256 fillAmount, uint price, uint openInterestNotional, address relayer, uint timestamp);
-    event OrderMatchingError(bytes32 indexed orderHash, string err);
-    event LiquidationError(address indexed trader, bytes32 indexed orderHash, string err, uint256 toLiquidate);
-
-    /**
-     * @notice Place multiple orders
-     * Corresponding to each order, the system will reserve some margin that is required to keep the leverage within premissible limits if/when the order is executed
-     * @dev Even if one order fails to be placed for whatever reason, entire tx will revert and all other orders will also fail to be placed
-    */
-    function placeOrders(Order[] memory orders) external;
-
-    /**
-     * @notice Place an order
-     * @dev even for a single order it is slightly more gas efficient to use placeOrders
-    */
-    function placeOrder(Order memory order) external;
-
-    /**
-     * @notice Cancel multiple orders.
-     * Even a validator is allowed to cancel certain orders on the trader's behalf. This happens when there is not sufficient margin to execute the order.
-     * @dev Even if one order fails to be cancelled for whatever reason, entire tx will revert and all other orders will also fail to be cancelled.
-    */
-    function cancelOrders(Order[] memory orders) external;
-
-    /**
-     * @notice Cancel an order
-     * @dev even for a cancelling a single order it is slightly more gas efficient to use cancelOrders
-    */
-    function cancelOrder(Order memory order) external;
-
-    /**
-     * @notice Execute a long and a short order that match each other.
-     * Can only be called by a validator.
-     * @param orders orders[0] is the long order and orders[1] is the short order
-     * @param fillAmount Amount of base asset to be traded between the two orders. Should be +ve. Scaled by 1e18
-    */
-    function executeMatchedOrders(Order[2] memory orders, int256 fillAmount) external;
-
-    /**
-     * @notice Liquidate a trader's position by matching it with a corresponding order
-     * @param trader Address of the trader to be liquidated
-     * @param order order to execute the liquidation with
-     * When liquidating a short position, the liquidation order should be a short order
-     * When liquidating a long position, the liquidation order should be a long order
-     * @param toLiquidate Amount of base asset to be liquidated. Should be +ve. Scaled by 1e18
-    */
-    function liquidateAndExecuteOrder(address trader, Order calldata order, uint256 toLiquidate) external;
-    function settleFunding() external;
-    function initializeMinSize(int256 minSize) external;
-    function updateParams(uint minAllowableMargin, uint takerFee) external;
-    function isTradingAuthority(address signer, address trader) external view returns(bool);
-    function isValidator(address validator) external view returns(bool);
 }
 
 interface IAMM {

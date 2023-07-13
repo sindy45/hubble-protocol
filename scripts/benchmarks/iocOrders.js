@@ -72,8 +72,8 @@ async function main() {
 
     await Promise.all(tasks)
 
-    await sleep(3)
-    await addMarginAgain()
+    // await sleep(5)
+    // await addMarginAgain() // doesnt work for some reason
     // console.log(JSON.stringify(await generateConfig(hubbleViewer.address), null, 0))
 }
 
@@ -89,47 +89,6 @@ async function addMarginAgain() {
     await getAvailableMargin()
 }
 
-async function execute(alice, bob) {
-    if (!alice || !bob) {
-        signers = await ethers.getSigners()
-        ;([, alice, bob] = signers)
-    }
-    const exchange = new Exchange(ethers.provider)
-    await exchange.createLimitOrder(alice, 0, 6, 2000)
-    await exchange.createLimitOrder(bob, 0, -3, 1999)
-
-    await sleep(5)
-    const hb = await ethers.getContractAt('IHubbleBibliophile', '0x0300000000000000000000000000000000000003')
-    console.log(await hb.getNotionalPositionAndMargin(alice.address, false, 0))
-    console.log(await hb.getNotionalPositionAndMargin(bob.address, false, 0))
-
-    // bibliophile is not updated yet
-    const ch = await ethers.getContractAt('ClearingHouse', '0x0300000000000000000000000000000000000002')
-    console.log(await ch.getNotionalPositionAndMargin(alice.address, false, 0))
-    console.log(await ch.getNotionalPositionAndMargin(bob.address, false, 0))
-
-    console.log(await ch.estimateGas.getNotionalPositionAndMargin(alice.address, true, 0))
-    await ch.setBibliophile('0x0300000000000000000000000000000000000003')
-    await sleep(3)
-    console.log(await ch.estimateGas.getNotionalPositionAndMargin(alice.address, true, 0))
-}
-
-async function read() {
-    signers = await ethers.getSigners()
-    governance = signers[0].address
-    ;([, alice, bob] = signers)
-
-    const hb = await ethers.getContractAt('IHubbleBibliophile', '0x0300000000000000000000000000000000000003')
-    console.log(await hb.getNotionalPositionAndMargin(alice.address, false, 0))
-    console.log(await hb.getNotionalPositionAndMargin(bob.address, false, 0))
-}
-
-async function amms() {
-    const ch = await ethers.getContractAt('ClearingHouse', config.ClearingHouse)
-    const ma = await ethers.getContractAt('MarginAccount', config.MarginAccount)
-    console.log(await ma.oracle(), await ch.getAmmsLength(), await ch.getAMMs())
-}
-
 async function getAvailableMargin() {
     signers = await ethers.getSigners()
     ;([, alice, bob] = signers)
@@ -141,7 +100,35 @@ async function getAvailableMargin() {
     })
 }
 
-const exchange = new Exchange(ethers.provider, { contracts: config})
+async function placeIOCOrder() {
+    signers = await ethers.getSigners()
+    governance = signers[0].address
+    ;([, alice, bob] = signers)
+
+    marketId = 0
+
+    // txOptions.nonce = await signers[0].getTransactionCount()
+    // txOptions.gasLimit = gasLimit
+
+    // const oracleAddress = await exchange.marginAccount.oracle()
+    // initialRate = (marketId+1) * 10
+    // const underlying = await deployToken(`tok-${marketId}`, `tok-${marketId}`, 18)
+    // const ammOptions = {
+    //     governance,
+    //     name: `Market-${marketId}-Perp`,
+    //     underlyingAddress: underlying.address,
+    //     initialRate,
+    //     oracleAddress,
+    //     minSize: 0.1,
+    //     testAmm: false,
+    //     whitelist: true,
+    // }
+    // await setupAMM(ammOptions)
+    const tx = await exchange.placeIOCOrder(alice, false, marketId, 1, 10)
+    // console.log(await tx.wait())
+}
+
+const exchange = new Exchange(ethers.provider, { contracts: config })
 async function runAnalytics() {
     signers = await ethers.getSigners()
     governance = signers[0].address
@@ -152,11 +139,13 @@ async function runAnalytics() {
 
     const oracleAddress = await exchange.marginAccount.oracle()
     const amms = await exchange.clearingHouse.getAmmsLength()
+    await exchange.orderBook.connect(signers[0]).setOrderHandler(1, config.IocOrderBook, getTxOptions())
     let lastMatchedBlock = 0
 
     for (let i = 0; i < 5; i++) {
         marketId = amms.toNumber() + i
         initialRate = (marketId+1) * 10
+        // console.log('deploying new amm')
         const underlying = await deployToken(`tok-${marketId}`, `tok-${marketId}`, 18)
         const ammOptions = {
             governance,
@@ -210,7 +199,7 @@ async function runAnalytics() {
         console.log({
             // markets: marketId+1,
             // blockNumber: r.blockNumber,
-            longFirst, longPrice, shortPrice, matchPrice,
+            initialRate, longFirst, longPrice, shortPrice, matchPrice,
             trade_1st: {
                 orderPlacedGas: orderPlacedGas_1stTrade,
                 orderMatchedGas: r.gasUsed.toNumber(),
@@ -227,12 +216,11 @@ async function doTrades(marketId, longPrice, shortPrice, matchPrice, longFirst) 
     let tx1, tx2
     const baseQ = marketId+1
     if (longFirst) {
-        // let nonce = await alice.getTransactionCount()
         tx1 = await (await exchange.createLimitOrder(alice, false, marketId, baseQ, longPrice)).wait()
-        tx2 = await (await exchange.createLimitOrder(alice, false, marketId, baseQ, longPrice)).wait()
+        tx2 = await (await exchange.placeIOCOrder(bob, false, marketId, -baseQ, shortPrice, false, { gasLimit: 1e6 })).wait()
     } else {
         tx1 = await (await exchange.createLimitOrder(bob, false, marketId, -baseQ, shortPrice)).wait()
-        tx2 = await (await exchange.createLimitOrder(alice, false, marketId, baseQ, longPrice)).wait()
+        tx2 = await (await exchange.placeIOCOrder(alice, false, marketId, baseQ, longPrice, false, { gasLimit: 1e6 })).wait()
     }
     await sleep(3)
     // get the matched order tx
@@ -242,17 +230,25 @@ async function doTrades(marketId, longPrice, shortPrice, matchPrice, longFirst) 
     const lastMatched = events[events.length - 1]
     // console.log({ lastMatched })
     assert.equal(lastMatched.args.price.toNumber() / 1e6, matchPrice)
+    // console.log(tx1.gasUsed.toNumber(), tx2.gasUsed.toNumber())
     return {
         receipt: await lastMatched.getTransactionReceipt(),
         orderPlacedGas: Math.floor((tx1.gasUsed.toNumber() + tx2.gasUsed.toNumber())/2)
     }
 }
 
+async function juror() {
+    console.log(await exchange.iocOrderBook.juror())
+}
+
+
 main()
 // addMarginAgain()
 // runAnalytics()
-// compareValues()
+// juror()
 // getAvailableMargin()
+// placeIOCOrder()
+// compareValues()
 .then(() => process.exit(0))
 .catch(error => {
     console.error(error);

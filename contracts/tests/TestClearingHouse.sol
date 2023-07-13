@@ -65,6 +65,6 @@ contract TestClearingHouse is ClearingHouse {
     }
 
     function setOrderBook(address _orderBook) external {
-        defaultOrderBook = IOrderBook(_orderBook);
+        defaultOrderBook = _orderBook;
     }
 }

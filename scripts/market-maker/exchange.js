@@ -28,6 +28,16 @@ class Exchange {
             require('../../artifacts/contracts/precompiles/IHubbleBibliophile.sol/IHubbleBibliophile.json').abi,
             this.provider
         )
+        this.juror = new ethers.Contract(
+            config.contracts.Juror,
+            require('../../artifacts/contracts/precompiles/Juror.sol/IJuror.json').abi,
+            this.provider
+        )
+        this.iocOrderBook = new ethers.Contract(
+            config.contracts.IocOrderBook,
+            require('../../artifacts/contracts/orderbooks/ImmediateOrCancelOrders.sol/ImmediateOrCancelOrders.json').abi,
+            this.provider
+        )
         if (config.contracts.MarginAccountHelper) {
             this.marginAccountHelper = new ethers.Contract(
                 config.contracts.MarginAccountHelper,
@@ -109,7 +119,7 @@ class Exchange {
     }
 
     async createLimitOrder(signer, dryRun, market, baseAssetQuantity, price, reduceOnly=false, txOpts={}) {
-        console.log(`Executing ${baseAssetQuantity > 0 ? 'long' : 'short'} ${baseAssetQuantity} at $${price}`)
+        console.log(`Executing Limit ${baseAssetQuantity > 0 ? 'long' : 'short'} ${baseAssetQuantity} at $${price}`)
         return this.createLimitOrderUnscaled(signer, dryRun, market, ethers.utils.parseEther(baseAssetQuantity.toString()), ethers.utils.parseUnits(price.toFixed(6).toString(), 6), reduceOnly, txOpts)
     }
 
@@ -150,6 +160,23 @@ class Exchange {
         // console.log({ estimateGas })
         return this.orderBook.connect(signer).placeOrders([order], txOpts)
         // return tx.wait()
+    }
+
+    async placeIOCOrder(signer, dryRun, market, baseAssetQuantity, price, reduceOnly=false, txOpts={}) {
+        console.log(`Executing IOC ${baseAssetQuantity > 0 ? 'long' : 'short'} ${baseAssetQuantity} at $${price}`)
+        if (dryRun || !baseAssetQuantity) return
+        const order = {
+            orderType: 1,
+            expireAt: Math.floor(Date.now() / 1000) + 1,
+            ammIndex: market,
+            trader: signer.address,
+            baseAssetQuantity: ethers.utils.parseEther(baseAssetQuantity.toString()),
+            price: ethers.utils.parseUnits(price.toFixed(6).toString(), 6),
+            salt: BigNumber.from(Date.now()),
+            reduceOnly
+        }
+        // console.log('rpc call - juror', await this.juror.validatePlaceIOCOrders([order], signer.address))
+        return this.iocOrderBook.connect(signer).placeOrders([order], Object.assign({ gasLimit: 1e6 }, txOpts))
     }
 
     async getMarginFraction(trader) {

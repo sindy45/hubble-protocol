@@ -1,6 +1,6 @@
 const { expect } = require('chai');
 
-const utils = require('../utils')
+const utils = require('./utils')
 
 const {
     constants: { _1e6, _1e18 },
@@ -8,7 +8,7 @@ const {
     setupContracts
 } = utils
 
-describe('Margin Account Meta Txs', async function () {
+describe('Meta Txs - Margin Account', async function () {
     before('contract factories', async function() {
         signers = await ethers.getSigners()
         alice = signers[0].address
@@ -40,5 +40,29 @@ describe('Margin Account Meta Txs', async function () {
 
         expect(await marginAccount.margin(1, alice)).to.eq(amount)
         expect(await marginAccount.getNormalizedMargin(alice)).to.eq(_1e6.mul(2000))
+    })
+})
+
+// this is not implemented yet!
+describe.skip('Meta Txs - orderbook', async function () {
+    before('contract factories', async function() {
+        signers = await ethers.getSigners()
+        alice = signers[1]
+        ;({ orderBook, forwarder } = await setupContracts({ mockOrderBook: false, testClearingHouse: false }))
+        relayer = signers[2]
+    })
+
+    it('trading authority', async function() {
+        tradingAuthority = ethers.utils.getAddress(ethers.utils.hexlify(ethers.utils.randomBytes(20)))
+        // await orderBook.connect(alice).whitelistTradingAuthority(tradingAuthority, { value: _1e18 })
+
+        const data = orderBook.interface.encodeFunctionData('whitelistTradingAuthority', [ tradingAuthority ])
+        const { sign, req } = await signTransaction(alice, orderBook, data, forwarder, _1e18)
+        expect(await forwarder.verify(req, sign)).to.equal(true);
+
+        await forwarder.connect(relayer).executeRequiringSuccess(req, sign);
+
+        expect(await orderBook.isTradingAuthority(alice.address, tradingAuthority)).to.eq(true)
+        expect(await ethers.provider.getBalance(tradingAuthority)).to.eq(_1e18)
     })
 })

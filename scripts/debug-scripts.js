@@ -14,7 +14,7 @@ function hex_to_ascii(str1) {
  }
 
 async function revertReason() {
-    const txHash = '0x816085bf0dae182d246b0ba862cf2802b5c3338aa950b0963c596b8109e822ab'
+    const txHash = '0x2eb0eb3c19c04774eddf638312aa14c7e3cf34b29ada84c87ad6f53371b0f9ef'
     const tx = await provider.getTransaction(txHash)
     const code = await provider.call(tx, tx.blockNumber)
     console.log(code)
