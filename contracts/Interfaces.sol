@@ -94,6 +94,14 @@ interface ERC20Detailed {
     function decimals() external view returns (uint8);
 }
 
+interface IMarginAccountHelper {
+    function addVUSDMarginWithReserve(uint256 amount, address to) external payable;
+    function removeMarginInUSD(uint256 amount) external;
+    function depositToInsuranceFund(uint256 amount, address to) external payable;
+    function withdrawFromInsuranceFund(uint256 shares) external;
+    function marginAccount() external view returns(address);
+}
+
 interface IInsuranceFund {
     function seizeBadDebt(uint amount) external;
     function startAuction(address token) external;
@@ -213,6 +221,7 @@ interface IMarginAccount {
     function reservedMargin(address trader) external view returns(uint);
     function getAvailableMargin(address trader) external view returns (int availableMargin);
     function updateParams(uint _minAllowableMargin) external;
+    function getCollateralToken(uint idx) external view returns (IERC20);
 }
 
 interface AggregatorV3Interface {
@@ -278,18 +287,4 @@ interface IHubbleReferral {
 interface IWAVAX is IERC20 {
     function deposit() external payable;
     function withdraw(uint256) external;
-}
-
-interface IHGTCore {
-    /**
-     * @dev Emitted when `_amount` tokens are moved from the `_sender` to (`_dstChainId`, `_toAddress`)
-     * `_nonce` is the outbound nonce.
-     */
-    event SendToChain(uint16 indexed _dstChainId, address indexed _from, bytes _toAddress, uint _amount, uint64 _nonce);
-
-    /**
-     * @dev Emitted when `_amount` tokens are received from `_srcChainId` into the `_toAddress` on the local chain.
-     * `_nonce` is the inbound nonce.
-     */
-    event ReceiveFromChain(uint16 indexed _srcChainId, address indexed _to, uint _amount, uint64 _nonce);
 }

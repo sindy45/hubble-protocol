@@ -122,8 +122,8 @@ async function addMarginAgain() {
     ;([, alice, bob] = signers)
     const margin = _1e6.mul(5e4)
     const marginAccountHelper = await ethers.getContractAt('MarginAccountHelper', config.MarginAccountHelper)
-    await marginAccountHelper.connect(alice).addVUSDMarginWithReserve(margin, { value: margin.mul(1e12) })
-    await marginAccountHelper.connect(bob).addVUSDMarginWithReserve(margin, { value: margin.mul(1e12) })
+    await marginAccountHelper.connect(alice).addVUSDMarginWithReserve(margin, alice.address,  { value: margin.mul(1e12) })
+    await marginAccountHelper.connect(bob).addVUSDMarginWithReserve(margin, bob.address, { value: margin.mul(1e12) })
 }
 
 main()

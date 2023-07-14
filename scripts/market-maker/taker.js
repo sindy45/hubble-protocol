@@ -53,7 +53,7 @@ const marketTaker = async () => {
             provider
         )
         await nativeMinter.connect(signer).mintNativeCoin(signer.address, _1e18.mul(toMint), { nonce: nonce++ })
-        await exchange.marginAccountHelper.connect(signer).addVUSDMarginWithReserve(_1e6.mul(toMint), { nonce: nonce++, value: _1e18.mul(toMint) })
+        await exchange.marginAccountHelper.connect(signer).addVUSDMarginWithReserve(_1e6.mul(toMint), signer.address, { nonce: nonce++, value: _1e18.mul(toMint) })
     }
 
     try {

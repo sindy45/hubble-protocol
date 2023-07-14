@@ -19,13 +19,15 @@ import "../../contracts/HubbleReferral.sol";
 import "../../contracts/MinimalForwarder.sol";
 import "../../contracts/Registry.sol";
 import "../../contracts/HubbleViewer.sol";
-import "../../contracts/HGT.sol";
-import "../../contracts/HGTRemote.sol";
+import "../../contracts/layer0/HGT.sol";
+import "../../contracts/layer0/HGTRemote.sol";
 import "../../contracts/tests/TestOracle.sol";
+import "../../contracts/tests/TestPriceFeed.sol";
 import "../../contracts/tests/ERC20Mintable.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 abstract contract Utils is Test {
+    uint256 forkId;
     ProxyAdmin public proxyAdmin;
     MinimalForwarder public forwarder;
     ERC20Mintable public usdc;
@@ -36,6 +38,7 @@ abstract contract Utils is Test {
     OrderBook public orderBook;
     AMM public amm;
     TestOracle public oracle;
+    TestPriceFeed public testPriceFeed;
     InsuranceFund public insuranceFund;
     HubbleReferral public hubbleReferral;
     Registry public registry;
@@ -107,9 +110,43 @@ abstract contract Utils is Test {
         proxy = new TransparentUpgradeableProxy(
             address(mahImpl),
             address(proxyAdmin),
-            abi.encodeWithSelector(MarginAccountHelper.initialize.selector, governance, address(husd), address(marginAccount), address(insuranceFund))
+            abi.encodeWithSelector(MarginAccountHelper.initialize.selector, governance, address(husd), address(marginAccount), address(insuranceFund), address(0) /** hgt */)
         );
         marginAccountHelper = MarginAccountHelper(address(proxy));
+
+        testPriceFeed = new TestPriceFeed();
+
+        lzEndpointBase = new LZEndpointMock(baseChainId);
+        lzEndpointOther = new LZEndpointMock(otherChainId);
+
+        HGT hgtImpl = new HGT(address(lzEndpointBase));
+        proxy = new TransparentUpgradeableProxy(
+            address(hgtImpl),
+            address(proxyAdmin),
+            abi.encodeWithSelector(HGT.initialize.selector, governance, address(marginAccountHelper))
+        );
+        hgt = HGT(payable(address(proxy)));
+
+        HGTRemote hgtRemoteImpl = new HGTRemote(address(lzEndpointOther));
+        proxy = new TransparentUpgradeableProxy(
+            address(hgtRemoteImpl),
+            address(proxyAdmin),
+            abi.encodeWithSelector(
+                HGTRemote.initialize.selector,
+                governance,
+                address(0), // stargate router
+                baseChainId,
+                HGTRemote.SupportedToken({
+                    token: address(usdc),
+                    priceFeed: address(testPriceFeed), // price feed
+                    collectedFee: 0,
+                    srcPoolId: 1,
+                    decimals: 6
+                }),
+                address(testPriceFeed)
+            )
+        );
+        hgtRemote = HGTRemote(payable(address(proxy)));
 
         TestOracle oracleImpl = new TestOracle();
         proxy = new TransparentUpgradeableProxy(
@@ -182,6 +219,7 @@ abstract contract Utils is Test {
             0.05 * 1e6 // liquidationPenalty = 5%
         );
         oracle.setUpdater(address(this), true);
+        marginAccountHelper.setHGT(address(hgt));
         orderBook.setJuror(address(juror));
         orderBook.setBibliophile(address(bibliophile));
         // IOC orderType = 1
@@ -201,25 +239,6 @@ abstract contract Utils is Test {
             address(proxyAdmin),
             20 * 1e6 // $20 initial price
         );
-
-        lzEndpointBase = new LZEndpointMock(baseChainId);
-        lzEndpointOther = new LZEndpointMock(otherChainId);
-
-        HGT hgtImpl = new HGT(address(lzEndpointBase));
-        proxy = new TransparentUpgradeableProxy(
-            address(hgtImpl),
-            address(proxyAdmin),
-            abi.encodeWithSelector(InsuranceFund.initialize.selector, governance)
-        );
-        hgt = HGT(address(proxy));
-
-        HGTRemote hgtRemoteImpl = new HGTRemote(address(lzEndpointOther), address(usdc));
-        proxy = new TransparentUpgradeableProxy(
-            address(hgtRemoteImpl),
-            address(proxyAdmin),
-            abi.encodeWithSelector(InsuranceFund.initialize.selector, governance)
-        );
-        hgtRemote = HGTRemote(address(proxy));
     }
 
     function setupRestrictedTestToken(string memory name_, string memory symbol, uint8 decimals) internal returns (RestrictedErc20 token) {
@@ -269,7 +288,7 @@ abstract contract Utils is Test {
             vm.deal(trader, hgtRequired);
 
             vm.startPrank(trader);
-            marginAccountHelper.addVUSDMarginWithReserve{value: hgtRequired}(margin);
+            marginAccountHelper.addVUSDMarginWithReserve{value: hgtRequired}(margin, trader);
             vm.stopPrank();
         } else {
             RestrictedErc20(token).mint(trader, margin);

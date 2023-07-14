@@ -20,7 +20,7 @@ describe('Margin Account Helper Tests', function() {
 
     it('addVUSDMarginWithReserve', async () => {
         margin = _1e6.mul(2000)
-        const tx = await marginAccountHelper.addVUSDMarginWithReserve(margin, { value: _1e12.mul(margin) })
+        const tx = await marginAccountHelper.addVUSDMarginWithReserve(margin, alice, { value: _1e12.mul(margin) })
         gasPaid = gasPaid.add(await calcGasPaid(tx))
 
         expect(await marginAccount.margin(0, alice)).to.eq(margin)
@@ -43,7 +43,7 @@ describe('Margin Account Helper Tests', function() {
 
     it('depositToInsuranceFund', async () => {
         deposit = _1e6.mul(2000)
-        const tx = await marginAccountHelper.depositToInsuranceFund(deposit, { value: _1e12.mul(deposit) })
+        const tx = await marginAccountHelper.depositToInsuranceFund(deposit, alice, { value: _1e12.mul(deposit) })
         gasPaid = gasPaid.add(await calcGasPaid(tx))
 
         expect(await ethers.provider.getBalance(alice)).to.eq(initialHgtBalance.sub(_1e12.mul(deposit)).sub(gasPaid))

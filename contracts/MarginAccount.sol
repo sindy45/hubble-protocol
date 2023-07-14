@@ -566,6 +566,10 @@ contract MarginAccount is IMarginAccount, MetaHubbleBase, ReentrancyGuard {
         return supportedCollateral.length;
     }
 
+    function getCollateralToken(uint idx) external view override returns (IERC20) {
+        return supportedCollateral[idx].token;
+    }
+
     /* ****************** */
     /*    Misc Internal   */
     /* ****************** */

@@ -92,7 +92,7 @@ function addVUSDWithReserve(trader, amount) {
 async function addMargin(trader, amount, txOpts={}) {
     const ma = await ethers.getContractAt('MarginAccount', config.MarginAccount)
     const marginAccountHelper = await ethers.getContractAt('MarginAccountHelper', await ma.marginAccountHelper())
-    return marginAccountHelper.connect(trader).addVUSDMarginWithReserve(amount, Object.assign(txOpts, { value: amount.mul(1e12) }))
+    return marginAccountHelper.connect(trader).addVUSDMarginWithReserve(amount, trader.address, Object.assign(txOpts, { value: amount.mul(1e12) }))
 }
 
 async function initializeTxOptionsFor0thSigner() {

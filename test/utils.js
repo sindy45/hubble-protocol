@@ -144,7 +144,7 @@ async function setupContracts(options = {}) {
 
     insuranceFund = await setupUpgradeableProxy('InsuranceFund', proxyAdmin.address, [ governance ])
 
-    let initArgs = [ governance, vusd.address, marginAccount.address, insuranceFund.address ]
+    let initArgs = [ governance, vusd.address, marginAccount.address, insuranceFund.address, ethers.constants.AddressZero ]
     marginAccountHelper = await setupUpgradeableProxy('MarginAccountHelper', proxyAdmin.address, initArgs)
 
     if (options.restrictedVUSD) {
@@ -226,6 +226,7 @@ async function setupContracts(options = {}) {
         insuranceFund,
         forwarder,
         tradeFee: options.tradeFee,
+        proxyAdmin,
         juror,
         bibliophile,
         iocOrderBook
@@ -380,7 +381,7 @@ async function addMargin(trader, margin, token = usdc, index = 0, marginAccountH
             // leading 0s throw error in next step, hence truncating leading 0s
             await setBalance(trader.address, hgtAmount.mul(2).toHexString().replace(/0x0+/, "0x"))
         }
-        await marginAccountHelper_.connect(trader).addVUSDMarginWithReserve(margin, {value: hgtAmount})
+        await marginAccountHelper_.connect(trader).addVUSDMarginWithReserve(margin, trader.address, {value: hgtAmount})
     } else {
         await token.connect(trader).approve(marginAccount.address, margin)
         await marginAccount.connect(trader).addMargin(index, margin)
@@ -478,8 +479,8 @@ function forkNetwork(_network, blockNumber) {
     return network.provider.request({
         method: "hardhat_reset",
         params: [{
-            forking: {
-                jsonRpcUrl: `https://eth-${_network}.alchemyapi.io/v2/${process.env.ALCHEMY}`,
+                forking: {
+                    jsonRpcUrl: `https://eth-${_network}.alchemyapi.io/v2/${process.env.ALCHEMY}`,
                 blockNumber
             }
         }]
