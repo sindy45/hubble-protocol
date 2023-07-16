@@ -264,7 +264,13 @@ async function rc4Update() {
     console.log(await (await orderBook.setOrderHandler(1, iocOrderBook.address)).wait())
 }
 
-rc4Update()
+async function expiry() {
+    const iocOrderBook = await ethers.getContractAt('ImmediateOrCancelOrders', config.IocOrderBook)
+    await iocOrderBook.setExpirationCap(10)
+    console.log(await iocOrderBook.expirationCap())
+}
+
+expiry()
 .then(() => process.exit(0))
 .catch(error => {
     console.error(error);

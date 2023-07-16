@@ -1,13 +1,12 @@
 const ethers = require('ethers')
 
 const { Exchange, getOpenSize, getOrdersWithinBounds, prettyPrint, toRawOrders, findError } = require('./exchange');
-const { bnToFloat } = require('../../test/utils');
+const { constants: { _1e6, _1e18 }, bnToFloat } = require('../../test/utils');
 const config = require('../hubblev2next')
 const { marketInfo } = config
 
-const updateFrequency = 10e3 // 10s
+const updateFrequency = 10e3 // 1s
 const dryRun = false
-const maxLeverage = 1.9
 const numOrders = 15;
 
 const provider = new ethers.providers.JsonRpcProvider(process.env.RPC_URL)
@@ -15,9 +14,15 @@ const signer = new ethers.Wallet(process.env.PRIVATE_KEY_MAKER, provider);
 const exchange = new Exchange(provider, config)
 let nonce
 
+const main = async () => {
+    nonce = await provider.getTransactionCount(signer.address)
+    await marketMaker()
+}
+
 const marketMaker = async () => {
     try {
         const underlyingPrices = await exchange.getUnderlyingPrice()
+        // underlyingPrices[0] = 2150
         // only works if bibliophile is deployed
         const sizes = (await exchange.getPositionSizes(signer.address)).map(s => bnToFloat(s, 18))
         let { margin } = await exchange.getNotionalPositionAndMargin(signer.address)
@@ -33,30 +38,56 @@ const marketMaker = async () => {
             if (marketInfo[i].active) activeMarkets++
         }
 
-        nonce = await provider.getTransactionCount(signer.address)
+        // nonce = await provider.getTransactionCount(signer.address)
 
-        // if maker has accumaleted too much margin, transfer it to taker kek
-        // keep only 100k margin per market
-        let diff = margin - 1e5 * activeMarkets
-        // let diff = 276533.75526
-        if (!dryRun && diff > 30000) {
+        // keep 1e6 margin per market
+        const targetMargin = 2e6 * activeMarkets
+        // console.log({ margin, targetMargin })
+        if (!dryRun && margin < targetMargin) {
+            // mint native
+            const toMint = parseFloat((targetMargin * 1.2 - margin).toFixed(0)) // mint 20% extra
+            console.log(`minting ${toMint} margin for myself...`)
+            const nativeMinter = new ethers.Contract(
+                '0x0200000000000000000000000000000000000001',
+                require('../../artifacts/contracts/precompiles/INativeMinter.sol/INativeMinter.json').abi,
+                provider
+            )
+            await nativeMinter.connect(signer).mintNativeCoin(signer.address, _1e18.mul(toMint), { nonce: nonce++ })
+            await exchange.marginAccountHelper.connect(signer).addVUSDMarginWithReserve(_1e6.mul(toMint), { nonce: nonce++, value: _1e18.mul(toMint) })
+        } else if (!dryRun && margin > 1.2 * targetMargin + 30000) {
+            // if maker has accumaleted too much margin, transfer it to taker kek
+            let diff = margin - 1.2 * targetMargin
             console.log(`adding ${diff} margin to taker account`)
             diff = ethers.utils.parseUnits(diff.toFixed(6).toString(), 6)
             await exchange.marginAccount.connect(signer).removeMargin(0, diff, { nonce: nonce++ })
             // assume infinite approval was already done
             await exchange.marginAccount.connect(signer).addMarginFor(0, diff, config.marketMaker.taker, { gasLimit: 1e6, nonce: nonce++ })
-            // await exchange.marginAccount.connect(signer).addMarginFor(0, diff, config.marketMaker.taker, { nonce: nonce++ })
         }
 
+        let cancel = []
         let orders = []
         // for (let i = 1; i < 2; i++) {
         for (let i = 0; i < marketInfo.length; i++) {
             if (!marketInfo[i].active) continue
-            orders = orders.concat(await runForMarket(i, underlyingPrices[i], sizes[i], margin / activeMarkets)).filter(o => o)
+            const { cancel: _cancel, place } = await runForMarket(i, underlyingPrices[i], sizes[i], margin / activeMarkets)
+            orders = orders.concat(place.filter(o => o))
+            cancel = cancel.concat(_cancel.filter(o => o))
         }
-        console.log(`placing ${orders.length} orders...`)
+        console.log({
+            cancel: cancel.length,
+            place: orders.length,
+        })
         // if (orders.length) console.log(prettyPrint(orders, marketInfo))
-        if (!dryRun && orders.length) await exchange.placeOrders(signer, orders, { nonce })
+        if (!dryRun) {
+            if (cancel.length) {
+                const txs = await exchange.cancelOrders(signer, cancel, { nonce }, 350)
+                nonce += txs.length
+            }
+            if (orders.length) {
+                const txs = await exchange.placeOrders(signer, orders, { nonce }, 175)
+                nonce += txs.length
+            }
+        }
     } catch (e) {
         if (e && e.error) {
             const err = findError(e.error.toString())
@@ -74,7 +105,7 @@ const marketMaker = async () => {
 
 async function runForMarket(market, underlyingPrice, size, margin) {
     let { x, spread } = marketInfo[market]
-    x = parseFloat((randomFloat(.9, 1.1) * x).toFixed(3))
+    // x = parseFloat((randomFloat(.9, 1.1) * x).toFixed(3))
     try {
         let { orders, bids, asks } = await exchange.getTraderBidsAndAsks(signer.address, market)
         // console.log(bids.length, asks.length)
@@ -102,13 +133,12 @@ async function runForMarket(market, underlyingPrice, size, margin) {
         let idsToClose = bids.filter(bid => !validBids.includes(bid) || bid.reduceOnly).map(bid => bid.id.toLowerCase()).concat(
             asks.filter(ask => !validAsks.includes(ask) || ask.reduceOnly).map(bid => bid.id.toLowerCase())
         )
-        if (!dryRun && idsToClose.length) {
-            const ordersToClose = toRawOrders(signer.address, orders.filter(order => idsToClose.includes(order.OrderId.toLowerCase()))) // cancel reduce only orders as well because that becomes problematic
-            console.log(`Cancelling ${ordersToClose.length} orders`)
-            const txs = await exchange.cancelOrders(signer, ordersToClose, { nonce })
-            nonce += txs.length
+
+        let ordersToClose = []
+        if (idsToClose.length) {
+            ordersToClose = toRawOrders(signer.address, orders.filter(order => idsToClose.includes(order.OrderId.toLowerCase()))) // cancel reduce only orders as well because that becomes problematic
         }
-        return decideStrategy(market, bids, asks, underlyingPrice, size, margin)
+        return { cancel: ordersToClose, place: await decideStrategy(market, bids, asks, underlyingPrice, size, margin) }
     } catch (error) {
         console.error('Error in marketMaker function:', error);
     }
@@ -133,16 +163,16 @@ const decideStrategy = (market, bids, asks, underlyingPrice, size, margin) => {
     let reduceOnly = false
 
     // If leverage is greater than the threshold, place orders to reduce open position and cancel opposite orders
-    if (Math.abs(leverage) > maxLeverage) {
-        console.log(`Leverage=${leverage} is above threshold`)
-        baseLiquidityInMarket = Math.abs(size) // reduce leverage to 3/4 of current
-        reduceOnly = true // so that these orders don't use margin
-        if (size > 0) { // place only short orders
-            shouldLong = false
-        } else if (size < 0) { // place only long orders
-            shouldShort = false
-        }
-    }
+    // if (Math.abs(leverage) > maxLeverage) {
+    //     console.log(`Leverage=${leverage} in market=${market} is above threshold`)
+    //     baseLiquidityInMarket = Math.abs(size) // reduce leverage to 3/4 of current
+    //     reduceOnly = true // so that these orders don't use margin
+    //     if (size > 0) { // place only short orders
+    //         shouldLong = false
+    //     } else if (size < 0) { // place only long orders
+    //         shouldShort = false
+    //     }
+    // }
 
     shouldShort = shouldShort && shortOpenSize + minOrderSize < baseLiquidityInMarket
     shouldLong = shouldLong && longOpenSize + minOrderSize < baseLiquidityInMarket
@@ -229,4 +259,4 @@ function shuffle(array) {
 }
 
 // Start the market-making algorithm
-marketMaker();
+main();

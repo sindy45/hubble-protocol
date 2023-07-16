@@ -81,7 +81,7 @@ class Exchange {
         return { orders, bids, asks }
     }
 
-    async getTraderOpenOrders(trader, market) {
+    async getTraderOpenOrders(trader, market='') {
         return (await this.provider.send('orderbook_getOpenOrders', [trader, market.toString()])).Orders
     }
 
@@ -120,7 +120,15 @@ class Exchange {
 
     async createLimitOrder(signer, dryRun, market, baseAssetQuantity, price, reduceOnly=false, txOpts={}) {
         console.log(`Executing Limit ${baseAssetQuantity > 0 ? 'long' : 'short'} ${baseAssetQuantity} at $${price}`)
-        return this.createLimitOrderUnscaled(signer, dryRun, market, ethers.utils.parseEther(baseAssetQuantity.toString()), ethers.utils.parseUnits(price.toFixed(6).toString(), 6), reduceOnly, txOpts)
+        const order = {
+            ammIndex: market,
+            trader: signer.address,
+            baseAssetQuantity: ethers.utils.parseEther(baseAssetQuantity.toString()),
+            price: ethers.utils.parseUnits(price.toFixed(6).toString(), 6),
+            salt: BigNumber.from(Date.now()),
+            reduceOnly
+        }
+        return this.orderBook.connect(signer).placeOrders([order], txOpts)
     }
 
     async placeOrders(signer, orders, txOpts={}, chunkSize = 20) {
@@ -143,46 +151,41 @@ class Exchange {
         }
     }
 
-    async createLimitOrderUnscaled(signer, dryRun, market, baseAssetQuantity, price, reduceOnly=false, txOpts={}) {
-        // console.log({ dryRun, baseAssetQuantity, price, reduceOnly })
-        if (dryRun || !baseAssetQuantity) return
-        const order = {
-            ammIndex: market,
-            trader: signer.address,
-            baseAssetQuantity,
-            price,
-            salt: BigNumber.from(Date.now()),
+    buildIOCOrderObj(trader, ammIndex, baseAssetQuantity, price, reduceOnly=false) {
+        return {
+            orderType: 1,
+            // expireAt: Math.floor(Date.now() / 1000) + 3,
+            ammIndex,
+            trader,
+            baseAssetQuantity: ethers.utils.parseEther(baseAssetQuantity.toString()),
+            price: ethers.utils.parseUnits(price.toFixed(6).toString(), 6),
+            salt: BigNumber.from('0x' + crypto.randomBytes(16).toString('hex')),
             reduceOnly
         }
-        // console.log({ order })
-        // const orderHash = await this.orderBook.getOrderHash(order)
-        // const estimateGas = await this.orderBook.connect(signer).estimateGas.placeOrders([order], signature)
-        // console.log({ estimateGas })
-        return this.orderBook.connect(signer).placeOrders([order], txOpts)
-        // return tx.wait()
+    }
+
+    async placeIOCOrder(signer, dryRun, market, baseAssetQuantity, price, reduceOnly=false) {
+        console.log(`Executing IOC ${baseAssetQuantity > 0 ? 'long' : 'short'} ${baseAssetQuantity} at $${price}`)
+        if (dryRun || !baseAssetQuantity) return
+        const order = buildIOCOrderObj(signer.address, market, baseAssetQuantity, price, reduceOnly)
+        return this.placeIOCOrders(signer, [order], txOpts)
     }
 
     // estimateGas will fail if there wasn't a block produced in the last 1-2 seconds. Hence sending in a gasLimit by default
-    async placeIOCOrder(signer, dryRun, market, baseAssetQuantity, price, reduceOnly=false, txOpts={ gasLimit: 1e6 }) {
-        console.log(`Executing IOC ${baseAssetQuantity > 0 ? 'long' : 'short'} ${baseAssetQuantity} at $${price}`)
-        if (dryRun || !baseAssetQuantity) return
-        const order = {
-            orderType: 1,
-            expireAt: Math.floor(Date.now() / 1000) + 4,
-            ammIndex: market,
-            trader: signer.address,
-            baseAssetQuantity: ethers.utils.parseEther(baseAssetQuantity.toString()),
-            price: ethers.utils.parseUnits(price.toFixed(6).toString(), 6),
-            salt: BigNumber.from(Date.now()),
-            reduceOnly
-        }
+    async placeIOCOrders(signer, orders, nonce, chunkSize=20) {
+        // txOpts = Object.assign({ gasLimit: orders.length * 1e6 }, txOpts)
         // this will revert if there wasn't a block produced in the last 1-2 seconds . so to try this, make sure you produce a block anyhow
-        // console.log(await this.iocOrderBook.connect(signer).estimateGas.placeOrders([order]))
+        // console.log(await this.iocOrderBook.connect(signer).estimateGas.placeOrders(orders))
         // console.log({
-        //     hash1: await this.iocOrderBook.getOrderHash(order),
-        //     hash2: await this.juror.validatePlaceIOCOrders([order], signer.address),
+        //     hash1: await this.iocOrderBook.getOrderHash(orders[0]),
+        //     hash2: await this.juror.validatePlaceIOCOrders([orders[0]], signer.address),
         // })
-        return this.iocOrderBook.connect(signer).placeOrders([order], txOpts)
+        // place chunkSize orders at a time
+        const expireAt = Math.floor(Date.now() / 1000) + 9
+        orders = orders.map(order => Object.assign(order, { expireAt }))
+        const chunks = _.chunk(orders, chunkSize)
+        if (nonce == null) nonce = await signer.getTransactionCount()
+        return Promise.all(chunks.map(chunk => this.iocOrderBook.connect(signer).placeOrders(chunk, { gasLimit: chunk.length * 1e6, nonce: nonce++ })))
     }
 
     async getMarginFraction(trader) {
@@ -196,9 +199,9 @@ class Exchange {
         return { status: orderInfo.status }
     }
 
-    async cancelOrders(signer, orders, txOpts={}) {
+    async cancelOrders(signer, orders, txOpts={}, chunkSize = 200) {
         if (!orders.length) return
-        const chunks = _.chunk(orders, 20)
+        const chunks = _.chunk(orders, chunkSize)
         let nonce = txOpts.nonce || await signer.getTransactionCount()
         return Promise.all(chunks.map(chunk => this.orderBook.connect(signer).cancelOrders(chunk, Object.assign(txOpts, { nonce: nonce++ }))))
     }
