@@ -4,6 +4,8 @@ const {
     constants: { _1e6, _1e18 },
     sleep,
     getTxOptions,
+    setupUpgradeableProxy,
+    verification
 } = utils
 
 const hubblev2next = require('../hubblev2next')
@@ -171,21 +173,22 @@ async function whitelistAmm() {
 // 2.0.0-next.rc.1 update (use precompile for determining fill price)
 // 2.0.0-next.rc.3 update (efficient data structures)
 async function rc3Update() {
+    await initializeTxOptionsFor0thSigner()
+
     const AMM = await ethers.getContractFactory('AMM')
-    const newAMM = await AMM.deploy(config.ClearingHouse)
+    const newAMM = await AMM.deploy(config.ClearingHouse, getTxOptions())
     console.log({ newAMM: newAMM.address })
 
     const ClearingHouse = await ethers.getContractFactory('ClearingHouse')
-    const newClearingHouse = await ClearingHouse.deploy()
+    const newClearingHouse = await ClearingHouse.deploy(getTxOptions())
     console.log({ newClearingHouse: newClearingHouse.address })
 
     const OrderBook = await ethers.getContractFactory('OrderBook')
-    const newOrderBook = await OrderBook.deploy(config.ClearingHouse, config.MarginAccount)
+    const newOrderBook = await OrderBook.deploy(config.ClearingHouse, config.MarginAccount, getTxOptions())
     console.log({ newOrderBook: newOrderBook.address })
 
     // Phase 2
     await sleep(5)
-    await initializeTxOptionsFor0thSigner()
     const proxyAdmin = await ethers.getContractAt('ProxyAdmin', config.proxyAdmin)
     const tasks = []
     for (let i = 0; i < config.amms.length; i++) {
@@ -229,7 +232,39 @@ async function logStatus(tasks) {
     }
 }
 
-rc3Update()
+// 2.0.0-next.rc.4 update (deploy ioc orderbook, new order format)
+async function rc4Update() {
+    await initializeTxOptionsFor0thSigner()
+
+    const Juror = await ethers.getContractFactory('Juror')
+    const deployArgs = [config.ClearingHouse, config.OrderBook, config.governance]
+    juror = await Juror.deploy(...deployArgs, getTxOptions())
+    console.log({ juror: juror.address }) // 0x0F6cB1B85E57cf124bb0Ea0B06101C83b0cCfe69 but this was moved to precompile
+    verification.push({ name: 'Juror', address: juror.address, constructorArguments: deployArgs })
+
+    proxyAdmin = await ethers.getContractAt('ProxyAdmin', config.proxyAdmin)
+    iocOrderBook = await setupUpgradeableProxy(
+        'ImmediateOrCancelOrders',
+        config.proxyAdmin,
+        [ config.governance, config.OrderBook, juror.address ],
+        []
+    )
+    console.log({ iocOrderBook: iocOrderBook.address }) // 0x635c5F96989a4226953FE6361f12B96c5d50289b
+    console.log(verification)
+
+    await rc3Update()
+
+    const orderBook = await ethers.getContractAt('OrderBook', config.OrderBook)
+    console.log(await (await orderBook.setJuror(config.Juror)).wait())
+    // console.log(await orderBook.juror())
+    // console.log(await orderBook.bibliophile())
+
+    const iocOrderBook = await ethers.getContractAt('ImmediateOrCancelOrders', config.IocOrderBook)
+    console.log(await (await iocOrderBook.setJuror(config.Juror)).wait())
+    console.log(await (await orderBook.setOrderHandler(1, iocOrderBook.address)).wait())
+}
+
+rc4Update()
 .then(() => process.exit(0))
 .catch(error => {
     console.error(error);

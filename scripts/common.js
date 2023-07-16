@@ -100,10 +100,12 @@ async function initializeTxOptionsFor0thSigner() {
     governance = signers[0].address
 
     txOptions.nonce = await signers[0].getTransactionCount()
+    // console.log('txOptions.nonce', txOptions.nonce)
     // this is a hack for an interesting use-case
     // when we deploy an implementation contract (tx1) and subsequently the TransparentProxy (tx2), the gas estimation for tx2 might fail because the tx1 is not yet mined
     // however, if we pass the gasLimit here, the estimation is skipped and nonce makes sure that tx1 and then tx2 is mined
     txOptions.gasLimit = 5e6
+    // txOptions.gasPrice = 35e9
 }
 
 async function getImplementationFromProxy(address) {

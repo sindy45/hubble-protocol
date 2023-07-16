@@ -13,9 +13,11 @@ function hex_to_ascii(str1) {
 	return str;
  }
 
-async function revertReason() {
-    const txHash = '0x2eb0eb3c19c04774eddf638312aa14c7e3cf34b29ada84c87ad6f53371b0f9ef'
+ async function revertReason() {
+    const txHash = '0x74a935dee817e91ff83eb5c937364d37224058ae5d94d5d5fbab9094f9671ff3'
     const tx = await provider.getTransaction(txHash)
+    const r =  await provider.getTransactionReceipt(txHash)
+    console.log(r)
     const code = await provider.call(tx, tx.blockNumber)
     console.log(code)
     let reason = hex_to_ascii(code.slice(138))

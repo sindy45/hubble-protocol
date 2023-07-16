@@ -162,12 +162,13 @@ class Exchange {
         // return tx.wait()
     }
 
-    async placeIOCOrder(signer, dryRun, market, baseAssetQuantity, price, reduceOnly=false, txOpts={}) {
+    // estimateGas will fail if there wasn't a block produced in the last 1-2 seconds. Hence sending in a gasLimit by default
+    async placeIOCOrder(signer, dryRun, market, baseAssetQuantity, price, reduceOnly=false, txOpts={ gasLimit: 1e6 }) {
         console.log(`Executing IOC ${baseAssetQuantity > 0 ? 'long' : 'short'} ${baseAssetQuantity} at $${price}`)
         if (dryRun || !baseAssetQuantity) return
         const order = {
             orderType: 1,
-            expireAt: Math.floor(Date.now() / 1000) + 1,
+            expireAt: Math.floor(Date.now() / 1000) + 4,
             ammIndex: market,
             trader: signer.address,
             baseAssetQuantity: ethers.utils.parseEther(baseAssetQuantity.toString()),
@@ -175,8 +176,13 @@ class Exchange {
             salt: BigNumber.from(Date.now()),
             reduceOnly
         }
-        // console.log('rpc call - juror', await this.juror.validatePlaceIOCOrders([order], signer.address))
-        return this.iocOrderBook.connect(signer).placeOrders([order], Object.assign({ gasLimit: 1e6 }, txOpts))
+        // this will revert if there wasn't a block produced in the last 1-2 seconds . so to try this, make sure you produce a block anyhow
+        // console.log(await this.iocOrderBook.connect(signer).estimateGas.placeOrders([order]))
+        // console.log({
+        //     hash1: await this.iocOrderBook.getOrderHash(order),
+        //     hash2: await this.juror.validatePlaceIOCOrders([order], signer.address),
+        // })
+        return this.iocOrderBook.connect(signer).placeOrders([order], txOpts)
     }
 
     async getMarginFraction(trader) {

@@ -59,6 +59,13 @@ const getAllOrders = async () => {
     console.dir(events, { depth: null})
 }
 
+const placeIOCOrder = async () => {
+    const tx = await exchange.placeIOCOrder(signer, false, 0, 0.01, 1942)
+    const r = await tx.wait()
+    console.log(`${r.status ? 'Success' : 'Failed'}`)
+}
+
 // getAllOrders()
-cancelAllOrders()
+// cancelAllOrders()
+placeIOCOrder()
 .then(() => process.exit(0))

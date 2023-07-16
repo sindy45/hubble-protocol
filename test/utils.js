@@ -308,6 +308,7 @@ async function setupUpgradeableProxy(contract, admin, initArgs, deployArgs = [],
     //     console.log('pendingObligation', await impl.pendingObligation())
     // }
     if (!proxy) {
+        const TransparentUpgradeableProxy = await ethers.getContractFactory('TransparentUpgradeableProxy')
         proxy = await TransparentUpgradeableProxy.deploy(...constructorArguments, getTxOptions())
     } else {
         await proxyAdmin.upgradeAndCall(proxy.address, impl.address, _data, getTxOptions())
@@ -689,11 +690,7 @@ function encodeLimitOrder(order) {
         ]
     )
     const typedEncodedOrder = ethers.utils.defaultAbiCoder.encode(['uint8', 'bytes'], [0, encodedOrder])
-    // console.log({
-    //     order,
-    //     encodedOrder,
-    //     typedEncodedOrder
-    // })
+    // console.log({ order, encodedOrder, typedEncodedOrder })
     return typedEncodedOrder
 }
 
@@ -721,11 +718,7 @@ function encodeIOCOrder(order) {
         ]
     )
     const typedEncodedOrder = ethers.utils.defaultAbiCoder.encode(['uint8', 'bytes'], [1, encodedOrder])
-    console.log({
-        order,
-        encodedOrder,
-        typedEncodedOrder
-    })
+    // console.log({ order, encodedOrder, typedEncodedOrder })
     return typedEncodedOrder
 }
 

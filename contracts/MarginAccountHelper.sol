@@ -25,7 +25,7 @@ contract MarginAccountHelper is HubbleBase {
     IInsuranceFund public insuranceFund;
     IHGT public hgt;
 
-    uint256[50] private __gap;
+    uint256[49] private __gap;
 
     function initialize(
         address _governance,

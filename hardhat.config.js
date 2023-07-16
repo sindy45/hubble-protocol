@@ -52,7 +52,7 @@ module.exports = {
                 mnemonic: "test test test test test test test test test test test junk"
             }
         },
-        hubblev2next: {
+        hubblenext: {
             url: 'https://candy-hubblenet-rpc.hubble.exchange/ext/bc/iKMFgo49o4X3Pd3UWUkmPwjKom3xZz3Vo6Y1kkwL2Ce6DZaPm/rpc',
             chainId: 321123,
             throwOnTransactionFailures: true,
@@ -80,7 +80,18 @@ module.exports = {
         apiKey: {
             avalancheFujiTestnet: process.env.SNOWTRACE || '',
             avalanche: process.env.SNOWTRACE || '',
-        }
+            hubblenext: "avascan", // apiKey is not required, just set a placeholder
+        },
+        customChains: [
+            {
+                network: "hubblenext",
+                chainId: 321123,
+                urls: {
+                    apiURL: "https://api.avascan.info/v2/network/testnet/evm/321123/etherscan",
+                    browserURL: "https://321123.testnet.routescan.io/"
+                }
+            }
+        ],
     },
     spdxLicenseIdentifier: {
         runOnCompile: true
