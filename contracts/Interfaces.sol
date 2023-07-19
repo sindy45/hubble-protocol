@@ -280,10 +280,6 @@ interface IHubbleViewer {
     function getQuote(int256 baseAssetQuantity, uint idx) external view returns(uint256 quoteAssetQuantity);
 }
 
-interface IHubbleReferral {
-    function getTraderRefereeInfo(address trader) external view returns (address referrer);
-}
-
 interface IWAVAX is IERC20 {
     function deposit() external payable;
     function withdraw(uint256) external;

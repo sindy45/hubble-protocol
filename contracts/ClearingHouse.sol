@@ -5,7 +5,8 @@ pragma solidity 0.8.9;
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 import { HubbleBase } from "./legos/HubbleBase.sol";
-import { IAMM, IMarginAccount, IClearingHouse, IHubbleReferral } from "./Interfaces.sol";
+import { IAMM, IMarginAccount, IClearingHouse } from "./Interfaces.sol";
+import { IHubbleReferral } from "./HubbleReferral.sol";
 import { VUSD } from "./VUSD.sol";
 import { IHubbleBibliophile } from "./precompiles/IHubbleBibliophile.sol";
 import { IOrderBook } from "./orderbooks/OrderBook.sol";
@@ -334,7 +335,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
      * @param feeCharged fee charged to the trader, caller makes sure that this is positive
     */
     function _payReferralBonus(address trader, uint feeCharged) internal returns(uint discount, uint referralBonus) {
-        address referrer = hubbleReferral.getTraderRefereeInfo(trader);
+        address referrer = hubbleReferral.traderToReferrer(trader);
         if (referrer != address(0x0)) {
             referralBonus = feeCharged * referralShare / PRECISION;
             // add margin to the referrer
@@ -560,5 +561,9 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
 
     function setFeeSink(address _feeSink) external onlyGovernance {
         feeSink = _feeSink;
+    }
+
+    function setReferral(address _referral) external onlyGovernance {
+        hubbleReferral = IHubbleReferral(_referral);
     }
 }

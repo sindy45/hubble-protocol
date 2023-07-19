@@ -270,7 +270,57 @@ async function expiry() {
     console.log(await iocOrderBook.expirationCap())
 }
 
-expiry()
+// 2.0.0-next.rc.5 update (hubble referral)
+async function rc5Update() {
+    await initializeTxOptionsFor0thSigner()
+
+    const MinimalForwarder = await ethers.getContractFactory('contracts/MinimalForwarder.sol:MinimalForwarder')
+    const forwarder = await MinimalForwarder.deploy(getTxOptions())
+    console.log({ forwarder: forwarder.address }) // 0xF0978c72F6BfFac051735b0F01e63c55F7aE02d3
+
+    const newHubbleReferral = await setupUpgradeableProxy(
+        'HubbleReferral',
+        config.proxyAdmin,
+        [ config.governance ],
+        [ forwarder.address, config.ClearingHouse]
+    )
+    console.log({ newHubbleReferral: newHubbleReferral.address }) // 0x27e1f032a8c24Cf7528247B02F085Eec9631CaeC
+
+    const ClearingHouse = await ethers.getContractFactory('ClearingHouse')
+    const newClearingHouse = await ClearingHouse.deploy(getTxOptions())
+    console.log({ newClearingHouse: newClearingHouse.address }) // 0xd196cb1a48Aa0a979Ffc7780E8CE125c6B9CaD5d
+
+    const OrderBook = await ethers.getContractFactory('OrderBook')
+    const newOrderBook = await OrderBook.deploy(config.ClearingHouse, config.MarginAccount, getTxOptions())
+    console.log({ newOrderBook: newOrderBook.address }) // 0xB3690FC3c0F8F80099144f6E27fc1B642A30cACB
+
+    const ImmediateOrCancelOrders = await ethers.getContractFactory('ImmediateOrCancelOrders')
+    const newIOCOrderBook = await ImmediateOrCancelOrders.deploy(getTxOptions())
+    console.log({ newIOCOrderBook: newIOCOrderBook.address }) // 0xdf01E1C83db478b0e93990b330CcFfBCC048511a
+
+    // Phase 2
+    await sleep(5)
+    const proxyAdmin = await ethers.getContractAt('ProxyAdmin', config.proxyAdmin)
+    const tasks = []
+    tasks.push(proxyAdmin.upgrade(config.ClearingHouse, newClearingHouse.address, getTxOptions()))
+    tasks.push(proxyAdmin.upgrade(config.OrderBook, newOrderBook.address, getTxOptions()))
+    tasks.push(proxyAdmin.upgrade(config.IocOrderBook, newIOCOrderBook.address, getTxOptions()))
+
+    const orderBook = await ethers.getContractAt('OrderBook', config.OrderBook)
+    tasks.push(orderBook.setReferral(newHubbleReferral.address, getTxOptions()))
+
+    const iocOrderBook = await ethers.getContractAt('ImmediateOrCancelOrders', config.IocOrderBook)
+    tasks.push(iocOrderBook.setReferral(newHubbleReferral.address, getTxOptions()))
+
+    const clearingHouse = await ethers.getContractAt('ClearingHouse', config.ClearingHouse)
+    tasks.push(clearingHouse.setReferral(newHubbleReferral.address, getTxOptions()))
+
+    tasks.push(newHubbleReferral.beginSignups(20))
+    await logStatus(tasks)
+    console.log(verification)
+}
+
+rc5Update()
 .then(() => process.exit(0))
 .catch(error => {
     console.error(error);

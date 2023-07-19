@@ -26,7 +26,8 @@ async function main() {
         testClearingHouse: false,
         tradeFee: 500, // .05%
         makerFee: -50, // -.005%
-        setupAMM: false
+        setupAMM: false,
+        // enableInviteOnly: true // uncomment for mainnet
     })
 
     const tasks = []

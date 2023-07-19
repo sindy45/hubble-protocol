@@ -106,6 +106,7 @@ contract OrderBookTests is Utils {
         // order can be placed via trading authority
         order.salt += 1;
         orderHash = orderBook.getOrderHash(order);
+
         // add trading authority
         vm.prank(trader);
         orderBook.whitelistTradingAuthority(address(this));

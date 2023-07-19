@@ -40,6 +40,11 @@ interface IOrderBook is ILimitOrderBook {
     function settleFunding() external;
     function initializeMinSize(int256 minSize) external;
     function updateParams(uint minAllowableMargin, uint takerFee) external;
+
+    /**
+     * @notice Whitelist a trading authority call routed via referral contract
+    */
+    function setTradingAuthority(address trader, address authority) payable external;
 }
 
 /**
@@ -183,9 +188,22 @@ contract OrderBook is IOrderBook, LimitOrderBook {
      * @notice Whitelist a trading authority to be able to place orders on behalf of the caller and optionally transfer some gas token to the authority
     */
     function whitelistTradingAuthority(address authority) payable external {
-        isTradingAuthority[_msgSender()][authority] = true;
-        if (msg.value > 0) {
-            (bool success, ) = payable(authority).call{value: msg.value}("");
+        _whitelistTradingAuthority(_msgSender(), authority, msg.value);
+    }
+
+    /**
+     * @inheritdoc IOrderBook
+    */
+    function setTradingAuthority(address trader, address authority) payable external {
+        require(msg.sender == referral, "no auth");
+        _whitelistTradingAuthority(trader, authority, msg.value);
+    }
+
+    function _whitelistTradingAuthority(address trader, address authority, uint airdrop) internal {
+        require(trader != address(0) && authority != address(0), "null address");
+        isTradingAuthority[trader][authority] = true;
+        if (airdrop != 0) {
+            (bool success, ) = payable(authority).call{value: airdrop}("");
             require(success, "OrderBook: failed to airdrop gas to authority");
         }
     }

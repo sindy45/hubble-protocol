@@ -9,6 +9,7 @@ import { EIP712Upgradeable } from "@openzeppelin/contracts-upgradeable/utils/cry
 import { Governable, VanillaGovernable } from "../legos/Governable.sol";
 import { IOrderHandler } from "./IOrderHandler.sol";
 import { IJuror } from "../precompiles/Juror.sol";
+import { IHubbleReferral } from "../HubbleReferral.sol";
 
 interface IImmediateOrCancelOrders is IOrderHandler {
     struct Order {
@@ -50,8 +51,9 @@ contract ImmediateOrCancelOrders is IImmediateOrCancelOrders, VanillaGovernable,
     uint public expirationCap; // SLOT_54 !!! used in precompile !!!
     address public defaultOrderBook;
     IJuror public juror;
+    address public referral;
 
-    uint256[50] private __gap;
+    uint256[49] private __gap;
 
     modifier onlyDefaultOrderBook() {
         require(msg.sender == defaultOrderBook, "only default orderBook");
@@ -113,5 +115,9 @@ contract ImmediateOrCancelOrders is IImmediateOrCancelOrders, VanillaGovernable,
 
     function setJuror(address _juror) external onlyGovernance {
         juror = IJuror(_juror);
+    }
+
+    function setReferral(address _referral) external onlyGovernance {
+        referral = _referral;
     }
 }

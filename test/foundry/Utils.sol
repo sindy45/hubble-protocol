@@ -158,14 +158,6 @@ abstract contract Utils is Test {
         vm.prank(governance);
         oracle.setStablePrice(address(husd), 1e6);
 
-        HubbleReferral referralImpl = new HubbleReferral();
-        proxy = new TransparentUpgradeableProxy(
-            address(referralImpl),
-            address(proxyAdmin),
-            abi.encodeWithSelector(HubbleReferral.initialize.selector, governance)
-        );
-        hubbleReferral = HubbleReferral(address(proxy));
-
         TransparentUpgradeableProxy clProxy = new TransparentUpgradeableProxy(
             address(oracle) /** random contarct address */, address(proxyAdmin), "");
 
@@ -176,6 +168,16 @@ abstract contract Utils is Test {
             abi.encodeWithSelector(LimitOrderBook.initialize.selector, "Hubble", "2.0", governance)
         );
         orderBook = OrderBook(address(proxy));
+
+        HubbleReferral referralImpl = new HubbleReferral(address(forwarder), address(clProxy));
+        proxy = new TransparentUpgradeableProxy(
+            address(referralImpl),
+            address(proxyAdmin),
+            abi.encodeWithSelector(HubbleReferral.initialize.selector, governance)
+        );
+        hubbleReferral = HubbleReferral(address(proxy));
+        vm.prank(governance);
+        hubbleReferral.concludeRestrictedInvitePhase();
 
         ClearingHouse clImpl = new ClearingHouse();
         proxyAdmin.upgradeAndCall(clProxy, address(clImpl), abi.encodeWithSelector(

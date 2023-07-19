@@ -15,7 +15,7 @@ describe('Order Book', function () {
     before(async function () {
         signers = await ethers.getSigners()
         ;([, alice, bob] = signers)
-        ;({ orderBook, usdc, oracle, weth, marginAccount, clearingHouse } = await setupContracts({ mockOrderBook: false, testClearingHouse: false }))
+        ;({ orderBook, usdc, oracle, weth, marginAccount, clearingHouse, hubbleReferral: referral } = await setupContracts({ mockOrderBook: false, testClearingHouse: false }))
 
         await orderBook.setValidatorStatus(signers[0].address, true)
 
@@ -133,11 +133,11 @@ describe('Order Book', function () {
         // gets margin[0][alice]
         let storage = await ethers.provider.getStorageAt(
             marginAccount.address,
-            ethers.utils.keccak256(ethers.utils.solidityPack(
-                ['bytes32', 'bytes32'],
+            ethers.utils.keccak256(ethers.utils.defaultAbiCoder.encode(
+                ['address', 'bytes32'],
                 [
-                    '0x' + '0'.repeat(24) + alice.address.slice(2),
-                    ethers.utils.keccak256(ethers.utils.solidityPack(['uint256', 'uint256'], [0, VAR_MARGIN_MAPPING_STORAGE_SLOT]))
+                    alice.address,
+                    ethers.utils.keccak256(ethers.utils.defaultAbiCoder.encode(['uint256', 'uint256'], [0, VAR_MARGIN_MAPPING_STORAGE_SLOT]))
                 ]
             ))
         )
@@ -145,7 +145,7 @@ describe('Order Book', function () {
 
         // orderInfo
         const ORDER_INFO_SLOT = 53
-        let baseOrderInfoSlot = ethers.utils.keccak256(ethers.utils.solidityPack(['bytes32', 'uint256'], [order1Hash, ORDER_INFO_SLOT]))
+        let baseOrderInfoSlot = ethers.utils.keccak256(ethers.utils.defaultAbiCoder.encode(['bytes32', 'uint256'], [order1Hash, ORDER_INFO_SLOT]))
         storage = await ethers.provider.getStorageAt(
             orderBook.address,
             BigNumber.from(baseOrderInfoSlot).add(1)
@@ -157,7 +157,7 @@ describe('Order Book', function () {
         )
         expect(BigNumber.from(storage)).to.eq(2) // Filled
 
-        baseOrderInfoSlot = ethers.utils.keccak256(ethers.utils.solidityPack(['bytes32', 'uint256'], [order2Hash, ORDER_INFO_SLOT]))
+        baseOrderInfoSlot = ethers.utils.keccak256(ethers.utils.defaultAbiCoder.encode(['bytes32', 'uint256'], [order2Hash, ORDER_INFO_SLOT]))
         storage = await ethers.provider.getStorageAt(
             orderBook.address,
             BigNumber.from(baseOrderInfoSlot).add(1)
@@ -173,39 +173,38 @@ describe('Order Book', function () {
         const TRADING_AUTHORITY_STORAGE_SLOT = 61
         storage = await ethers.provider.getStorageAt(
             orderBook.address,
-            ethers.utils.keccak256(ethers.utils.solidityPack(
-                ['bytes32', 'bytes32'],
+            ethers.utils.keccak256(ethers.utils.defaultAbiCoder.encode(
+                ['address', 'bytes32'],
                 [
-                    '0x' + '0'.repeat(24) + tradingAuthority.slice(2),
-                    ethers.utils.keccak256(ethers.utils.solidityPack(['bytes32', 'uint256'], ['0x' + '0'.repeat(24) + alice.address.slice(2), TRADING_AUTHORITY_STORAGE_SLOT]))
+                    tradingAuthority,
+                    ethers.utils.keccak256(ethers.utils.defaultAbiCoder.encode(['address', 'uint256'], [alice.address, TRADING_AUTHORITY_STORAGE_SLOT]))
                 ]
-            ))
-        )
+            )
+        ))
         expect(BigNumber.from(storage)).to.eq(1) // true
 
         // gets isValidator[alice]
         const VAR_IS_VALIDATOR_MAPPING_STORAGE_SLOT = 54 // this is not used in the precompile as yet
         storage = await ethers.provider.getStorageAt(
             orderBook.address,
-            ethers.utils.keccak256(ethers.utils.solidityPack(['bytes32', 'uint256'], ['0x' + '0'.repeat(24) + signers[0].address.slice(2), VAR_IS_VALIDATOR_MAPPING_STORAGE_SLOT]))
+            ethers.utils.keccak256(ethers.utils.defaultAbiCoder.encode(['address', 'uint256'], [signers[0].address, VAR_IS_VALIDATOR_MAPPING_STORAGE_SLOT]))
         )
         expect(BigNumber.from(storage)).to.eq(1) // true
 
         const MARK_PRICE_TWAP_DATA_SLOT = 1
-        const baseSlot = BigNumber.from(ethers.utils.solidityPack(['uint256'], [MARK_PRICE_TWAP_DATA_SLOT]))
-        storage = await ethers.provider.getStorageAt(amm.address, baseSlot)
+        storage = await ethers.provider.getStorageAt(amm.address, MARK_PRICE_TWAP_DATA_SLOT)
         expect(BigNumber.from(storage)).to.eq(longOrder.price)
-        // console.log(await ethers.provider.getStorageAt(amm.address, baseSlot.add(1))) // timestamp
+        // console.log(await ethers.provider.getStorageAt(amm.address, MARK_PRICE_TWAP_DATA_SLOT+1)) // timestamp
 
         const VAR_POSITIONS_SLOT = 5
-        let basePositionSlot = ethers.utils.keccak256(ethers.utils.solidityPack(['bytes32', 'uint256'], ['0x' + '0'.repeat(24) + bob.address.slice(2), VAR_POSITIONS_SLOT]))
+        let basePositionSlot = ethers.utils.keccak256(ethers.utils.defaultAbiCoder.encode(['address', 'uint256'], [bob.address, VAR_POSITIONS_SLOT]))
         storage = await ethers.provider.getStorageAt(amm.address, basePositionSlot) // size
         expect(longOrder.baseAssetQuantity).to.eq(BigNumber.from(storage))
         storage = await ethers.provider.getStorageAt(amm.address, BigNumber.from(basePositionSlot).add(1)) // open notional
         expect(longOrder.baseAssetQuantity.mul(longOrder.price).div(_1e18)).to.eq(BigNumber.from(storage))
 
         // alice who has a negative position
-        basePositionSlot = ethers.utils.keccak256(ethers.utils.solidityPack(['bytes32', 'uint256'], ['0x' + '0'.repeat(24) + alice.address.slice(2), VAR_POSITIONS_SLOT]))
+        basePositionSlot = ethers.utils.keccak256(ethers.utils.defaultAbiCoder.encode(['address', 'uint256'], [alice.address, VAR_POSITIONS_SLOT]))
         storage = await ethers.provider.getStorageAt(amm.address, basePositionSlot) // size
         expect(shortOrder.baseAssetQuantity).to.eq(BigNumber.from(storage).fromTwos(256))
         storage = await ethers.provider.getStorageAt(amm.address, BigNumber.from(basePositionSlot).add(1)) // open notional
@@ -213,15 +212,12 @@ describe('Order Book', function () {
 
         // ClearingHouse
         const AMMS_SLOT = 12
-        storage = await ethers.provider.getStorageAt(
-            clearingHouse.address,
-            ethers.utils.solidityPack(['uint256'], [AMMS_SLOT])
-        )
+        storage = await ethers.provider.getStorageAt(clearingHouse.address, AMMS_SLOT)
         expect(1).to.eq(BigNumber.from(storage)) // 1 amm
 
         storage = await ethers.provider.getStorageAt(
             clearingHouse.address,
-            ethers.utils.keccak256(ethers.utils.solidityPack(['uint256'], [AMMS_SLOT]))
+            ethers.utils.keccak256(ethers.utils.defaultAbiCoder.encode(['uint256'], [AMMS_SLOT]))
         )
         expect(amm.address).to.eq(ethers.utils.getAddress('0x' + storage.slice(26)))
     })

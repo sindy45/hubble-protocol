@@ -1,6 +1,6 @@
 const { expect } = require('chai')
 const { BigNumber } = require('ethers')
-const { ethers, network } = require('hardhat')
+const { ethers, network, tasks } = require('hardhat')
 
 const ZERO = BigNumber.from(0)
 const _1e6 = BigNumber.from(10).pow(6)
@@ -160,7 +160,7 @@ async function setupContracts(options = {}) {
     tx = await oracle.setStablePrice(vusd.address, 1e6, getTxOptions()) // $1
     await tx.wait()
 
-    const hubbleReferral = await setupUpgradeableProxy('HubbleReferral', proxyAdmin.address)
+    const hubbleReferral = await setupUpgradeableProxy('HubbleReferral', proxyAdmin.address, [ governance ], [ forwarder.address, clearingHouseProxy.address ])
 
     initArgs = [
         governance,
@@ -244,15 +244,19 @@ async function setupContracts(options = {}) {
         Object.assign(res, { amm, weth })
     }
 
-    const txs = await Promise.all([
+    const tasks = [
         orderBook.setBibliophile(bibliophile.address, getTxOptions()),
         clearingHouse.setBibliophile(bibliophile.address, getTxOptions()),
         marginAccount.setBibliophile(bibliophile.address, getTxOptions()),
         orderBook.setOrderHandler(1, iocOrderBook.address, getTxOptions()),
-
         orderBook.setJuror(juror.address, getTxOptions()),
         // for ioc order book, juror goes in initialize
-    ])
+    ]
+    if (options.enableInviteOnly) {
+        tasks.push(orderBook.setReferral(hubbleReferral.address, getTxOptions()))
+        tasks.push(iocOrderBook.setReferral(hubbleReferral.address, getTxOptions()))
+    }
+    const txs = await Promise.all(tasks)
     res.lastTimestamp = (await ethers.provider.getBlock(txs[3].blockNumber)).timestamp
     return res
 }

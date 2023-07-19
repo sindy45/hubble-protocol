@@ -12,6 +12,7 @@ import { IOrderHandler } from "./IOrderHandler.sol";
 import { IClearingHouse, IAMM, IMarginAccount } from "../Interfaces.sol";
 import { IHubbleBibliophile } from "../precompiles/IHubbleBibliophile.sol";
 import { IJuror } from "../precompiles/Juror.sol";
+import { IHubbleReferral } from "../HubbleReferral.sol";
 
 interface ILimitOrderBook is IOrderHandler {
     /**
@@ -119,8 +120,9 @@ contract LimitOrderBook is ILimitOrderBook, VanillaGovernable, Pausable, EIP712U
 
     mapping(uint8 => address) public orderHandlers;
     IJuror public juror;
+    address public referral;
 
-    uint256[46] private __gap;
+    uint256[45] private __gap;
 
     modifier onlyValidator {
         require(isValidator[msg.sender], "OB.only_validator");
@@ -157,14 +159,15 @@ contract LimitOrderBook is ILimitOrderBook, VanillaGovernable, Pausable, EIP712U
         Order[] memory _orders = new Order[](1);
         _orders[0] = order;
         placeOrders(_orders);
+
     }
 
     /**
      * @inheritdoc ILimitOrderBook
     */
     function placeOrders(Order[] memory orders) public whenNotPaused {
-        address sender = _msgSender();
         address trader = orders[0].trader;
+        address sender = _msgSender();
         require(sender == trader || isTradingAuthority[trader][sender], "OB.no trading authority");
         (int[] memory posSizes, uint[] memory upperBounds) = bibliophile.getPositionSizesAndUpperBoundsForMarkets(trader);
         uint reserveAmount;
@@ -370,5 +373,9 @@ contract LimitOrderBook is ILimitOrderBook, VanillaGovernable, Pausable, EIP712U
 
     function setBibliophile(address _bibliophile) external onlyGovernance {
         bibliophile = IHubbleBibliophile(_bibliophile);
+    }
+
+    function setReferral(address _referral) external onlyGovernance {
+        referral = _referral;
     }
 }
