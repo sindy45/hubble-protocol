@@ -15,6 +15,7 @@ import { IJuror } from "../precompiles/Juror.sol";
 
 interface IOrderBook is ILimitOrderBook {
     event OrdersMatched(bytes32 indexed orderHash0, bytes32 indexed orderHash1, uint256 fillAmount, uint price, uint openInterestNotional, address relayer, uint timestamp);
+    event OrderMatched(address indexed trader, bytes32 indexed orderHash, uint256 fillAmount, uint price, uint openInterestNotional, uint timestamp);
     event LiquidationOrderMatched(address indexed trader, bytes32 indexed orderHash, uint256 fillAmount, uint price, uint openInterestNotional, address relayer, uint timestamp);
     event OrderMatchingError(bytes32 indexed orderHash, string err);
     event LiquidationError(address indexed trader, bytes32 indexed orderHash, string err, uint256 toLiquidate);
@@ -85,15 +86,18 @@ contract OrderBook is IOrderBook, LimitOrderBook {
         try clearingHouse.openComplementaryPositions(instructions, fillAmount, fillPrice) returns (uint256 openInterestNotional) {
             _updateOrder(orderTypes[0], encodedOrders[0], abi.encode(instructions[0].orderHash, fillAmount));
             _updateOrder(orderTypes[1], encodedOrders[1], abi.encode(instructions[1].orderHash, -fillAmount));
+            uint fillAmountUint = fillAmount.toUint256();
             emit OrdersMatched(
                 instructions[0].orderHash,
                 instructions[1].orderHash,
-                fillAmount.toUint256(),
+                fillAmountUint,
                 fillPrice,
                 openInterestNotional,
                 msg.sender, // relayer
                 block.timestamp
             );
+            emit OrderMatched(instructions[0].trader, instructions[0].orderHash, fillAmountUint, fillPrice, openInterestNotional, block.timestamp);
+            emit OrderMatched(instructions[1].trader, instructions[1].orderHash, fillAmountUint, fillPrice, openInterestNotional, block.timestamp);
         } catch Error(string memory err) { // catches errors emitted from "revert/require"
             try this.parseMatchingError(err) returns(bytes32 orderHash, string memory reason) {
                 emit OrderMatchingError(orderHash, reason);
@@ -143,6 +147,7 @@ contract OrderBook is IOrderBook, LimitOrderBook {
                 msg.sender, // relayer
                 block.timestamp
             );
+            emit OrderMatched(instruction.trader, instruction.orderHash, liquidationAmount, fillPrice, openInterestNotional, block.timestamp);
         } catch Error(string memory err) { // catches errors emitted from "revert/require"
             try this.parseMatchingError(err) returns(bytes32 _orderHash, string memory reason) {
                 if (instruction.orderHash == _orderHash) { // err in openPosition for the order
