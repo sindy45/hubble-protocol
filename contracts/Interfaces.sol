@@ -88,6 +88,7 @@ interface IClearingHouse {
     function calcMarginFraction(address trader, bool includeFundingPayments, Mode mode) external view returns(int256);
     function getUnderlyingPrice() external view returns(uint[] memory prices);
     function orderBook() external view returns(address);
+    function getAMMs() external view returns (IAMM[] memory);
 }
 
 interface ERC20Detailed {
@@ -138,7 +139,7 @@ interface IAMM {
     function getOptimalPnl(address trader, int256 margin, IClearingHouse.Mode mode) external view returns (uint, int256);
     function lastPrice() external view returns(uint256);
     function startFunding() external returns(uint256);
-    function openInterestNotional() external returns(uint256);
+    function openInterestNotional() external view returns(uint256);
     function getUnderlyingPrice() external view returns(uint256);
     function minSizeRequirement() external view returns(uint256);
     function maxOracleSpreadRatio() external view returns(uint256);

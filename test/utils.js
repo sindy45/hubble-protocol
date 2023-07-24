@@ -7,7 +7,6 @@ const _1e6 = BigNumber.from(10).pow(6)
 const _1e8 = BigNumber.from(10).pow(8)
 const _1e12 = BigNumber.from(10).pow(12)
 const _1e18 = ethers.constants.WeiPerEther
-const feeSink = new ethers.Wallet.createRandom()
 
 const DEFAULT_TRADE_FEE = 0.0005 * 1e6 /* 0.05% */
 
@@ -160,6 +159,12 @@ async function setupContracts(options = {}) {
     tx = await oracle.setStablePrice(vusd.address, 1e6, getTxOptions()) // $1
     await tx.wait()
 
+    // adding governance as default treasury address
+    treasuryAddress = options.treasuryAddress || governance
+    feeSinkInitArgs = [ governance, treasuryAddress, oracle.address ]
+    feeSinkDeployArgs = [ insuranceFund.address, vusd.address, clearingHouseProxy.address ]
+    feeSink = await setupUpgradeableProxy('FeeSink', proxyAdmin.address, feeSinkInitArgs, feeSinkDeployArgs)
+
     const hubbleReferral = await setupUpgradeableProxy('HubbleReferral', proxyAdmin.address, [ governance ], [ forwarder.address, clearingHouseProxy.address ])
 
     initArgs = [
@@ -229,7 +234,8 @@ async function setupContracts(options = {}) {
         proxyAdmin,
         juror,
         bibliophile,
-        iocOrderBook
+        iocOrderBook,
+        feeSink
     }
 
     if (options.setupAMM) {
@@ -727,7 +733,7 @@ function encodeIOCOrder(order) {
 }
 
 module.exports = {
-    constants: { _1e6, _1e8, _1e12, _1e18, ZERO, feeSink: feeSink.address },
+    constants: { _1e6, _1e8, _1e12, _1e18, ZERO },
     BigNumber,
     txOptions,
     verification,

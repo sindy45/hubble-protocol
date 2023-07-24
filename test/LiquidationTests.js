@@ -2,7 +2,7 @@ const { expect } = require('chai');
 const { BigNumber } = require('ethers')
 
 const {
-    constants: { _1e6, _1e18, ZERO, feeSink },
+    constants: { _1e6, _1e18, ZERO },
     getTradeDetails,
     setupContracts,
     setupRestrictedTestToken,
@@ -16,7 +16,7 @@ describe('Liquidation Tests', async function() {
         signers = await ethers.getSigners()
         ;([ _, bob, liquidator1, liquidator2, liquidator3, admin ] = signers)
         alice = signers[0].address
-        ;({ orderBook, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, oracle, weth, insuranceFund, hubbleViewer } = await setupContracts())
+        ;({ orderBook, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, oracle, weth, insuranceFund, hubbleViewer, feeSink } = await setupContracts())
 
         await vusd.grantRole(await vusd.MINTER_ROLE(), admin.address) // will mint vusd to liquidators account
         await clearingHouse.setOrderBook(orderBook.address)
@@ -89,14 +89,14 @@ describe('Liquidation Tests', async function() {
         ).to.be.revertedWith('Pausable: paused')
         await clearingHouse.unpause()
 
-        const feeSinkBalance = await vusd.balanceOf(feeSink)
+        const feeSinkBalance = await vusd.balanceOf(feeSink.address)
         await clearingHouse.connect(liquidator1).liquidate2(alice)
 
         const liquidationPenalty = notionalPosition.mul(5e4).div(_1e6)
         expect(await marginAccount.margin(0, alice)).to.eq(
             unrealizedPnl.sub(liquidationPenalty).sub(tradeFee)
         )
-        expect(await vusd.balanceOf(feeSink)).to.eq(liquidationPenalty.add(feeSinkBalance))
+        expect(await vusd.balanceOf(feeSink.address)).to.eq(liquidationPenalty.add(feeSinkBalance))
     })
 
     it('alice is in liquidation zone B', async function() {
@@ -223,14 +223,14 @@ describe('Multi-collateral Liquidation Tests', async function() {
         ;({ unrealizedPnl, notionalPosition } = await amm.getNotionalPositionAndUnrealizedPnl(alice))
 
         // unrealizedPnl = (1000 - 1130) * 5 = -650, notionalPosition = 5 * 1130 = 5650
-        const feeSinkBalance = await vusd.balanceOf(feeSink)
+        const feeSinkBalance = await vusd.balanceOf(feeSink.address)
         await clearingHouse.connect(liquidator1).liquidate2(alice)
 
         const liquidationPenalty = notionalPosition.mul(5e4).div(_1e6) // 5650 * .05 = 282.5
         expect(await marginAccount.margin(0, alice)).to.eq(
             unrealizedPnl.sub(liquidationPenalty).sub(tradeFee) // -650 - 282.5 - 2.5 = -935
         )
-        expect(await vusd.balanceOf(feeSink)).to.eq(liquidationPenalty.add(feeSinkBalance))
+        expect(await vusd.balanceOf(feeSink.address)).to.eq(liquidationPenalty.add(feeSinkBalance))
     })
 
     it('alice is in liquidation zone B', async function() {
@@ -449,7 +449,7 @@ describe('Partial Liquidation Threshold', async function() {
         await clearingHouse.connect(bob).openPosition2(0, base, base.mul(price).div(_1e18))
 
         // alice is in liquidation zone
-        const feeSinkBalance = await vusd.balanceOf(feeSink)
+        const feeSinkBalance = await vusd.balanceOf(feeSink.address)
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
         let tx = await clearingHouse.connect(liquidator1).liquidate2(alice)
         const { quoteAsset } = await getTradeDetails(tx, null, 'PositionLiquidated')
@@ -462,7 +462,7 @@ describe('Partial Liquidation Threshold', async function() {
         expect(position.liquidationThreshold).to.eq(baseAssetQuantity.mul(25).div(100).abs().add(1))
 
         const liquidationPenalty = quoteAsset.mul(5e4).div(_1e6)
-        expect(await vusd.balanceOf(feeSink)).to.eq(liquidationPenalty.add(feeSinkBalance))
+        expect(await vusd.balanceOf(feeSink.address)).to.eq(liquidationPenalty.add(feeSinkBalance))
 
         // alice is still in liquidation zone
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
@@ -493,7 +493,7 @@ describe('Partial Liquidation Threshold', async function() {
         await clearingHouse.connect(bob).openPosition2(0, base, base.mul(price).div(_1e18))
 
         // alice is in liquidation zone
-        const feeSinkBalance = await vusd.balanceOf(feeSink)
+        const feeSinkBalance = await vusd.balanceOf(feeSink.address)
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false
         let tx = await clearingHouse.connect(liquidator1).liquidate2(alice)
         const { quoteAsset } = await getTradeDetails(tx, null, 'PositionLiquidated')
@@ -504,7 +504,7 @@ describe('Partial Liquidation Threshold', async function() {
         baseAssetLong = baseAssetLong.mul(75).div(100).sub(1)
         expect(position.size).to.eq(baseAssetLong)
         const liquidationPenalty = quoteAsset.mul(5e4).div(_1e6)
-        expect(await vusd.balanceOf(feeSink)).to.eq(liquidationPenalty.add(feeSinkBalance))
+        expect(await vusd.balanceOf(feeSink.address)).to.eq(liquidationPenalty.add(feeSinkBalance))
 
         // alice is still in liquidation zone
         expect(await clearingHouse.isAboveMaintenanceMargin(alice)).to.be.false

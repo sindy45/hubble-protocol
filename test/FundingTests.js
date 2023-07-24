@@ -7,7 +7,7 @@ const {
     setupContracts,
     parseRawEvent,
     addMargin,
-    constants: { _1e6, _1e18, ZERO, feeSink }
+    constants: { _1e6, _1e18, ZERO}
 } = require('./utils')
 
 describe('Funding Tests', function() {
@@ -20,7 +20,7 @@ describe('Funding Tests', function() {
     describe('single trader', async function() {
         beforeEach(async function() {
             contracts = await setupContracts()
-            ;({ swap, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, oracle, weth, hubbleViewer } = contracts)
+            ;({ swap, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, usdc, oracle, weth, hubbleViewer, feeSink } = contracts)
             initialRate = _1e6.mul(1000)
 
             // add margin
@@ -237,7 +237,7 @@ describe('Funding Tests', function() {
             ).to.be.revertedWith('CH: Below Minimum Allowable Margin')
 
             // Liquidate
-            const feeSinkBalance = await vusd.balanceOf(feeSink)
+            const feeSinkBalance = await vusd.balanceOf(feeSink.address)
             ;({ unrealizedPnl, notionalPosition } = await amm.getNotionalPositionAndUnrealizedPnl(alice))
             await clearingHouse.connect(liquidator1).liquidate2(alice)
 
@@ -245,7 +245,7 @@ describe('Funding Tests', function() {
             remainingMargin = remainingMargin.sub(liquidationPenalty).add(unrealizedPnl)
 
             expect(await marginAccount.margin(0, alice)).to.eq(remainingMargin) // entire margin is in vusd
-            expect(await vusd.balanceOf(feeSink)).to.eq(liquidationPenalty.add(feeSinkBalance))
+            expect(await vusd.balanceOf(feeSink.address)).to.eq(liquidationPenalty.add(feeSinkBalance))
             await assertions(contracts, alice, {
                 size: 0,
                 openNotional: 0,

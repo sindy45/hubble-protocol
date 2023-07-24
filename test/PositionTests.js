@@ -2,7 +2,7 @@ const utils = require('./utils')
 const { expect } = require('chai');
 
 const {
-    constants: { _1e6, _1e18, ZERO, feeSink },
+    constants: { _1e6, _1e18, ZERO },
     assertions,
     getTradeDetails,
     setupContracts,
@@ -18,7 +18,7 @@ describe('Position Tests', async function() {
         ;([ alice ] = signers.map(s => s.address))
 
         contracts = await setupContracts({ tradeFee: TRADE_FEE })
-        ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, swap, hubbleViewer, oracle } = contracts)
+        ;({ registry, marginAccount, marginAccountHelper, clearingHouse, amm, vusd, weth, usdc, swap, hubbleViewer, oracle, feeSink } = contracts)
         initialRate = _1e6.mul(1000)
 
         // add margin
@@ -48,7 +48,7 @@ describe('Position Tests', async function() {
                 unrealizedPnl: ZERO,
                 margin: margin.sub(fee)
             })
-            expect(await vusd.balanceOf(feeSink)).to.eq(fee)
+            expect(await vusd.balanceOf(feeSink.address)).to.eq(fee)
             expect(await amm.longOpenInterestNotional()).to.eq(baseAssetQuantity)
             expect(await amm.shortOpenInterestNotional()).to.eq(ZERO)
             expect(await amm.lastPrice()).to.eq(amount.mul(_1e18).div(baseAssetQuantity).abs())
@@ -91,7 +91,7 @@ describe('Position Tests', async function() {
                 notionalPosition: quoteAsset,
                 unrealizedPnl: ZERO
             })
-            expect(await vusd.balanceOf(feeSink)).to.eq(fee)
+            expect(await vusd.balanceOf(feeSink.address)).to.eq(fee)
             expect(await amm.longOpenInterestNotional()).to.eq(baseAssetQuantity.mul(2))
             expect(await amm.shortOpenInterestNotional()).to.eq(ZERO)
         })
@@ -116,7 +116,7 @@ describe('Position Tests', async function() {
                 notionalPosition: quoteAsset,
                 unrealizedPnl: ZERO
             })
-            expect(await vusd.balanceOf(feeSink)).to.eq(fee)
+            expect(await vusd.balanceOf(feeSink.address)).to.eq(fee)
             expect(await amm.longOpenInterestNotional()).to.eq(ZERO)
             expect(await amm.shortOpenInterestNotional()).to.eq(baseAssetQuantity.abs())
             expect(await amm.lastPrice()).to.eq(amount.mul(_1e18).div(baseAssetQuantity).abs())
@@ -160,7 +160,7 @@ describe('Position Tests', async function() {
                 unrealizedPnl: ZERO,
                 margin: margin.sub(fee)
             })
-            expect(await vusd.balanceOf(feeSink)).to.eq(fee)
+            expect(await vusd.balanceOf(feeSink.address)).to.eq(fee)
             expect(await amm.longOpenInterestNotional()).to.eq(ZERO)
             expect(await amm.shortOpenInterestNotional()).to.eq(baseAssetQuantity.mul(2).abs())
         })
@@ -247,7 +247,7 @@ describe('Position Tests', async function() {
                 notionalPosition: trade3.quoteAsset.mul(8).div(10),
                 margin: margin.sub(fee)
             })
-            expect(await vusd.balanceOf(feeSink)).to.eq(fee)
+            expect(await vusd.balanceOf(feeSink.address)).to.eq(fee)
             expect(await amm.longOpenInterestNotional()).to.eq(_1e18.mul(8))
             expect(await amm.shortOpenInterestNotional()).to.eq(ZERO)
         })
@@ -292,7 +292,7 @@ describe('Position Tests', async function() {
                 notionalPosition: trade3.quoteAsset.mul(8).div(10),
                 margin: margin.add(realizedPnl).sub(fee)
             })
-            expect(await vusd.balanceOf(feeSink)).to.eq(fee)
+            expect(await vusd.balanceOf(feeSink.address)).to.eq(fee)
             expect(await amm.longOpenInterestNotional()).to.eq(ZERO)
             expect(await amm.shortOpenInterestNotional()).to.eq(_1e18.mul(8))
         })
@@ -320,7 +320,7 @@ describe('Position Tests', async function() {
                 unrealizedPnl: ZERO,
                 margin: margin.sub(fee)
             })
-            expect(await vusd.balanceOf(feeSink)).to.eq(fee)
+            expect(await vusd.balanceOf(feeSink.address)).to.eq(fee)
             expect(await amm.longOpenInterestNotional()).to.eq(longBaseAssetQuantity.add(shortBaseAssetQuantity))
             expect(await amm.shortOpenInterestNotional()).to.eq(ZERO)
         })
@@ -348,7 +348,7 @@ describe('Position Tests', async function() {
                 unrealizedPnl: ZERO,
                 margin: margin.sub(fee)
             })
-            expect(await vusd.balanceOf(feeSink)).to.eq(fee)
+            expect(await vusd.balanceOf(feeSink.address)).to.eq(fee)
             expect(await amm.longOpenInterestNotional()).to.eq(ZERO)
             expect(await amm.shortOpenInterestNotional()).to.eq(longBaseAssetQuantity.add(shortBaseAssetQuantity).abs())
         })
@@ -473,11 +473,11 @@ describe('Position Tests', async function() {
             ;({ notionalPosition, unrealizedPnl } = await amm.getNotionalPositionAndUnrealizedPnl(alice))
             expect(unrealizedPnl.lt(0)).to.be.true // loss
 
-            const feeSinkBalance = await vusd.balanceOf(feeSink)
+            const feeSinkBalance = await vusd.balanceOf(feeSink.address)
             await clearingHouse.connect(signers[2]).liquidate2(alice)
 
             const liquidationPenalty = notionalPosition.mul(5e4).div(_1e6)
-            expect(await vusd.balanceOf(feeSink)).to.eq(liquidationPenalty.add(feeSinkBalance)) // liquidation penalty
+            expect(await vusd.balanceOf(feeSink.address)).to.eq(liquidationPenalty.add(feeSinkBalance)) // liquidation penalty
         })
     })
 

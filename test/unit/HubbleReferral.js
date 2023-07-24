@@ -9,7 +9,7 @@ const {
     getTradeDetails,
     signTransaction
 } = utils
-const { constants: { _1e6, ZERO, _1e18, feeSink } } = utils
+const { constants: { _1e6, ZERO, _1e18 } } = utils
 const TRADE_FEE = 0.000567 * _1e6
 
 describe('HubbleReferral Unit Tests', function() {
@@ -17,7 +17,7 @@ describe('HubbleReferral Unit Tests', function() {
         signers = await ethers.getSigners()
         alice = signers[0].address
         bob = signers[11] // signers 0-10 are utilized in other tests
-        ;({ hubbleReferral: referral, clearingHouse, marginAccount, vusd, insuranceFund, forwarder } = await setupContracts({ mockOrderBook: false, tradeFee: TRADE_FEE }))
+        ;({ hubbleReferral: referral, clearingHouse, marginAccount, vusd, insuranceFund, feeSink, forwarder } = await setupContracts({ mockOrderBook: false, tradeFee: TRADE_FEE }))
         await referral.beginSignups(50)
     })
 
@@ -156,7 +156,7 @@ describe('HubbleReferral Unit Tests', function() {
     })
 
     it('referrer and trader referral benefits', async function() {
-        const feeSinkBalance = await vusd.balanceOf(feeSink)
+        const feeSinkBalance = await vusd.balanceOf(feeSink.address)
         // add margin
         const margin = _1e6.mul(2000)
         await addMargin(bob, margin)
@@ -174,7 +174,7 @@ describe('HubbleReferral Unit Tests', function() {
         expect(feeCharged).to.eq(tradeFee.sub(discount))
         expect(await marginAccount.getNormalizedMargin(bob.address)).to.eq(
             margin.sub(feeCharged))
-        expect(await vusd.balanceOf(feeSink)).to.eq(feeCharged.sub(referralBonus).add(feeSinkBalance))
+        expect(await vusd.balanceOf(feeSink.address)).to.eq(feeCharged.sub(referralBonus).add(feeSinkBalance))
     })
 
     it('setGenesisTicketRoot', async function() {
