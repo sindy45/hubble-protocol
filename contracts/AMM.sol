@@ -254,7 +254,6 @@ contract AMM is IAMM, Governable {
         // premium = twapMarketPrice - twapIndexPrice
         // timeFraction = fundingPeriod(1 hour) / 1 day
         // premiumFraction = premium * timeFraction
-        // @todo calculate oracle twap for exact funding period
         underlyingPrice = getUnderlyingTwapPrice(spotPriceTwapInterval);
 
         if (markPriceTwapData.lastTimestamp != 0) { // there was atleast 1 trade in the lifetime of the market
@@ -494,7 +493,8 @@ contract AMM is IAMM, Governable {
     }
 
     /**
-    * @notice Calculates the TWAP price from the last hour start to the current block timestamp
+    * @notice Calculates the TWAP price last period start to current period start
+    * For eg: if spotPriceTwapInterval = 1 hour, now = 10:30 AM, then the twap will be calculated from 9:00 AM to 10:00 AM
     */
     function _calcTwap() internal view returns (uint256 twap) {
         uint256 currentPeriodStart = (_blockTimestamp() / spotPriceTwapInterval) * spotPriceTwapInterval;

@@ -61,15 +61,23 @@ contract NewOracle is VanillaGovernable {
         //         base           current previous now
 
         (uint80 round, uint256 latestPrice, uint256 latestTimestamp) = getLatestRoundData(aggregator);
-        uint256 baseTimestamp = _blockTimestamp() - intervalInSeconds;
+        uint currentPeriodStart = (_blockTimestamp() / intervalInSeconds) * intervalInSeconds;
+        uint256 baseTimestamp = currentPeriodStart - intervalInSeconds;
         // if latest updated timestamp is earlier than target timestamp, return the latest price.
-        if (latestTimestamp < baseTimestamp || round == 0) {
+        if (latestTimestamp <= baseTimestamp || round == 0) {
             return _formatPrice(latestPrice);
+        }
+
+        // if latest updated timestamp is later than current hour start, iterate till we find round with timestamp earlier than current hour start
+        // note this will increase gas cost when funding is delayed for a long time in current hour
+        while(latestTimestamp > currentPeriodStart) {
+            round = round - 1;
+            (, latestPrice, latestTimestamp) = getRoundData(aggregator, round);
         }
 
         // rounds are like snapshots, latestRound means the latest price snapshot. follow chainlink naming
         uint256 previousTimestamp = latestTimestamp;
-        uint256 cumulativeTime = _blockTimestamp() - previousTimestamp;
+        uint256 cumulativeTime = currentPeriodStart - previousTimestamp;
         uint256 weightedPrice = latestPrice * cumulativeTime;
         while (true) {
             if (round == 0) {
