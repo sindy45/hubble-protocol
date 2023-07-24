@@ -108,7 +108,7 @@ describe('vUSD Unit Tests', function() {
         it('too [smol/big] withdraw fails', async function () {
             await expect(
                 vusd.withdraw(_1e6.mul(5).sub(1))
-            ).to.be.revertedWith('min withdraw is 5 vusd')
+            ).to.be.revertedWith('VUSD: withdraw minimum 5 or all')
 
             await expect(
                 vusd.connect(signers[1]).withdraw(amount.add(1))
@@ -141,6 +141,21 @@ describe('vUSD Unit Tests', function() {
                 expect(await ethers.provider.getBalance(signers[i].address)).to.eq(defaultInitialBalance.sub(gasPaidMultipleUsers[i]))
             }
             expect(await ethers.provider.getBalance(vusd.address)).to.eq(ZERO)
+        })
+
+        it('can withdraw < 5 vUSD if withdrawing all', async function () {
+            const amount = _1e6.mul(4)
+            await mintVusdWithReserve(signers[2], amount)
+            expect(await vusd.balanceOf(signers[2].address)).to.eq(amount)
+
+            await expect(vusd.connect(signers[2]).withdraw(amount.sub(1))).to.be.revertedWith('VUSD: withdraw minimum 5 or all')
+            let signer2Balance = await ethers.provider.getBalance(signers[2].address)
+
+            const tx = await vusd.connect(signers[2]).withdraw(amount)
+            const gasPaid = await calcGasPaid(tx)
+            expect(await vusd.balanceOf(signers[2].address)).to.eq(ZERO)
+            await vusd.processWithdrawals()
+            expect(await ethers.provider.getBalance(signers[2].address)).to.eq(signer2Balance.sub(gasPaid).add(amount.mul(1e12)))
         })
     })
 

@@ -159,8 +159,7 @@ contract HubbleViewer is IHubbleViewer {
         (notionalPosition, unrealizedPnl) = getMarkPriceBasedPnl(trader);
 
         int256 pendingFunding = clearingHouse.getTotalFunding(trader);
-        // marginAccount.getAvailableMargin(trader) assumes that there is no pending funding
-        freeMargin = marginAccount.getAvailableMargin(trader) - pendingFunding;
+        freeMargin = marginAccount.getAvailableMargin(trader);
         (,totalCollateral) = marginAccount.weightedAndSpotCollateral(trader);
         totalCollateral -= pendingFunding;
     }

@@ -107,7 +107,7 @@ contract VUSD is ERC20PresetMinterPauserUpgradeable, ReentrancyGuard, IVUSD {
     }
 
     function _withdrawTo(address to, uint amount) internal {
-        require(amount >= 5 * (10 ** PRECISION), "min withdraw is 5 vusd");
+        require(amount >= 5 * (10 ** PRECISION) || amount == balanceOf(_msgSender()), "VUSD: withdraw minimum 5 or all");
         burn(amount); // burn vusd from msg.sender
         withdrawals.push(Withdrawal(to, amount * SCALING_FACTOR));
     }
