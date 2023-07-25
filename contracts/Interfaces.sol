@@ -16,7 +16,7 @@ interface IRegistry {
 
 interface IOracle {
     function getUnderlyingPrice(address asset) external view returns(int256);
-    function getUnderlyingTwapPrice(address asset, uint256 intervalInSeconds) external view returns (int256);
+    function getUnderlyingTwapPrice(address asset, uint256 startTimestamp, uint256 intervalInSeconds) external view returns (int256);
 }
 
 interface IClearingHouse {

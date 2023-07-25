@@ -10,6 +10,7 @@ import { IHubbleReferral } from "./HubbleReferral.sol";
 import { VUSD } from "./VUSD.sol";
 import { IHubbleBibliophile } from "./precompiles/IHubbleBibliophile.sol";
 import { IOrderBook } from "./orderbooks/OrderBook.sol";
+import { IFeeSink } from "./FeeSink.sol";
 
 /**
  * @title Gets instructions from the orderbook contract and executes them.
@@ -275,6 +276,7 @@ contract ClearingHouse is IClearingHouse, HubbleBase {
         if (_nextFundingTime != 0) {
             lastFundingTime = _blockTimestamp();
         }
+        IFeeSink(feeSink).distributeFunds();
     }
 
     /* ********************* */

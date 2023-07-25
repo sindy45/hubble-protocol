@@ -7,8 +7,9 @@ import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 import { VanillaGovernable } from "./legos/Governable.sol";
 import { AggregatorV3Interface } from "./Interfaces.sol";
+import { IOracle } from "./Interfaces.sol";
 
-contract NewOracle is VanillaGovernable {
+contract NewOracle is IOracle, VanillaGovernable {
     using SafeCast for uint256;
     using SafeCast for int256;
 
@@ -33,7 +34,7 @@ contract NewOracle is VanillaGovernable {
         answer /= 100;
     }
 
-    function getUnderlyingTwapPrice(address underlying, uint256 intervalInSeconds)
+    function getUnderlyingTwapPrice(address underlying, uint256 periodStart, uint256 intervalInSeconds)
         virtual
         public
         view
@@ -61,23 +62,22 @@ contract NewOracle is VanillaGovernable {
         //         base           current previous now
 
         (uint80 round, uint256 latestPrice, uint256 latestTimestamp) = getLatestRoundData(aggregator);
-        uint currentPeriodStart = (_blockTimestamp() / intervalInSeconds) * intervalInSeconds;
-        uint256 baseTimestamp = currentPeriodStart - intervalInSeconds;
         // if latest updated timestamp is earlier than target timestamp, return the latest price.
-        if (latestTimestamp <= baseTimestamp || round == 0) {
+        if (latestTimestamp <= periodStart || round == 0) {
             return _formatPrice(latestPrice);
         }
 
         // if latest updated timestamp is later than current hour start, iterate till we find round with timestamp earlier than current hour start
         // note this will increase gas cost when funding is delayed for a long time in current hour
-        while(latestTimestamp > currentPeriodStart) {
+        uint periodEnd = periodStart + intervalInSeconds;
+        while(latestTimestamp > periodEnd) {
             round = round - 1;
             (, latestPrice, latestTimestamp) = getRoundData(aggregator, round);
         }
 
         // rounds are like snapshots, latestRound means the latest price snapshot. follow chainlink naming
         uint256 previousTimestamp = latestTimestamp;
-        uint256 cumulativeTime = currentPeriodStart - previousTimestamp;
+        uint256 cumulativeTime = periodEnd - previousTimestamp;
         uint256 weightedPrice = latestPrice * cumulativeTime;
         while (true) {
             if (round == 0) {
@@ -89,12 +89,12 @@ contract NewOracle is VanillaGovernable {
             (, uint256 currentPrice, uint256 currentTimestamp) = getRoundData(aggregator, round);
 
             // check if current round timestamp is earlier than target timestamp
-            if (currentTimestamp <= baseTimestamp) {
+            if (currentTimestamp <= periodStart) {
                 // weighted time period will be (target timestamp - previous timestamp). For example,
                 // now is 1000, intervalInSeconds is 100, then target timestamp is 900. If timestamp of current round is 970,
                 // and timestamp of NEXT round is 880, then the weighted time period will be (970 - 900) = 70,
                 // instead of (970 - 880)
-                weightedPrice = weightedPrice + (currentPrice * (previousTimestamp - baseTimestamp));
+                weightedPrice = weightedPrice + (currentPrice * (previousTimestamp - periodStart));
                 break;
             }
 

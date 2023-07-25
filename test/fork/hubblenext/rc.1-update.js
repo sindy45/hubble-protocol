@@ -21,7 +21,7 @@ describe.skip('hubblenext-rc.1 update', async function() {
             method: "hardhat_reset",
             params: [{
                 forking: {
-                    jsonRpcUrl: `https://hubblenext-archive-rpc.hubble.exchange/ext/bc/iKMFgo49o4X3Pd3UWUkmPwjKom3xZz3Vo6Y1kkwL2Ce6DZaPm/rpc`,
+                    jsonRpcUrl: process.env.RPC_URL_ARCHIVE,
                     blockNumber
                 }
             }]

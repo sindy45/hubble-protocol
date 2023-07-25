@@ -7,8 +7,9 @@ import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 import { Governable } from "./legos/Governable.sol";
 import { AggregatorV3Interface } from "./Interfaces.sol";
+import { IOracle } from "./Interfaces.sol";
 
-contract Oracle is Governable {
+contract Oracle is IOracle, Governable {
     using SafeCast for uint256;
     using SafeCast for int256;
 
@@ -35,7 +36,7 @@ contract Oracle is Governable {
         answer /= 100;
     }
 
-    function getUnderlyingTwapPrice(address underlying, uint256 intervalInSeconds)
+    function getUnderlyingTwapPrice(address underlying, uint256 periodStart, uint256 intervalInSeconds)
         virtual
         public
         view
@@ -63,9 +64,8 @@ contract Oracle is Governable {
         //         base           current previous now
 
         (uint80 round, uint256 latestPrice, uint256 latestTimestamp) = getLatestRoundData(aggregator);
-        uint256 baseTimestamp = _blockTimestamp() - intervalInSeconds;
         // if latest updated timestamp is earlier than target timestamp, return the latest price.
-        if (latestTimestamp < baseTimestamp || round == 0) {
+        if (latestTimestamp < periodStart || round == 0) {
             return formatPrice(latestPrice);
         }
 
@@ -83,12 +83,12 @@ contract Oracle is Governable {
             (, uint256 currentPrice, uint256 currentTimestamp) = getRoundData(aggregator, round);
 
             // check if current round timestamp is earlier than target timestamp
-            if (currentTimestamp <= baseTimestamp) {
+            if (currentTimestamp <= periodStart) {
                 // weighted time period will be (target timestamp - previous timestamp). For example,
                 // now is 1000, intervalInSeconds is 100, then target timestamp is 900. If timestamp of current round is 970,
                 // and timestamp of NEXT round is 880, then the weighted time period will be (970 - 900) = 70,
                 // instead of (970 - 880)
-                weightedPrice = weightedPrice + (currentPrice * (previousTimestamp - baseTimestamp));
+                weightedPrice = weightedPrice + (currentPrice * (previousTimestamp - periodStart));
                 break;
             }
 

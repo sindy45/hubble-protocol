@@ -146,24 +146,24 @@ async function setupContracts(options = {}) {
     let initArgs = [ governance, vusd.address, marginAccount.address, insuranceFund.address, ethers.constants.AddressZero ]
     marginAccountHelper = await setupUpgradeableProxy('MarginAccountHelper', proxyAdmin.address, initArgs)
 
-    if (options.restrictedVUSD) {
-        const transferRole = ethers.utils.id('TRANSFER_ROLE')
-        await vusd.grantRoles(
-            [ transferRole, transferRole, transferRole ],
-            [ marginAccountHelper.address, marginAccount.address, insuranceFund.address ],
-            getTxOptions()
-        )
-    }
-
     oracle = await setupUpgradeableProxy(options.testOracle ? 'TestOracle' : 'Oracle', proxyAdmin.address, [ governance ])
     tx = await oracle.setStablePrice(vusd.address, 1e6, getTxOptions()) // $1
     await tx.wait()
 
     // adding governance as default treasury address
     treasuryAddress = options.treasuryAddress || governance
-    feeSinkInitArgs = [ governance, treasuryAddress, oracle.address ]
+    feeSinkInitArgs = [ governance, treasuryAddress ]
     feeSinkDeployArgs = [ insuranceFund.address, vusd.address, clearingHouseProxy.address ]
     feeSink = await setupUpgradeableProxy('FeeSink', proxyAdmin.address, feeSinkInitArgs, feeSinkDeployArgs)
+
+    if (options.restrictedVUSD) {
+        const transferRole = ethers.utils.id('TRANSFER_ROLE')
+        await vusd.grantRoles(
+            [ transferRole, transferRole, transferRole, transferRole ],
+            [ marginAccountHelper.address, marginAccount.address, insuranceFund.address, feeSink.address ],
+            getTxOptions()
+        )
+    }
 
     const hubbleReferral = await setupUpgradeableProxy('HubbleReferral', proxyAdmin.address, [ governance ], [ forwarder.address, clearingHouseProxy.address ])
 

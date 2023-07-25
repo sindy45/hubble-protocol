@@ -57,6 +57,6 @@ contract DeployContracts is Utils {
 
         // oracle
         assertEq(oracle.getUnderlyingPrice(address(wavax)), 20 * 1e6);
-        assertEq(oracle.getUnderlyingTwapPrice(address(wavax), 0), 20 * 1e6);
+        assertEq(oracle.getUnderlyingTwapPrice(address(wavax), 0, 0), 20 * 1e6);
     }
 }

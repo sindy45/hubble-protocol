@@ -8,17 +8,20 @@ import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.s
 import {
     IAMM,
     IERC20,
-    IERC20FlexibleSupply,
-    IOracle
+    IERC20FlexibleSupply
 } from "./Interfaces.sol";
 import { IClearingHouse } from "./Interfaces.sol";
+
+interface IFeeSink {
+    function distributeFunds() external;
+}
 
 /**
  * @title This contract is used to distribute fee between the treasury and insurance fund.
  * Fee is collected by clearingHouse in vusd and credited to FeeSink contract's address.
  * @notice Most notable operations include distributeFunds
 */
-contract FeeSink is HubbleBase {
+contract FeeSink is IFeeSink, HubbleBase {
     using SafeERC20 for IERC20;
     using SafeCast for uint256;
     using SafeCast for int256;
@@ -27,7 +30,6 @@ contract FeeSink is HubbleBase {
     IERC20FlexibleSupply public immutable vusd;
     address public immutable insuranceFund;
     address public treasury;
-    IOracle public oracle;
 
     mapping(address => bool) public validFundsDistributors; // accounts that can execute distributeFunds
     /**
@@ -54,12 +56,12 @@ contract FeeSink is HubbleBase {
         clearingHouse = IClearingHouse(_clearingHouse);
     }
 
-    function initialize(address _governance, address _treasury, address _oracle) external initializer {
+    function initialize(address _governance, address _treasury) external initializer {
         _setGovernace(_governance);
         treasury = _treasury;
-        maxFeePercentageForInsuranceFund = 100000; // 10 %
-        insuranceFundToOpenInterestTargetRatio = 400000; // 40%
-        oracle = IOracle(_oracle);
+        maxFeePercentageForInsuranceFund = 1e5; // 10 %
+        insuranceFundToOpenInterestTargetRatio = 4e5; // 40%
+        validFundsDistributors[address(clearingHouse)] = true;
     }
 
     /**
@@ -75,8 +77,9 @@ contract FeeSink is HubbleBase {
     */
     function distributeFunds() external onlyGovernanceOrValidFundsDistributor {
         uint balance = vusd.balanceOf(address(this));
-        require(balance > 0, "FeeSink: no funds to distribute");
-
+        if (balance == 0) {
+            return;
+        }
         (uint insuranceFundFee, uint treasuryFee) = _getFeeDistributionBetweenInsuranceFundAndTreasury(balance);
         IERC20(address(vusd)).safeTransfer(insuranceFund, insuranceFundFee);
         IERC20(address(vusd)).safeTransfer(treasury, treasuryFee);
@@ -93,7 +96,7 @@ contract FeeSink is HubbleBase {
             return (0, _feeAmount);
         }
 
-        uint vusdPriceInUSD = uint(oracle.getUnderlyingPrice(address(vusd)));
+        uint vusdPriceInUSD = uint(clearingHouse.amms(0).oracle().getUnderlyingPrice(address(vusd)));
         uint insuranceFundBalance = vusd.balanceOf(insuranceFund) * vusdPriceInUSD / 1e6;
         uint insuranceFundToOpenInterestRatio = (insuranceFundBalance * 1e6) / openInterest;
         if (insuranceFundToOpenInterestRatio >= insuranceFundToOpenInterestTargetRatio) {

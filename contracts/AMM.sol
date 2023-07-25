@@ -297,8 +297,10 @@ contract AMM is IAMM, Governable {
     /*       View         */
     /* ****************** */
 
-    function getUnderlyingTwapPrice(uint256 _intervalInSeconds) public view returns (int256) {
-        return oracle.getUnderlyingTwapPrice(underlyingAsset, _intervalInSeconds);
+    function getUnderlyingTwapPrice(uint256 intervalInSeconds) public view returns (int256) {
+        uint currentPeriodStart = (_blockTimestamp() / intervalInSeconds) * intervalInSeconds;
+        uint256 baseTimestamp = currentPeriodStart - intervalInSeconds;
+        return oracle.getUnderlyingTwapPrice(underlyingAsset, baseTimestamp, intervalInSeconds);
     }
 
     function getMarkPriceTwap() public view returns (int256) {
@@ -459,8 +461,9 @@ contract AMM is IAMM, Governable {
 
     function _updateTWAP(uint256 price) internal {
         uint256 currentTimestamp = _blockTimestamp();
-        uint256 currentPeriodStart = (currentTimestamp / spotPriceTwapInterval) * spotPriceTwapInterval;
-        uint256 lastPeriodStart = currentPeriodStart - spotPriceTwapInterval;
+        uint interval = spotPriceTwapInterval;
+        uint256 currentPeriodStart = (currentTimestamp / interval) * interval;
+        uint256 lastPeriodStart = currentPeriodStart - interval;
         uint256 deltaTime;
 
         // If its the first trade in the current period, reset the accumulator, and set the lastPeriod accumulator
@@ -474,7 +477,7 @@ contract AMM is IAMM, Governable {
                 deltaTime = currentPeriodStart - markPriceTwapData.lastTimestamp;
                 markPriceTwapData.lastPeriodAccumulator = markPriceTwapData.accumulator + markPriceTwapData.lastPrice * deltaTime;
             } else {
-                markPriceTwapData.lastPeriodAccumulator = markPriceTwapData.lastPrice * spotPriceTwapInterval;
+                markPriceTwapData.lastPeriodAccumulator = markPriceTwapData.lastPrice * interval;
             }
             markPriceTwapData.accumulator = (currentTimestamp - currentPeriodStart) * markPriceTwapData.lastPrice;
         } else {
@@ -497,8 +500,9 @@ contract AMM is IAMM, Governable {
     * For eg: if spotPriceTwapInterval = 1 hour, now = 10:30 AM, then the twap will be calculated from 9:00 AM to 10:00 AM
     */
     function _calcTwap() internal view returns (uint256 twap) {
-        uint256 currentPeriodStart = (_blockTimestamp() / spotPriceTwapInterval) * spotPriceTwapInterval;
-        uint256 lastPeriodStart = currentPeriodStart - spotPriceTwapInterval;
+        uint interval = spotPriceTwapInterval;
+        uint256 currentPeriodStart = (_blockTimestamp() / interval) * interval;
+        uint256 lastPeriodStart = currentPeriodStart - interval;
 
         // If there is no trade in the last period, return the last trade price
         if (markPriceTwapData.lastTimestamp <= lastPeriodStart) {
@@ -512,11 +516,11 @@ contract AMM is IAMM, Governable {
         */
         if (markPriceTwapData.lastTimestamp >= currentPeriodStart) {
             // use the lastPeriodAccumulator to calculate the twap
-            twap = markPriceTwapData.lastPeriodAccumulator / spotPriceTwapInterval;
+            twap = markPriceTwapData.lastPeriodAccumulator / interval;
         } else {
             // use the accumulator to calculate the twap
             uint256 currentAccumulator = markPriceTwapData.accumulator + (currentPeriodStart - markPriceTwapData.lastTimestamp) * markPriceTwapData.lastPrice;
-            twap = currentAccumulator / spotPriceTwapInterval;
+            twap = currentAccumulator / interval;
         }
     }
 

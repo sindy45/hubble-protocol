@@ -4,7 +4,6 @@ const utils = require("../utils")
 const {
     addMargin,
     constants,
-    getTxOptions,
     setupContracts,
     encodeLimitOrder
 } = utils
@@ -37,7 +36,7 @@ describe("FeeSink Unit Tests", function() {
         it("fails if we try to initialize again", async function() {
             newMaxFeePercentageForInsuranceFund = BigNumber.from(1000)
             newInsuranceFundToOpenInterestTargetRatio = BigNumber.from(1000)
-            await expect(feeSink.initialize(governance.address, treasuryAddress, oracle.address)).to.be.revertedWith("Initializable: contract is already initialized")
+            await expect(feeSink.initialize(governance.address, treasuryAddress)).to.be.revertedWith("Initializable: contract is already initialized")
         })
     })
 
@@ -76,31 +75,11 @@ describe("FeeSink Unit Tests", function() {
                 validAccount = await getGovernanceOrValidFundsDistributorAccount()
             })
 
-            context("when address is governance", function() {
-                it("allows to execute distributeFunds", async function() {
-                    await expect(feeSink.distributeFunds()).to.be.revertedWith("FeeSink: no funds to distribute")
-                })
-            })
-
-            context("when address is present in validFundsDistributors", function() {
-                it("allows to execute distributeFunds", async function() {
-                    let validAccount = await getValidFundsDistributorAccount()
-                    await expect(feeSink.connect(validAccount).distributeFunds()).to.be.revertedWith("FeeSink: no funds to distribute")
-                })
-            })
-
-            context("when feeSink's vusd balance is zero", function() {
-                it("reverts when feeAmount is zero", async function() {
-                    await expect(feeSink.connect(await getGovernanceOrValidFundsDistributorAccount()).distributeFunds()).to.be.revertedWith("FeeSink: no funds to distribute")
-                });
-            })
-
             context("when feeSink's vusd balance is not zero", function() {
                 let feeSinkBalance = BigNumber.from(500).mul(_1e12)
                 bootstrapFeeSinkBalance = feeSinkBalance
+
                 beforeEach(async function() {
-                    const transferRole = ethers.utils.id('TRANSFER_ROLE')
-                    await vusd.grantRoles([transferRole], [feeSink.address], getTxOptions())
                     await vusd.mint(feeSink.address, feeSinkBalance)
                 })
 

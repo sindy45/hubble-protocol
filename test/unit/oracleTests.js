@@ -80,10 +80,10 @@ describe('Oracle Unit Tests', function() {
         * 1391600000 * (1689786109 - 1689786000) ) / 3600 / 100 = 14009322
         */
 
-        expect(await oracle.getUnderlyingTwapPrice(wavax, 3600)).to.eq('14009322');
+        expect(await oracle.getUnderlyingTwapPrice(wavax, 1689786000, 3600)).to.eq('14009322');
     })
 
     it('revert when asking intervel is 0', async () => {
-        await expect(oracle.getUnderlyingTwapPrice(wavax, 0)).to.be.revertedWith('interval can\'t be 0')
+        await expect(oracle.getUnderlyingTwapPrice(wavax, 1689786000, 0)).to.be.revertedWith('interval can\'t be 0')
     })
 })

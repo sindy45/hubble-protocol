@@ -320,7 +320,61 @@ async function rc5Update() {
     console.log(verification)
 }
 
-rc5Update()
+// 2.0.0-next.rc.6 update (fee sink)
+async function rc6Update() {
+    await initializeTxOptionsFor0thSigner()
+
+    const Oracle = await ethers.getContractFactory('TestOracle')
+    const oracle = await Oracle.deploy(getTxOptions())
+    console.log({ oracle: oracle.address })
+
+    const NewOracle = await ethers.getContractFactory('NewOracle')
+    const newOracle = await NewOracle.deploy(getTxOptions())
+    console.log({ newOracle: newOracle.address })
+
+    const AMM = await ethers.getContractFactory('AMM')
+    const newAMM = await AMM.deploy(config.ClearingHouse, getTxOptions())
+    console.log({ newAMM: newAMM.address })
+
+    feeSink = await setupUpgradeableProxy(
+        'FeeSink',
+        config.proxyAdmin,
+        [ config.governance, config.governance /* treasury */ ],
+        [ config.InsuranceFund, config.vusd, config.ClearingHouse ]
+    )
+    console.log({ feeSink: feeSink.address })
+
+    const ClearingHouse = await ethers.getContractFactory('ClearingHouse')
+    const newClearingHouse = await ClearingHouse.deploy(getTxOptions())
+    console.log({ newClearingHouse: newClearingHouse.address })
+
+    const VUSD = await ethers.getContractFactory('VUSD')
+    const newVUSD = await VUSD.deploy(getTxOptions())
+    console.log({ newVUSD: newVUSD.address })
+
+    // Phase 2
+    await sleep(5)
+    const proxyAdmin = await ethers.getContractAt('ProxyAdmin', config.proxyAdmin)
+    const tasks = []
+    tasks.push(proxyAdmin.upgrade(config.Oracle, oracle.address, getTxOptions()))
+    tasks.push(newOracle.setStablePrice(config.vusd, _1e6, getTxOptions())) // vusd
+    for (let i = 0; i < config.amms.length; i++) {
+        tasks.push(proxyAdmin.upgrade(config.amms[i].address, newAMM.address, getTxOptions()))
+        if (i < 2) {
+            // new oracle is not a proxy so aggregators need to be set again
+            tasks.push(newOracle.setAggregator(config.amms[i].underlying, config.amms[i].redStoneOracle, getTxOptions()))
+            const amm = await ethers.getContractAt('AMM', config.amms[i].address)
+            tasks.push(amm.setOracleConfig(newOracle.address, '0x91661D7757C0ec1bdBb04D51b7a1039e30D6dcc9' /* adapter address */, config.amms[i].redStoneFeedId, getTxOptions()))
+        }
+    }
+    tasks.push(proxyAdmin.upgrade(config.ClearingHouse, newClearingHouse.address, getTxOptions()))
+    tasks.push(proxyAdmin.upgrade(config.vusd, newVUSD.address, getTxOptions()))
+    const clearingHouse = await ethers.getContractAt('ClearingHouse', config.ClearingHouse)
+    tasks.push(clearingHouse.setFeeSink(feeSink.address, getTxOptions()))
+    await logStatus(tasks)
+}
+
+rc6Update()
 .then(() => process.exit(0))
 .catch(error => {
     console.error(error);

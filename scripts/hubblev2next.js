@@ -9,11 +9,13 @@ const hubblev2next = {
         "HubbleViewer": "0xa1e7b5ffD6FC7261f770d8A190104ED23255aFf2",
         "MarginAccount": "0x0300000000000000000000000000000000000001",
         "Oracle": "0x12dCf1Fbc94A419Ade92019f7459D19f3a1Eb6F0",
+        "NewOracle": "0xA6982711cEEC04f658630365DF271da7f8e58cF0",
         "InsuranceFund": "0x3cAf686de269f17bcC6D17A876ABb1bf2F4BAF51",
         "Registry": "0xa866eD212114921744f02B12853e2E1256D15d65",
         "MarginAccountHelper": "0xd00aB99371857bF80b3e9C7366D8c1CEcE6B7531",
         "HubbleReferral": "0x231255A3dB7800Dc9c2Ed1Dc9e2ED6e8d5516091",
         "vusd": "0xDDFC033DAd5F2Cc52e126B537f39eD6b70372ec6",
+        "FeeSink": "0x8E3fD03Dac5A62c2991E3c09B242F9ea5f6D1E9C",
         "amms": [
             {
                 perp: "ETH-Perp",

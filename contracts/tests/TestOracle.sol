@@ -26,7 +26,7 @@ contract TestOracle is Oracle {
         return prices[underlying];
     }
 
-    function getUnderlyingTwapPrice(address underlying, uint256 /* intervalInSeconds */)
+    function getUnderlyingTwapPrice(address underlying, uint256 /* startTimestamp */, uint256 /* intervalInSeconds */)
         override
         public
         view
