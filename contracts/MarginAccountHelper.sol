@@ -43,6 +43,8 @@ contract MarginAccountHelper is HubbleBase {
         IERC20(_vusd).safeApprove(_insuranceFund, type(uint).max);
     }
 
+    receive() external payable {}
+
     /**
      * @notice Accepts gas token (usdc), wraps it for vusd and deposits it to margin account for the trader
      * @param amount Amount of vusd to deposit. msg.value has to be exactly 1e12 times `amount`
@@ -64,38 +66,74 @@ contract MarginAccountHelper is HubbleBase {
 
     /**
     * @notice Withdraw margin from margin account to supportedEVMChain
-    * @param amount Amount of vusd to withdraw from margin account
-    * @param directBridgeChainId ChainId of the direct bridge chain
-    * @param dstChainId ChainId of the destination chain, 0 if the destination chain is the direct bridge chain
+    * @param to address to withdraw to at the destination chain
+    * @param amount Amount of token to withdraw from margin account
+    * @param dstChainId ChainId of the direct bridge chain
+    * @param secondHopChainId ChainId of the final destination chain, 0 if the destination chain is the direct bridge chain
+    * @param amountMin min amount of token to be received on the destination chain (used in stargate call)
+    * @param dstPoolId stargate pool id on the secondHop chain (dstChain)
+    * @dev layer0 fee should be passed as msg.value
     */
-    // @todo add test for this
-    function withdrawMarginToChain(uint amount, uint tokenIdx, uint16 directBridgeChainId, uint16 dstChainId, uint amountMin, uint dstPoolId) external {
+    function withdrawMarginToChain(address to, uint amount, uint tokenIdx, uint16 dstChainId, uint16 secondHopChainId, uint amountMin, uint dstPoolId, bytes calldata adapterParams) external payable {
         address trader = msg.sender;
-        marginAccount.removeMarginFor(tokenIdx, amount, trader);
-        vusd.withdrawTo(address(this), amount);
-        vusd.processWithdrawals();
-        uint amountScaled = amount * SCALING_FACTOR;
-        require(address(this).balance >= amountScaled, "MarginAccountHelper: Withdrawal failed");
-
         IHGT.WithdrawVars memory withdrawVars = IHGT.WithdrawVars({
-            dstChainId: directBridgeChainId,
-            secondHopChainId: dstChainId,
+            dstChainId: dstChainId,
+            secondHopChainId: secondHopChainId,
             dstPoolId: dstPoolId,
-            amount: amountScaled,
+            amount: amount,
             amountMin: amountMin,
-            to: trader,
+            to: to,
             tokenIdx: tokenIdx,
             refundAddress: payable(trader),
             zroPaymentAddress: address(0),
-            adapterParams: ""
+            adapterParams: adapterParams
         });
-        (uint layer0Fee, ) = hgt.estimateSendFee(withdrawVars);
-        // subtract layer0Fee from amount transferred to trader
-        withdrawVars.amount -= layer0Fee; // will revert if amountScaled < layer0Fee
-        hgt.withdraw{value: amountScaled}(withdrawVars);
+
+        marginAccount.removeMarginFor(tokenIdx, amount, trader);
+        if (tokenIdx == VUSD_IDX) {
+            vusd.withdrawTo(address(this), amount);
+            vusd.processWithdrawals();
+            uint amountScaled = amount * SCALING_FACTOR;
+            require(address(this).balance >= msg.value + amountScaled, "MarginAccountHelper: Margin withdrawal failed");
+            withdrawVars.amount = amountScaled;
+            hgt.withdraw{value: msg.value + amountScaled}(withdrawVars);
+        } else {
+            IERC20 token = marginAccount.getCollateralToken(tokenIdx);
+            require(token.balanceOf(address(this)) >= amount, "MarginAccountHelper: Margin withdrawal failed");
+            hgt.withdraw{value: msg.value}(withdrawVars);
+        }
     }
 
-    // @todo withdraw from insurance fund to supported evm chains
+    /**
+    * @notice Withdraw from insurance fund to supportedEVMChain
+    * @param to address to withdraw to at the destination chain
+    * @param shares amount insurance fund shares to withdraw
+    * @param dstChainId ChainId of the direct bridge chain
+    * @param secondHopChainId ChainId of the destination chain, 0 if the destination chain is the direct bridge chain
+    * @param amountMin min amount of USDC to be received on the destination chain (used in stargate call)
+    * @param dstPoolId stargate pool id on the secondHop chain (dstChain)
+    * @dev layer0 fee should be passed as msg.value
+    */
+    function withdrawFromInsuranceFundToChain(address to, uint shares, uint16 dstChainId, uint16 secondHopChainId, uint amountMin, uint dstPoolId, bytes calldata adapterParams) external payable {
+        address trader = msg.sender;
+        uint amount = _withdrawFromInsuranceFund(shares, trader, address(this));
+        amount = amount * SCALING_FACTOR;
+        require(address(this).balance >= msg.value + amount, "MarginAccountHelper: IF withdrawal failed");
+
+        IHGT.WithdrawVars memory withdrawVars = IHGT.WithdrawVars({
+            dstChainId: dstChainId,
+            secondHopChainId: secondHopChainId,
+            dstPoolId: dstPoolId,
+            amount: amount,
+            amountMin: amountMin,
+            to: to,
+            tokenIdx: VUSD_IDX,
+            refundAddress: payable(trader),
+            zroPaymentAddress: address(0),
+            adapterParams: adapterParams
+        });
+        hgt.withdraw{value: msg.value + amount}(withdrawVars);
+    }
 
     /**
     * @notice Deposit vusd to insurance fund using gas token (usdc)
@@ -110,8 +148,12 @@ contract MarginAccountHelper is HubbleBase {
     */
     function withdrawFromInsuranceFund(uint256 shares) external {
         address user = msg.sender;
-        uint amount = insuranceFund.withdrawFor(user, shares);
-        vusd.withdrawTo(user, amount);
+        _withdrawFromInsuranceFund(shares, user, user);
+    }
+
+    function _withdrawFromInsuranceFund(uint256 shares, address user, address to) internal returns(uint256 amount){
+        amount = insuranceFund.withdrawFor(user, shares);
+        vusd.withdrawTo(to, amount);
         vusd.processWithdrawals();
     }
 
@@ -128,5 +170,9 @@ contract MarginAccountHelper is HubbleBase {
 
     function setHGT(address _hgt) external onlyGovernance {
         hgt = IHGT(_hgt);
+    }
+
+    function approveToken(address token, address spender, uint256 amount) external onlyGovernance {
+        IERC20(token).safeApprove(spender, amount);
     }
 }

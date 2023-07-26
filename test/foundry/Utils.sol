@@ -112,7 +112,7 @@ abstract contract Utils is Test {
             address(proxyAdmin),
             abi.encodeWithSelector(MarginAccountHelper.initialize.selector, governance, address(husd), address(marginAccount), address(insuranceFund), address(0) /** hgt */)
         );
-        marginAccountHelper = MarginAccountHelper(address(proxy));
+        marginAccountHelper = MarginAccountHelper(payable(address(proxy)));
 
         testPriceFeed = new TestPriceFeed();
 

@@ -131,7 +131,6 @@ contract HGT is IHGT, Initializable, Pausable, NonblockingLzApp {
             vars.amount = amount / SCALING_FACTOR;
         } else {
             IERC20 token = IERC20(supportedTokens[vars.tokenIdx].token);
-            // @todo maybe we will change this code here to be able to withdraw margin from user's behalf
             token.safeTransferFrom(_msgSender(), address(this), amount); // will revert if vars.tokenIdx >= supportedTokens.length
         }
         supportedTokens[vars.tokenIdx].circulatingSupply -= amount;
