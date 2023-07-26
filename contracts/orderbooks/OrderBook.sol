@@ -20,6 +20,9 @@ interface IOrderBook is ILimitOrderBook {
     event OrderMatchingError(bytes32 indexed orderHash, string err);
     event LiquidationError(address indexed trader, bytes32 indexed orderHash, string err, uint256 toLiquidate);
 
+    event TradingAuthorityWhitelisted(address indexed trader, address indexed authority);
+    event TradingAuthorityRevoked(address indexed trader, address indexed authority);
+
     /**
      * @notice Execute a long and a short order that match each other.
      * Can only be called by a validator.
@@ -207,6 +210,7 @@ contract OrderBook is IOrderBook, LimitOrderBook {
     function _whitelistTradingAuthority(address trader, address authority, uint airdrop) internal {
         require(trader != address(0) && authority != address(0), "null address");
         isTradingAuthority[trader][authority] = true;
+        emit TradingAuthorityWhitelisted(trader, authority);
         if (airdrop != 0) {
             (bool success, ) = payable(authority).call{value: airdrop}("");
             require(success, "OrderBook: failed to airdrop gas to authority");
@@ -217,7 +221,9 @@ contract OrderBook is IOrderBook, LimitOrderBook {
      * @notice Revoke trading authority of an address
     */
     function revokeTradingAuthority(address authority) external {
-        isTradingAuthority[_msgSender()][authority] = false;
+        address trader = _msgSender();
+        isTradingAuthority[trader][authority] = false;
+        emit TradingAuthorityRevoked(trader, authority);
     }
 
     /* ****************** */

@@ -121,13 +121,6 @@ describe('Order Book', function () {
         await expect(orderBook.executeMatchedOrders(matchArgs, longOrder.baseAssetQuantity)).to.revertedWith('invalid order')
     })
 
-    it('trading authority', async function() {
-        tradingAuthority = ethers.utils.getAddress(ethers.utils.hexlify(ethers.utils.randomBytes(20)))
-        await orderBook.connect(alice).whitelistTradingAuthority(tradingAuthority, { value: _1e18 })
-        expect(await orderBook.isTradingAuthority(alice.address, tradingAuthority)).to.eq(true)
-        expect(await ethers.provider.getBalance(tradingAuthority)).to.eq(_1e18)
-    })
-
     it('storage slots are as expected', async function() {
         const VAR_MARGIN_MAPPING_STORAGE_SLOT = 10 // !!! if you change this, it has to be changed in the precompile !!!
         // gets margin[0][alice]
@@ -169,20 +162,6 @@ describe('Order Book', function () {
         )
         expect(BigNumber.from(storage)).to.eq(2) // Filled
 
-        // trading authority
-        const TRADING_AUTHORITY_STORAGE_SLOT = 61
-        storage = await ethers.provider.getStorageAt(
-            orderBook.address,
-            ethers.utils.keccak256(ethers.utils.defaultAbiCoder.encode(
-                ['address', 'bytes32'],
-                [
-                    tradingAuthority,
-                    ethers.utils.keccak256(ethers.utils.defaultAbiCoder.encode(['address', 'uint256'], [alice.address, TRADING_AUTHORITY_STORAGE_SLOT]))
-                ]
-            )
-        ))
-        expect(BigNumber.from(storage)).to.eq(1) // true
-
         // gets isValidator[alice]
         const VAR_IS_VALIDATOR_MAPPING_STORAGE_SLOT = 54 // this is not used in the precompile as yet
         storage = await ethers.provider.getStorageAt(
@@ -220,6 +199,44 @@ describe('Order Book', function () {
             ethers.utils.keccak256(ethers.utils.defaultAbiCoder.encode(['uint256'], [AMMS_SLOT]))
         )
         expect(amm.address).to.eq(ethers.utils.getAddress('0x' + storage.slice(26)))
+    })
+
+    it('trading authority', async function() {
+        tradingAuthority = ethers.utils.getAddress(ethers.utils.hexlify(ethers.utils.randomBytes(20)))
+        await expect(
+            orderBook.connect(alice).whitelistTradingAuthority(tradingAuthority, { value: _1e18 })
+        ).to.emit(orderBook, 'TradingAuthorityWhitelisted').withArgs(alice.address, tradingAuthority)
+        expect(await orderBook.isTradingAuthority(alice.address, tradingAuthority)).to.eq(true)
+        expect(await ethers.provider.getBalance(tradingAuthority)).to.eq(_1e18)
+
+        const TRADING_AUTHORITY_STORAGE_SLOT = 61
+        let storage = await ethers.provider.getStorageAt(
+            orderBook.address,
+            ethers.utils.keccak256(ethers.utils.defaultAbiCoder.encode(
+                ['address', 'bytes32'],
+                [
+                    tradingAuthority,
+                    ethers.utils.keccak256(ethers.utils.defaultAbiCoder.encode(['address', 'uint256'], [alice.address, TRADING_AUTHORITY_STORAGE_SLOT]))
+                ]
+            )
+        ))
+        expect(BigNumber.from(storage)).to.eq(1) // true
+
+        // revoke trading authority
+        await expect(
+            orderBook.connect(alice).revokeTradingAuthority(tradingAuthority)
+        ).to.emit(orderBook, 'TradingAuthorityRevoked').withArgs(alice.address, tradingAuthority)
+        storage = await ethers.provider.getStorageAt(
+            orderBook.address,
+            ethers.utils.keccak256(ethers.utils.defaultAbiCoder.encode(
+                ['address', 'bytes32'],
+                [
+                    tradingAuthority,
+                    ethers.utils.keccak256(ethers.utils.defaultAbiCoder.encode(['address', 'uint256'], [alice.address, TRADING_AUTHORITY_STORAGE_SLOT]))
+                ]
+            )
+        ))
+        expect(BigNumber.from(storage)).to.eq(0) // false
     })
 
     it('matches multiple long orders with same price and opposite base asset quantity with short orders', async function() {
